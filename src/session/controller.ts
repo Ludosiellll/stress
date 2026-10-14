@@ -3,10 +3,10 @@ import type { Repository } from '../data/repository';
 import type { LogicItemRow, TrialRow, WellbeingRow } from '../data/rows';
 import { detectFatigue, nextLevel, startLevel } from '../engine/adaptive';
 import { daysBetween } from '../engine/dates';
-import { deriveModuleStates } from '../engine/derive';
+import { deriveModuleStates, isCleanBlock } from '../engine/derive';
 import type { DiagnosticResults } from '../engine/diagnostic';
 import type { Rating } from '../engine/elo';
-import type { ModuleState, Segment, SessionPlan } from '../engine/planner';
+import { OVERLOAD_LEVEL_STEP, type ModuleState, type Segment, type SessionPlan } from '../engine/planner';
 import type { BlockTimeline } from '../engine/reaction/types';
 import { isReactionModule, type BlockFlag, type FamilyId, type LayoutId, type ModuleId } from '../engine/types';
 import { describeChanges } from '../modules/describe';
@@ -79,7 +79,7 @@ interface ActiveBlock {
 interface SegmentRun {
   index: number;
   segment: Segment;
-  /** Level of the next block. */
+  /** Segment level: the next block plays at it (a mix overload block above it, planBlock). */
   L: number;
   /** Wall-clock ms of the first instruction ack; null before it. */
   clockStart: number | null;
@@ -137,6 +137,8 @@ const errorText = (e: unknown): string => (e instanceof Error ? e.message : Stri
  *
  * - Levels: a segment starts at startLevel(L_saved, days since last training) (diagnostics: fixedL) and moves
  *   by nextLevel after every block. Diagnostics never change levels, module states or ratings.
+ * - Overload blocks (Segment.overload): a finisher starts at L_saved + 3 and moves only its own level; a mix
+ *   overload block's lAfter goes to history only. Their flag keeps them out of L_saved, fatigue and g = 2.
  * - After each block: addBlock (with its trials / logic items); then the block's in-memory effects; then for
  *   training and free sessions the module state derived from the module's history (listBlockLevels) and, for
  *   number series, the ratings. Writes are tried 3 times (pauses 100 and 500 ms), then `save_error` keeps
@@ -487,6 +489,8 @@ export class SessionController {
     const { module } = segment;
     if (!this.counted) return segment.fixedL ?? 0;
     if (module === 'numseries') return 0;
+    // The finisher takes a module that is not in the plan: no level in this session yet (§6.3).
+    if (segment.overload === 'finisher') return this.states[module].lSaved + OVERLOAD_LEVEL_STEP;
     const current = this.levels.get(module);
     if (current !== undefined) return current;
     const st = this.states[module];
@@ -613,6 +617,7 @@ export class SessionController {
     if (calibration) flags.push('calibration');
     if (b.level?.timingUnreliable === true) flags.push('timing_unreliable');
     if (this.fatigueContinued.has(b.module)) flags.push('fatigued');
+    if (active.plan.kind !== 'numseries' && active.plan.overload) flags.push('overload');
 
     const id = uuidv4();
     const row = blockRow(id, this.sessionId, { module: b.module, lBefore: b.L, lAfter, score: b.score, flags }, active, b.summaryJson);
@@ -681,20 +686,22 @@ export class SessionController {
     );
   }
 
-  /** Book-keeping for a stored block; the level of the next block becomes lAfter. */
+  /**
+   * Book-keeping for a stored block; the segment level becomes lAfter. An overload block leaves the module's
+   * level in the session alone, and in a mix the segment level too (only the finisher moves its own level).
+   */
   private record(b: SessionBlock, lAfter: number): void {
     const seg = this.segment();
+    const overload = b.flags.includes('overload');
     this.sessionBlocks.push(b);
-    seg.L = lAfter;
+    if (!overload || seg.segment.overload === 'finisher') seg.L = lAfter;
     seg.blocksDone++;
     seg.attempt = 0;
     seg.unreliableReplayed = false;
     this.active = null;
-    if (b.module !== 'numseries') this.levels.set(b.module, lAfter);
+    if (b.module !== 'numseries' && !overload) this.levels.set(b.module, lAfter);
     if (this.counted && isReactionModule(b.module)) {
-      const clean = this.sessionBlocks.filter(
-        (x) => x.module === b.module && !x.flags.includes('fatigued') && !x.flags.includes('timing_unreliable'),
-      );
+      const clean = this.sessionBlocks.filter((x) => x.module === b.module && isCleanBlock(x.flags));
       if (detectFatigue(clean)) this.fatigueDetected.add(b.module);
     }
   }
@@ -705,11 +712,11 @@ export class SessionController {
     return this.states[module].lifetimeBlocks + thisSession < CALIBRATION_BLOCKS;
   }
 
-  /** s of the previous block of the module in this session that was not timing_unreliable. */
+  /** s of the previous block of the module in this session that was neither timing_unreliable nor overload. */
   private prevScore(module: ModuleId): number | null {
     for (let i = this.sessionBlocks.length - 1; i >= 0; i--) {
       const b = this.sessionBlocks[i];
-      if (b?.module === module && !b.flags.includes('timing_unreliable')) return b.score;
+      if (b?.module === module && !b.flags.includes('timing_unreliable') && !b.flags.includes('overload')) return b.score;
     }
     return null;
   }

@@ -42,15 +42,19 @@ function diagnosticRows(d: DiagnosticResults, seriesTotal: number | null): Array
   ];
 }
 
-/** «ПЗМР: блоков 3, уровень 4,0 → 5,5» per module, in the order the modules were played; no level where none is shown. */
+/**
+ * «ПЗМР: блоков 3, уровень 4,0 → 5,5» per module, in the order the modules were played; no level where none is
+ * shown. Overload blocks count as blocks, but the level change is that of the other blocks (none: no level).
+ */
 function moduleLines(summaries: readonly BlockSummaryView[]): string[] {
   const byModule = new Map<ModuleId, BlockSummaryView[]>();
   for (const s of summaries) byModule.set(s.module, [...(byModule.get(s.module) ?? []), s]);
   return [...byModule.values()].map((list) => {
-    const first = list[0] as BlockSummaryView;
-    const last = list[list.length - 1] as BlockSummaryView;
-    const head = `${first.title}: блоков ${String(list.length)}`;
-    return first.showLevel ? `${head}, уровень ${decimal(first.lBefore)} → ${decimal(last.lAfter)}` : head;
+    const head = `${(list[0] as BlockSummaryView).title}: блоков ${String(list.length)}`;
+    const levelled = list.filter((s) => s.showLevel && !s.flags.includes('overload'));
+    const first = levelled[0];
+    const last = levelled.at(-1);
+    return first && last ? `${head}, уровень ${decimal(first.lBefore)} → ${decimal(last.lAfter)}` : head;
   });
 }
 

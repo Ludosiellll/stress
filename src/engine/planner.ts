@@ -18,13 +18,22 @@ export const L_NORM: Record<ModuleId, number> = {
   numseries: 0,
 };
 
-export type SegmentPurpose = 'warmup' | 'reaction' | 'attention' | 'logic' | 'diagnostic' | 'free';
+export type SegmentPurpose = 'warmup' | 'reaction' | 'attention' | 'logic' | 'diagnostic' | 'free' | 'finisher';
+
+/** An overload block plays this many levels above the usual one (§6.3). */
+export const OVERLOAD_LEVEL_STEP = 3;
 
 /** `budgetMs === 0` means fixed volume (Ruling R16): the controller uses trialCount / runs / items instead of time. */
 export interface Segment {
   module: ModuleId;
   budgetMs: number;
   purpose: SegmentPurpose;
+  /**
+   * finisher: starts at L_saved + OVERLOAD_LEVEL_STEP and every block is an overload block; mix (a module on a
+   * plateau): odd blocks are overload blocks at the segment level + OVERLOAD_LEVEL_STEP. Overload blocks never
+   * move L_saved, fatigue, the g = 2 rule or the module's level in the session.
+   */
+  overload?: 'finisher' | 'mix';
   fixedL?: number;
   trialCount?: number;
   practiceTrials?: number;

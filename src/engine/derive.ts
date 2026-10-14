@@ -15,7 +15,12 @@ export function isCountedSession(kind: SessionKind): boolean {
   return COUNTED_KINDS.has(kind);
 }
 
-const UNCLEAN_FLAGS: readonly BlockFlag[] = ['fatigued', 'timing_unreliable'];
+const UNCLEAN_FLAGS: readonly BlockFlag[] = ['fatigued', 'timing_unreliable', 'overload'];
+
+/** A block that may move L_saved and feeds fatigue detection: without fatigued, timing_unreliable or overload. */
+export function isCleanBlock(flags: readonly BlockFlag[]): boolean {
+  return !flags.some((f) => UNCLEAN_FLAGS.includes(f));
+}
 
 export function defaultModuleState(module: ModuleId): ModuleState {
   return { module, lSaved: 0, sessionEndLevels: [], savedHistory: [], plateau: false, lastTrainedAt: null, lifetimeBlocks: 0 };
@@ -50,8 +55,8 @@ const LEVELLESS: ReadonlySet<ModuleId> = new Set<ModuleId>(['numseries']);
 
 /**
  * Module states from training and free sessions only (diagnostics never count).
- * A session's end level is lAfter of its last block of the module (by startedAt) without
- * fatigued / timing_unreliable; sessions without such a block add nothing. Ties keep input order.
+ * A session's end level is lAfter of its last clean block of the module (by startedAt, isCleanBlock);
+ * sessions without such a block add nothing. Ties keep input order.
  * Number series keep the default state except lifetimeBlocks and lastTrainedAt.
  */
 export function deriveModuleStates(
@@ -68,7 +73,7 @@ export function deriveModuleStates(
     const st = states[b.module];
     st.lifetimeBlocks++;
     st.lastTrainedAt = b.startedAt;
-    if (LEVELLESS.has(b.module) || b.flags.some((f) => UNCLEAN_FLAGS.includes(f))) continue;
+    if (LEVELLESS.has(b.module) || !isCleanBlock(b.flags)) continue;
     let perModule = endLevels.get(b.sessionId);
     if (!perModule) {
       perModule = new Map();

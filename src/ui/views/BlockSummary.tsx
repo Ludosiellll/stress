@@ -15,7 +15,11 @@ const FLAG_TEXT: Record<BlockFlag, string> = {
   calibration: 'Калибровка',
   fatigued: 'Блок помечен: усталость',
   timing_unreliable: 'Замер ненадёжен: пропуски кадров — уровень не менялся',
+  overload: 'Блок с перегрузкой: на сохранённый уровень не влияет',
 };
+
+/** Notes, not warnings. */
+const NOTE_FLAGS: ReadonlySet<BlockFlag> = new Set<BlockFlag>(['calibration', 'overload']);
 
 /** «Окно ответа: 387 → 358 мс»: a unit shared by both values is written once. */
 export function changeText({ label, from, to }: ParamChange): string {
@@ -55,7 +59,7 @@ export default function BlockSummary({ view, busy, onContinue }: BlockSummaryPro
         ))}
       </ul>
       {view.flags.map((f) => (
-        <p key={f} className={f === 'calibration' ? 'muted' : 'warning'}>
+        <p key={f} className={NOTE_FLAGS.has(f) ? 'muted' : 'warning'}>
           {FLAG_TEXT[f]}
         </p>
       ))}

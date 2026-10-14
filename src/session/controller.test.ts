@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { MemoryRepository } from '../data/memoryRepository';
 import type { Repository } from '../data/repository';
+import { block, session } from '../data/repository.contract';
 import type { BlockRow, WellbeingRow } from '../data/rows';
+import { FINISHER_AUDIO } from '../engine/audio/stressors';
 import { deriveModuleStates, deriveRatings, defaultModuleState } from '../engine/derive';
 import { diagnosticSegmentSeed, diagnosticSeriesSchedule, planDiagnostic, type DiagnosticResults } from '../engine/diagnostic';
 import { planFree, planTraining, type ModuleState, type Segment, type SessionPlan } from '../engine/planner';
@@ -12,6 +14,7 @@ import { generateMemoryTrials } from '../modules/memory/generate';
 import { memoryInstruction, memoryParams } from '../modules/memory/params';
 import type { MemoryAnswer } from '../modules/memory/score';
 import { FAMILIES } from '../modules/numseries/families';
+import { pomeh } from '../modules/reaction/pomeh';
 import { pzmr } from '../modules/reaction/pzmr';
 import { szmr } from '../modules/reaction/szmr';
 import { gorbovMetrics } from '../modules/tables/gorbov';
@@ -24,7 +27,7 @@ import {
   type Respond,
 } from '../testing/sessionPlayers';
 import { SessionController, type SessionStartOptions } from './controller';
-import { AUDIO_NOT_PLAYED, type Step, type StepOf } from './steps';
+import { AUDIO_NOT_PLAYED, OVERLOAD_PREFIX, type BlockSummaryView, type Step, type StepOf } from './steps';
 
 const MIN = 60_000;
 const DAY = 86_400_000;
@@ -809,6 +812,165 @@ describe('SessionController — fatigue', () => {
     expect(seen.filter((x) => x === 'reaction_block:szmr')).toHaveLength(6);
     expect(seen.filter((x) => x.startsWith('fatigue_prompt'))).toEqual([]);
     expect((await h.repo.listBlocks()).flatMap((b) => b.flags)).toEqual([]);
+  });
+});
+
+describe('SessionController — overload', () => {
+  const YESTERDAY = new Date(new Date(T0).getTime() - DAY).toISOString();
+  const overloadSegment = (module: ModuleId, overload: 'finisher' | 'mix', budgetMs = 5 * MIN): Segment => ({
+    module,
+    budgetMs,
+    purpose: overload === 'finisher' ? 'finisher' : 'reaction',
+    overload,
+  });
+  const training = (...segments: Segment[]): SessionPlan => ({ kind: 'training', seed: 21, segments });
+
+  /** A trained module: yesterday's session ended at `level` after 3 blocks; the cached state is its rebuild. */
+  async function trainedRepo(module: ModuleId, level: number): Promise<MemoryRepository> {
+    const repo = new MemoryRepository();
+    await repo.createSession(session('old', YESTERDAY, { endedAt: YESTERDAY }));
+    for (let i = 0; i < 3; i++) {
+      await repo.addBlock(block(`old${String(i)}`, 'old', YESTERDAY, { module, lBefore: level, lAfter: level }), [], []);
+    }
+    await repo.saveModuleState(deriveModuleStates(await repo.listSessions(), await repo.listBlocks())[module]);
+    return repo;
+  }
+
+  /** Plays reaction blocks (with their summaries) until the segment ends; returns every summary view. */
+  async function playSegment(h: Harness, n: number, respond: Respond = perfectPlayer): Promise<BlockSummaryView[]> {
+    const views: BlockSummaryView[] = [];
+    for (let i = 0; i < n; i++) {
+      h.clock.advance(30_000);
+      views.push((await playReaction(h, respond)).view);
+      await h.c.continueAfterSummary();
+    }
+    return views;
+  }
+
+  it('finisher starts at L_saved + 3 and flags every block overload', async () => {
+    const repo = new MemoryRepository();
+    await repo.saveModuleState(stateWith('szmr', { lSaved: 10, lastTrainedAt: YESTERDAY, lifetimeBlocks: 10 }));
+    const h = await begin(training(overloadSegment('szmr', 'finisher')), { repo });
+    const [first, second] = await playSegment(h, 2);
+    expect(first).toMatchObject({ lBefore: 13, flags: ['overload'] });
+    // The finisher segment moves its own level.
+    expect(second).toMatchObject({ lBefore: first?.lAfter, flags: ['overload'] });
+    expect((await repo.listBlocks()).map((b) => b.flags)).toEqual([['overload'], ['overload']]);
+  });
+
+  it('finisher blocks leave L_saved alone', async () => {
+    const repo = await trainedRepo('szmr', 10);
+    const before = (await repo.getModuleStates()).szmr;
+    expect(before).toMatchObject({ lSaved: 10, sessionEndLevels: [10], lifetimeBlocks: 3 });
+    const h = await begin(training(overloadSegment('szmr', 'finisher', 3 * MIN)), { repo });
+    const seen = await drive(h);
+    expect(seen.filter((x) => x === 'reaction_block:szmr').length).toBeGreaterThan(1);
+    const after = (await repo.getModuleStates()).szmr;
+    expect(after).toEqual({ ...before, lifetimeBlocks: after.lifetimeBlocks, lastTrainedAt: after.lastTrainedAt });
+    expect(after.lifetimeBlocks).toBeGreaterThan(3);
+    expect(after).toEqual(deriveModuleStates(await repo.listSessions(), await repo.listBlocks()).szmr);
+  });
+
+  it('mix alternates normal and overload blocks', async () => {
+    const repo = await trainedRepo('szmr', 10);
+    // A later plain segment of the module continues from the last normal level, not from an overload block.
+    const h = await begin(training(overloadSegment('szmr', 'mix', 90_000), segment('rdo', 1), segment('szmr', 1)), { repo });
+    const views = await playSegment(h, 4);
+    expect(views.map((v) => v.flags)).toEqual([[], ['overload'], [], ['overload']]);
+    const [b0, b1, b2, b3] = views as [BlockSummaryView, BlockSummaryView, BlockSummaryView, BlockSummaryView];
+    expect(b0.lBefore).toBe(8); // startLevel(10, 1 day)
+    expect(b1.lBefore).toBe(b0.lAfter + 3);
+    // The level after overload block 1 is the level after block 0.
+    expect(b2.lBefore).toBe(b0.lAfter);
+    expect(b3.lBefore).toBe(b2.lAfter + 3);
+    // The overload lAfter goes to history.
+    expect((await repo.listBlocks()).filter((b) => b.sessionId === h.c.sessionId).map((b) => b.lAfter)).toEqual(views.map((v) => v.lAfter));
+    await playReaction(h);
+    h.clock.advance(1);
+    await h.c.continueAfterSummary();
+    h.c.ackInstruction();
+    expect(expectStep(h.c, 'reaction_block').L).toBe(b2.lAfter);
+  });
+
+  it('overload reaction blocks play the finisher sound with gate all', async () => {
+    const repo = new MemoryRepository();
+    await repo.saveModuleState(stateWith('pzmr', { lSaved: 5, lastTrainedAt: YESTERDAY, lifetimeBlocks: 10 }));
+    await repo.saveModuleState(stateWith('pomeh', { lSaved: 33, lastTrainedAt: YESTERDAY, lifetimeBlocks: 10 }));
+    const h = await begin(training(overloadSegment('pzmr', 'finisher', 1), overloadSegment('pomeh', 'finisher', 1)), { repo });
+    h.c.ackInstruction();
+    expect(expectStep(h.c, 'reaction_block').layers).toMatchObject({ noise: null, audio: FINISHER_AUDIO, gate: 'all' });
+    await h.c.submitReaction(playTimeline(expectStep(h.c, 'reaction_block').specs, perfectPlayer));
+    h.clock.advance(1);
+    await h.c.continueAfterSummary();
+    h.c.ackInstruction();
+    const pomehBlock = expectStep(h.c, 'reaction_block');
+    expect(pomehBlock.L).toBe(36);
+    // pomeh at L 36 has all four layers at gain 0.95: the union keeps them and the larger gain; the noise stays.
+    expect(pomehBlock.layers).toMatchObject({
+      noise: pomeh.params(36).noise,
+      audio: { layers: ['hum', 'beeps', 'metronome', 'babble'], gain: 0.95 },
+      gate: 'all',
+    });
+  });
+
+  it('overload blocks are left out of fatigue and the g = 2 rule', async () => {
+    const repo = await trainedRepo('szmr', 10);
+    const h = await begin(training(overloadSegment('szmr', 'mix', 2 * MIN)), { repo });
+    // Block 0: s < 0.95 (no boost after it); block 1 (overload): s = 1; block 2: perfect.
+    const missFirstThree: Respond = (spec, idx) => (idx < 3 ? null : perfectPlayer(spec, idx));
+    const [b0] = await playSegment(h, 1, missFirstThree);
+    const [b1, b2] = await playSegment(h, 2);
+    expect(b0?.score).toBeLessThan(0.95);
+    expect(b1).toMatchObject({ score: 1, flags: ['overload'] });
+    // prevScoreSameSession of block 2 is block 0's s, so g = 1: ΔL = (1 − 0.8)/0.2 = 1, not 2.
+    expect(b2?.lAfter).toBe((b2?.lBefore ?? NaN) + 1);
+
+    // Fatigue: a finisher of tiring overload blocks never prompts.
+    let blockNo = 0;
+    const tiring: Respond = (spec, idx) => {
+      if (idx === 0) blockNo++;
+      if (blockNo <= 2) return perfectPlayer(spec, idx);
+      if (idx % 10 < 3) return null;
+      const e = spec.expected;
+      return e.kind === 'press' ? { key: e.key, rtMs: 400 } : perfectPlayer(spec, idx);
+    };
+    const f = await begin(training(overloadSegment('szmr', 'finisher')), { repo: await trainedRepo('szmr', 10) });
+    const views = await playSegment(f, 6, tiring);
+    expect(views.every((v) => v.flags.includes('overload') && !v.flags.includes('fatigued'))).toBe(true);
+    expect(f.c.step.kind).not.toBe('fatigue_prompt');
+  });
+
+  it('overload table blocks play at L + 3 without sound', async () => {
+    const repo = new MemoryRepository();
+    await repo.saveModuleState(stateWith('schulte', { lSaved: 6, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    const h = await begin(training(overloadSegment('schulte', 'mix')), { repo });
+    h.c.ackInstruction();
+    const first = expectStep(h.c, 'table_block');
+    expect(first.L).toBe(4);
+    await h.c.submitTable(perfectTableRun(first));
+    const firstView = expectStep(h.c, 'summary').view;
+    await h.c.continueAfterSummary();
+    h.c.ackInstruction();
+    const over = expectStep(h.c, 'table_block');
+    expect(over.L).toBe(firstView.lAfter + 3);
+    expect(over).not.toHaveProperty('layers');
+    await h.c.submitTable(perfectTableRun(over));
+    expect(expectStep(h.c, 'summary').view.flags).toEqual(['overload']);
+  });
+
+  it('the instruction announces an overload block', async () => {
+    const repo = await trainedRepo('szmr', 10);
+    const h = await begin(training(overloadSegment('szmr', 'mix')), { repo });
+    const texts: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      texts.push(expectStep(h.c, 'instruction').text);
+      h.clock.advance(30_000);
+      await playReaction(h);
+      await h.c.continueAfterSummary();
+    }
+    expect(texts[0]?.startsWith(OVERLOAD_PREFIX)).toBe(false);
+    expect(texts[1]).toMatch(new RegExp('^' + OVERLOAD_PREFIX));
+    expect(texts[2]?.startsWith(OVERLOAD_PREFIX)).toBe(false);
   });
 });
 

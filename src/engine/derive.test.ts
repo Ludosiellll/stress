@@ -6,6 +6,7 @@ import {
   defaultModuleState,
   deriveModuleStates,
   deriveRatings,
+  isCleanBlock,
   isCountedSession,
 } from './derive';
 import { R0, updateRating, type Rating } from './elo';
@@ -101,6 +102,30 @@ describe('deriveModuleStates', () => {
     expect(states.gonogo.lSaved).toBe(3);
     expect(states.gonogo.lifetimeBlocks).toBe(4);
     expect(states.gonogo.lastTrainedAt).toBe(day(2, 8, 1));
+  });
+
+  it('skips overload blocks for end levels but counts them in lifetime and lastTrainedAt', () => {
+    const states = deriveModuleStates(
+      [ses('s1', day(1)), ses('s2', day(2))],
+      [
+        blk('s1', 'szmr', 6, day(1, 8, 1)),
+        blk('s1', 'szmr', 11, day(1, 8, 2), ['overload']),
+        // s2 plays the module only in overload blocks (a finisher): no end level for s2.
+        blk('s2', 'szmr', 14, day(2, 8, 1), ['overload']),
+        blk('s2', 'szmr', 15, day(2, 8, 2), ['overload']),
+      ],
+    );
+    expect(states.szmr.sessionEndLevels).toEqual([6]);
+    expect(states.szmr.savedHistory).toEqual([6]);
+    expect(states.szmr.lSaved).toBe(6);
+    expect(states.szmr.lifetimeBlocks).toBe(4);
+    expect(states.szmr.lastTrainedAt).toBe(day(2, 8, 2));
+  });
+
+  it('isCleanBlock: a block without fatigued, timing_unreliable or overload', () => {
+    expect(isCleanBlock([])).toBe(true);
+    expect(isCleanBlock(['calibration'])).toBe(true);
+    for (const f of ['fatigued', 'timing_unreliable', 'overload'] as const) expect(isCleanBlock(['calibration', f])).toBe(false);
   });
 
   it('ignores diagnostic sessions and blocks of unknown sessions; free sessions count', () => {

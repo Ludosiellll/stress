@@ -2,12 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { diagnosticSegmentSeed, diagnosticSeriesSchedule, planDiagnostic } from '../engine/diagnostic';
 import { R0, updateRating, type Rating } from '../engine/elo';
 import { effectiveDifficulty } from '../engine/itemLimit';
-import type { Segment } from '../engine/planner';
+import { FINISHER_AUDIO } from '../engine/audio/stressors';
+import { OVERLOAD_LEVEL_STEP, type Segment } from '../engine/planner';
 import type { Outcome, ReactionSummary } from '../engine/reaction/types';
 import type { FamilyId } from '../engine/types';
 import { createRng, deriveSeed } from '../engine/rng';
 import { generateMemoryTrials } from '../modules/memory/generate';
-import { memoryParams } from '../modules/memory/params';
+import { memoryModeForBlock, memoryParams } from '../modules/memory/params';
 import { generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
 import { NO_STRESSORS } from '../modules/reaction/common';
 import { pomeh } from '../modules/reaction/pomeh';
@@ -19,6 +20,7 @@ import {
   buildBlock,
   diagnosticBlockSeed,
   diagnosticResults,
+  isOverloadBlock,
   planBlock,
   scaledCount,
   scaledPractice,
@@ -28,7 +30,7 @@ import {
   updatedRatings,
 } from './blocks';
 import { logicItemRows } from './rowsBuild';
-import type { StepOf } from './steps';
+import { OVERLOAD_PREFIX, type StepOf } from './steps';
 
 const counts = {} as Record<Outcome, number>;
 const summary = (over: Partial<ReactionSummary>): ReactionSummary => ({
@@ -91,7 +93,7 @@ describe('planBlock', () => {
     const segment: Segment = { module: 'memory', budgetMs: 300_000, purpose: 'free' };
     const ctx = { layout: 'pult' as const, scale: 1, diagnostic: false };
     const plan = planBlock(segment, 9, 2, ctx);
-    expect(plan).toEqual({ kind: 'memory', L: 9, mode: 'card', params: memoryParams(9), count: 6 });
+    expect(plan).toEqual({ kind: 'memory', L: 9, mode: 'card', params: memoryParams(9), count: 6, overload: false });
     expect(planBlock(segment, 9, 0, { ...ctx, scale: 0.02 })).toMatchObject({ mode: 'digits', count: 3 });
     expect(blockInstruction(plan, 'pult')).toEqual({
       text: 'На карточке 7 цифр. Запомни их по строкам, слева направо. Потом набери и нажми Enter.',
@@ -168,6 +170,72 @@ describe('reaction blocks', () => {
     });
     const pz = pzmr.generateBlock(pzmr.params(0), createRng(1), 'keyboard', 3);
     expect(scoreReaction(pz, playTimeline(pz, perfectPlayer))?.conditions).toEqual({});
+  });
+});
+
+describe('overload blocks', () => {
+  const ctx = { layout: 'keyboard', scale: 1, diagnostic: false } as const;
+  const seg = (module: Segment['module'], overload?: 'finisher' | 'mix'): Segment => ({
+    module,
+    budgetMs: 300_000,
+    purpose: overload === 'finisher' ? 'finisher' : 'reaction',
+    ...(overload === undefined ? {} : { overload }),
+  });
+
+  it('isOverloadBlock: every finisher block, the odd blocks of a mix, nothing else', () => {
+    expect([0, 1, 2, 3].map((i) => isOverloadBlock(seg('szmr', 'finisher'), i))).toEqual([true, true, true, true]);
+    expect([0, 1, 2, 3].map((i) => isOverloadBlock(seg('szmr', 'mix'), i))).toEqual([false, true, false, true]);
+    expect([0, 1, 2, 3].map((i) => isOverloadBlock(seg('szmr'), i))).toEqual([false, false, false, false]);
+  });
+
+  it('a mix plays its overload blocks at the segment level + 3; a finisher plays at the level it is given', () => {
+    expect(OVERLOAD_LEVEL_STEP).toBe(3);
+    expect(planBlock(seg('szmr', 'mix'), 10, 0, ctx)).toMatchObject({ kind: 'reaction', L: 10, overload: false });
+    expect(planBlock(seg('szmr', 'mix'), 10, 1, ctx)).toEqual({ ...planBlock(seg('szmr'), 13, 1, ctx), overload: true });
+    expect(planBlock(seg('szmr', 'finisher'), 13, 0, ctx)).toMatchObject({ L: 13, overload: true });
+    expect(planBlock(seg('szmr'), 10, 1, ctx)).toMatchObject({ L: 10, overload: false });
+    expect(planBlock(seg('schulte', 'mix'), 4, 1, ctx)).toMatchObject({ kind: 'table', L: 7, overload: true });
+    expect(planBlock(seg('gorbov', 'mix'), 4, 1, ctx)).toMatchObject({ kind: 'table', L: 7, task: 'red_down', overload: true });
+    expect(planBlock(seg('memory', 'mix'), 9, 1, ctx)).toMatchObject({ kind: 'memory', L: 12, mode: memoryModeForBlock(1), overload: true });
+    expect(planBlock(seg('memory', 'mix'), 9, 2, ctx)).toMatchObject({ kind: 'memory', L: 9, overload: false });
+  });
+
+  it('an overload reaction block adds the finisher sound for every trial; the noise keeps its own trials (W2-R10)', () => {
+    const build = (module: Segment['module'], L: number, overload?: 'finisher' | 'mix') =>
+      buildBlock(planBlock(seg(module, overload), L, 0, ctx), 7, 'keyboard', new Map()).step;
+    expect(build('pzmr', 5, 'finisher')).toMatchObject({
+      layers: { noise: null, audio: FINISHER_AUDIO, gate: 'all', seed: deriveSeed(7, 'layers') },
+    });
+    const pomehStep = build('pomeh', 18, 'finisher');
+    expect(pomehStep).toMatchObject({
+      layers: { noise: pomeh.params(18).noise, audio: { layers: ['hum', 'beeps', 'babble'], gain: 0.8 }, gate: 'all' },
+    });
+    if (pomehStep.kind !== 'reaction_block') throw new Error('expected a reaction block');
+    // Quiet trials stay visually quiet: the trial conditions do not change.
+    const normal = build('pomeh', 18);
+    if (normal.kind !== 'reaction_block') throw new Error('expected a reaction block');
+    expect(pomehStep.specs).toEqual(normal.specs);
+    expect(pomeh.params(36).audio?.layers).toEqual(['hum', 'beeps', 'metronome', 'babble']);
+    expect(build('pomeh', 36, 'finisher')).toMatchObject({
+      layers: { audio: { layers: ['hum', 'beeps', 'metronome', 'babble'], gain: 0.95 }, gate: 'all' },
+    });
+  });
+
+  it('an overload table or memory block changes only the level', () => {
+    const table = buildBlock(planBlock(seg('schulte', 'finisher'), 7, 0, ctx), 3, 'keyboard', new Map());
+    const plain = buildBlock(planBlock(seg('schulte'), 7, 0, ctx), 3, 'keyboard', new Map());
+    expect(table).toEqual(plain);
+    const memory = buildBlock(planBlock(seg('memory', 'finisher'), 9, 0, ctx), 3, 'keyboard', new Map());
+    expect(memory).toEqual(buildBlock(planBlock(seg('memory'), 9, 0, ctx), 3, 'keyboard', new Map()));
+  });
+
+  it('the instruction of an overload block starts with OVERLOAD_PREFIX', () => {
+    expect(OVERLOAD_PREFIX).toBe('Блок с перегрузкой: уровень на 3 выше обычного. ');
+    for (const module of ['pzmr', 'schulte', 'memory'] as const) {
+      const normal = blockInstruction(planBlock(seg(module), 5, 0, ctx), 'keyboard');
+      const over = blockInstruction(planBlock(seg(module, 'finisher'), 5, 0, ctx), 'keyboard');
+      expect(over).toEqual({ text: OVERLOAD_PREFIX + normal.text, keysHint: normal.keysHint });
+    }
   });
 });
 

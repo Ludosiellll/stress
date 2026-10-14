@@ -30,6 +30,11 @@ describe('BlockSummary', () => {
     expect(screen.getByText('Enter — дальше')).toBeTruthy();
   });
 
+  it('an overload block says it does not touch the saved level', () => {
+    render(<BlockSummary view={{ ...VIEW, flags: ['overload'] }} busy={false} onContinue={vi.fn()} />);
+    expect(screen.getByText('Блок с перегрузкой: на сохранённый уровень не влияет')).toBeTruthy();
+  });
+
   it('rounds the level to one decimal and leaves out what did not happen', () => {
     render(
       <BlockSummary view={{ ...VIEW, lBefore: 3.25, lAfter: 3, changes: [], flags: [] }} busy={false} onContinue={vi.fn()} />,

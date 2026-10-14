@@ -2,7 +2,8 @@ import { diagnosticSegmentSeed, diagnosticSeriesSchedule, type DiagnosticResults
 import { R0, updateRating, type Rating } from '../engine/elo';
 import { BASE_ITEM_LIMIT_MS, effectiveDifficulty } from '../engine/itemLimit';
 import { keyLabel, layoutKeys } from '../engine/layouts';
-import type { Segment } from '../engine/planner';
+import { FINISHER_AUDIO, mergeAudio } from '../engine/audio/stressors';
+import { OVERLOAD_LEVEL_STEP, type Segment } from '../engine/planner';
 import { conditionStats, type ConditionStats } from '../engine/reaction/conditions';
 import { resolveBlock } from '../engine/reaction/resolve';
 import { summarize } from '../engine/reaction/summary';
@@ -28,7 +29,7 @@ import {
   type MemoryParams,
 } from '../modules/memory/params';
 import { generateBlockItems, generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
-import { stressorsOf } from '../modules/reaction/common';
+import { stressorsOf, type BlockStressors } from '../modules/reaction/common';
 import { reactionModules } from '../modules/registry';
 import {
   generateGorbovTable,
@@ -41,6 +42,7 @@ import {
 } from '../modules/tables/gorbov';
 import { generateSchulteTable, schulteParams } from '../modules/tables/schulte';
 import {
+  OVERLOAD_PREFIX,
   SERIES_INSTRUCTION_TRAINING,
   SERIES_KEYS_HINT,
   seriesDiagnosticInstruction,
@@ -65,7 +67,10 @@ export function scaledPractice(n: number, scale: number): number {
   return n > 0 && scale < 1 ? Math.max(1, Math.round(n * scale)) : n;
 }
 
-/** The next block of a segment, decided before its instruction: level, parameters, task, keys and volume. */
+/**
+ * The next block of a segment, decided before its instruction: level, parameters, task, keys and volume.
+ * `overload`: an overload block (isOverloadBlock); number series never are.
+ */
 export type BlockPlan =
   | {
       kind: 'reaction';
@@ -77,10 +82,11 @@ export type BlockPlan =
       layout: LayoutId;
       size: number;
       practice: number;
+      overload: boolean;
     }
-  | { kind: 'table'; module: TableModuleId; L: number; task: TableTaskId; params: TableParams }
+  | { kind: 'table'; module: TableModuleId; L: number; task: TableTaskId; params: TableParams; overload: boolean }
   /** Memory blocks cycle their mode by block index; `count` trials. */
-  | { kind: 'memory'; L: number; mode: MemoryMode; params: MemoryParams; count: number }
+  | { kind: 'memory'; L: number; mode: MemoryMode; params: MemoryParams; count: number; overload: boolean }
   /** Training items carry their own limits (R36); `totalLimitMs` is the diagnostic's block limit. */
   | { kind: 'numseries'; diagnostic: boolean; count: number; totalLimitMs: number | null };
 
@@ -93,9 +99,20 @@ export interface PlanContext {
   diagnostic: boolean;
 }
 
-/** Block `blockIndex` of the segment at level L (Gorbov runs cycle their tasks, memory blocks their mode, by index). */
-export function planBlock(segment: Segment, L: number, blockIndex: number, ctx: PlanContext): BlockPlan {
+/** Every block of a finisher; the odd blocks (1, 3, …) of a plateau mix. */
+export function isOverloadBlock(segment: Segment, blockIndex: number): boolean {
+  return segment.overload === 'finisher' || (segment.overload === 'mix' && blockIndex % 2 === 1);
+}
+
+/**
+ * Block `blockIndex` of the segment whose level is `segmentL` (Gorbov runs cycle their tasks, memory blocks
+ * their mode, by index). An overload block of a mix plays OVERLOAD_LEVEL_STEP above the segment level; a
+ * finisher's segment level already includes the step.
+ */
+export function planBlock(segment: Segment, segmentL: number, blockIndex: number, ctx: PlanContext): BlockPlan {
   const { module } = segment;
+  const overload = isOverloadBlock(segment, blockIndex);
+  const L = overload && segment.overload === 'mix' ? segmentL + OVERLOAD_LEVEL_STEP : segmentL;
   if (isReactionModule(module)) {
     const mod = reactionModules[module];
     const params = mod.params(L);
@@ -109,15 +126,17 @@ export function planBlock(segment: Segment, L: number, blockIndex: number, ctx: 
       layout: effectiveLayout,
       size: scaledCount(segment.trialCount ?? mod.blockSize, ctx.scale),
       practice: scaledPractice(segment.practiceTrials ?? 0, ctx.scale),
+      overload,
     };
   }
   if (module === 'gorbov') {
     const task = gorbovTaskForRun(blockIndex);
-    return { kind: 'table', module, L, task, params: gorbovParams(L, task) };
+    return { kind: 'table', module, L, task, params: gorbovParams(L, task), overload };
   }
-  if (module === 'schulte') return { kind: 'table', module, L, task: 'schulte', params: schulteParams(L) };
+  if (module === 'schulte') return { kind: 'table', module, L, task: 'schulte', params: schulteParams(L), overload };
   if (module === 'memory') {
-    return { kind: 'memory', L, mode: memoryModeForBlock(blockIndex), params: memoryParams(L), count: scaledCount(MEMORY_TRIALS, ctx.scale) };
+    const count = scaledCount(MEMORY_TRIALS, ctx.scale);
+    return { kind: 'memory', L, mode: memoryModeForBlock(blockIndex), params: memoryParams(L), count, overload };
   }
   if (ctx.diagnostic) {
     const scheduled = diagnosticSeriesSchedule().length;
@@ -132,7 +151,13 @@ export function planBlock(segment: Segment, L: number, blockIndex: number, ctx: 
   return { kind: 'numseries', diagnostic: false, count: scaledCount(SERIES_BLOCK_ITEMS, ctx.scale), totalLimitMs: null };
 }
 
+/** The instruction before a block; an overload block's text starts with OVERLOAD_PREFIX. */
 export function blockInstruction(plan: BlockPlan, layout: LayoutId): { text: string; keysHint: string } {
+  const { text, keysHint } = plainInstruction(plan, layout);
+  return { text: plan.kind !== 'numseries' && plan.overload ? OVERLOAD_PREFIX + text : text, keysHint };
+}
+
+function plainInstruction(plan: BlockPlan, layout: LayoutId): { text: string; keysHint: string } {
   switch (plan.kind) {
     case 'reaction':
       return {
@@ -183,6 +208,7 @@ export function buildBlock(
               .map((t) => ({ ...t, practice: true }))
           : [];
       const specs = [...practice, ...mod.generateBlock(plan.params, createRng(seed), layout, plan.size)];
+      const stressors = stressorsOf(mod, plan.params);
       return {
         step: {
           kind: 'reaction_block',
@@ -192,7 +218,7 @@ export function buildBlock(
           keys: plan.keys,
           layout: plan.layout,
           legend: mod.legend?.(layout, plan.params) ?? null,
-          layers: { ...stressorsOf(mod, plan.params), seed: deriveSeed(seed, 'layers') },
+          layers: { ...(plan.overload ? overloadStressors(stressors) : stressors), seed: deriveSeed(seed, 'layers') },
         },
         paramsJson: JSON.stringify(plan.params),
       };
@@ -227,6 +253,11 @@ export function buildBlock(
       };
     }
   }
+}
+
+/** An overload block adds the finisher sound to the module's own on every trial; the noise keeps its trials (W2-R10). */
+function overloadStressors(s: BlockStressors): BlockStressors {
+  return { noise: s.noise, audio: mergeAudio(s.audio, FINISHER_AUDIO), gate: 'all' };
 }
 
 export interface ScoredReaction {

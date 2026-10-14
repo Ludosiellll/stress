@@ -56,4 +56,24 @@ describe('Done', () => {
     rerender(<Done diagnostic={null} seriesTotal={null} summaries={[view({ lBefore: 2, lAfter: 3.5 })]} onHome={vi.fn()} />);
     expect(screen.getByText('ПЗМР: блоков 1, уровень 2,0 → 3,5')).toBeTruthy();
   });
+
+  it('overload blocks count as blocks but not in the level change', () => {
+    render(
+      <Done
+        diagnostic={null}
+        seriesTotal={null}
+        summaries={[
+          view({ lBefore: 8, lAfter: 9 }),
+          view({ lBefore: 12, lAfter: 14, flags: ['overload'] }),
+          view({ lBefore: 9, lAfter: 10 }),
+          view({ lBefore: 13, lAfter: 15, flags: ['overload'] }),
+          view({ module: 'szmr', title: 'СЗМР', lBefore: 13, lAfter: 14, flags: ['overload'] }),
+        ]}
+        onHome={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('ПЗМР: блоков 4, уровень 8,0 → 10,0')).toBeTruthy();
+    // A finisher module has only overload blocks: no level change to report.
+    expect(screen.getByText('СЗМР: блоков 1')).toBeTruthy();
+  });
 });
