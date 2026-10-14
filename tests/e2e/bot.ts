@@ -106,6 +106,8 @@ export type Screen =
   | 'summary'
   | 'fatigue'
   | 'notice'
+  /** A diagnostic reaction block with dropped frames is replayed once (headless Chromium can drop frames). */
+  | 'replay'
   | 'pause'
   | 'save_error'
   | 'wellbeing'
@@ -113,7 +115,7 @@ export type Screen =
   | 'unknown';
 
 /** Screens the driver acts on; the others it waits through. */
-const ACTIONABLE: readonly Screen[] = ['warn', 'instruction', 'table', 'series', 'summary', 'fatigue', 'wellbeing', 'done'];
+const ACTIONABLE: readonly Screen[] = ['warn', 'instruction', 'table', 'series', 'summary', 'fatigue', 'replay', 'wellbeing', 'done'];
 
 /**
  * The current session screen. A screen that needs an action is returned once (`fresh`): the call marks
@@ -138,6 +140,7 @@ async function claimScreen(page: Page, stopAt: Screen): Promise<{ kind: Screen; 
     else if (heading === 'Пауза') kind = 'pause';
     else if (heading === 'Усталость') kind = 'fatigue';
     else if (heading === 'Блок прерван') kind = 'notice';
+    else if (heading === 'Повтор блока') kind = 'replay';
     else if (heading === 'Ошибка сохранения') kind = 'save_error';
     else if (text.includes('Проверка экрана')) kind = 'checking';
     else if (text.includes('Продолжить всё равно')) kind = 'warn';
@@ -273,6 +276,9 @@ export async function playSession(page: Page, o: PlayOptions = {}): Promise<Scre
         break;
       case 'fatigue':
         await page.getByRole('button', { name: 'Продолжить' }).click();
+        break;
+      case 'replay':
+        await page.getByRole('button', { name: 'Дальше (Enter)' }).click();
         break;
       case 'wellbeing':
         if (o.wellbeing === 'skip') await page.getByRole('button', { name: 'Пропустить' }).click();
