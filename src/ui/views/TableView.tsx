@@ -83,7 +83,7 @@ export default function TableView({ step, busy, onSubmit }: TableViewProps) {
   const style = { '--size': params.size } as CSSProperties;
   return (
     <div className="table-screen">
-      <div role="group" aria-label="Таблица" className="table-grid" style={style}>
+      <div role="group" aria-label="Таблица" className="table-grid" data-task={task} style={style}>
         {cells.map((cell) => (
           <button
             key={`${cell.color}${String(cell.value)}`}
@@ -92,6 +92,7 @@ export default function TableView({ step, busy, onSubmit }: TableViewProps) {
             disabled={busy}
             className="table-cell"
             data-color={cell.color}
+            data-value={cell.value}
             style={{ color: INK[cell.color] }}
             onMouseDown={(e) => {
               onCell(cell, e);

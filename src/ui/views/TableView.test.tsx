@@ -54,6 +54,16 @@ const order = (): string[] =>
     .map((b) => b.textContent);
 
 describe('TableView', () => {
+  it('marks the grid with its task and every cell with its value and colour (stable hooks for the e2e bot)', () => {
+    render(<TableView step={step()} busy={false} onSubmit={vi.fn()} />);
+    const grid = screen.getByRole('group', { name: 'Таблица' });
+    expect(grid.dataset['task']).toBe('schulte');
+    const cells = within(grid).getAllByRole('button');
+    expect(cells.map((b) => `${b.dataset['color'] ?? ''}:${b.dataset['value'] ?? ''}`)).toEqual(
+      CELLS.map((c) => `${c.color}:${String(c.value)}`),
+    );
+  });
+
   it('draws size×size cells in the step order, with no timer on screen', () => {
     render(<TableView step={step()} busy={false} onSubmit={vi.fn()} />);
     expect(order()).toEqual(['5', '2', '9', '1', '7', '3', '8', '4', '6']);
