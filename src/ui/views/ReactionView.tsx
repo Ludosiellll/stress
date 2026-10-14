@@ -1,7 +1,8 @@
 import { useEffect, useEffectEvent, useRef } from 'react';
-import { STRESSOR_LOOP_S } from '../../engine/audio/stressors';
+import { STRESSOR_LOOP_S, type AudioStressorParams } from '../../engine/audio/stressors';
 import { resolveBlock } from '../../engine/reaction/resolve';
 import type { BlockTimeline } from '../../engine/reaction/types';
+import type { AudioOut, StressorHandle } from '../../runtime/audio/audioOut';
 import { createCanvasRenderer, type CanvasRenderer } from '../../runtime/canvasRenderer';
 import { attachFocusGuard } from '../../runtime/focusGuard';
 import { browserFrameClock } from '../../runtime/frameClock';
@@ -30,6 +31,51 @@ function hideQuietly(renderer: StimulusRenderer): void {
   }
 }
 
+/**
+ * The block's sound, or null when it cannot be built (e.g. the buffer is refused). Every call on the handle is
+ * guarded too (W2-R22): a start that throws (createBufferSource, createGain, connect) counts as not played, and a
+ * failing switch or stop leaves the block running. Sound problems never stop a block; it just runs silently.
+ */
+function prepareQuietly(audio: AudioOut, params: AudioStressorParams, seed: number): Omit<StressorHandle, 'playing'> | null {
+  let h: StressorHandle | null;
+  try {
+    h = audio.prepare(params, seed);
+  } catch {
+    return null;
+  }
+  if (h === null) return null;
+  const sound = h;
+  return {
+    start(offsetS) {
+      try {
+        return sound.start(offsetS);
+      } catch {
+        return false;
+      }
+    },
+    setActive(on) {
+      try {
+        sound.setActive(on);
+      } catch {
+        // The loop keeps its last gain; the trial goes on.
+      }
+    },
+    stop() {
+      try {
+        sound.stop();
+      } catch {
+        // Nothing left that could still sound.
+      }
+    },
+  };
+}
+
+/**
+ * A block with sound waits for the audio context to resume (the instruction's key press asked for it a moment
+ * earlier), but no longer than this: a resume() that never settles must not hold the block.
+ */
+export const UNLOCK_WAIT_MS = 500;
+
 /** Where in the 20 s loop the block's sound starts, s: (seed mod 20 000) / 1000. */
 const loopOffsetS = (seed: number): number => (seed % (STRESSOR_LOOP_S * 1000)) / 1000;
 
@@ -39,8 +85,10 @@ const loopOffsetS = (seed: number): number => (seed % (STRESSOR_LOOP_S * 1000)) 
  *
  * Order (so that no event is lost or misattributed): renderer → sound buffer → runner → focus guard (may abort at
  * once) → Escape listener; then, in the next task — after the key event that opened the block has been fully
- * dispatched — input, the sound loop (silent until a trial switches it on) and `start()`. Everything is released, and
- * the sound faded out, when the block ends or the view unmounts.
+ * dispatched — input, the sound loop (silent until a trial switches it on) and `start()`. A block with sound first
+ * waits for `audio.unlock()` (at most UNLOCK_WAIT_MS), so the loop does not find the context still suspended; a block
+ * without sound starts exactly as before. Everything is released, and the sound faded out, when the block ends or the
+ * view unmounts. If the sound cannot be built or started, the block runs silently and reports `audioPlayed: false`.
  *
  * Stressors (`step.layers`): from the wait before trial i, the visual noise is on when trial i is `noisy` (W2-R10),
  * the sound when the gate is 'all' or trial i is `noisy`. A block with sound reports whether it played.
@@ -71,7 +119,7 @@ export default function ReactionView({ step, nominalFrameMs, onDone, onAbort, on
       };
     }
     // Synthesized here, before the runner exists: nothing is built or loaded while the block runs.
-    const sound = layers.audio === null ? null : audio.prepare(layers.audio, layers.seed);
+    const sound = layers.audio === null ? null : prepareQuietly(audio, layers.audio, layers.seed);
     let audioPlayed = false;
     const noisy = (i: number): boolean => specs[i]?.cond === 'noisy';
     const { clock, renderer } = instrumentBlock(hooks, step.module, specs, { clock: browserFrameClock, renderer: base });
@@ -107,7 +155,12 @@ export default function ReactionView({ step, nominalFrameMs, onDone, onAbort, on
       window.removeEventListener('keydown', onEscape, { capture: true });
     };
 
-    const timer = setTimeout(() => {
+    let begun = false;
+    let unlockWait: ReturnType<typeof setTimeout> | undefined;
+    const begin = (): void => {
+      clearTimeout(unlockWait);
+      if (begun || disposed) return;
+      begun = true;
       if (!stopped) {
         offInput = attachInput(window, step.layout, new Set(step.keys), (p) => {
           runner.press(p);
@@ -131,11 +184,21 @@ export default function ReactionView({ step, nominalFrameMs, onDone, onAbort, on
           if (!disposed) failed(e);
         },
       );
+    };
+
+    const timer = setTimeout(() => {
+      if (sound === null) {
+        begin();
+        return;
+      }
+      unlockWait = setTimeout(begin, UNLOCK_WAIT_MS);
+      void audio.unlock().then(begin);
     }, 0);
 
     return () => {
       disposed = true;
       clearTimeout(timer);
+      clearTimeout(unlockWait);
       runner.abort('user');
       release();
     };
