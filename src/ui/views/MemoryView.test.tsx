@@ -186,6 +186,18 @@ describe('MemoryView', () => {
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 
+  it('span protocol counts its trials without a total: it usually stops before the last one', async () => {
+    renderView(step(spanTrials(), { protocol: 'span' }));
+    await showTrial();
+    expect(screen.getByText('Проба 1')).toBeTruthy();
+    expect(screen.queryByText(/из 6/)).toBeNull();
+    key('1');
+    key('2');
+    key('Enter');
+    await showTrial();
+    expect(screen.getByText('Проба 2')).toBeTruthy();
+  });
+
   it('span protocol goes on while one row of the length was right', async () => {
     const { onSubmit } = renderView(step(spanTrials(), { protocol: 'span' }));
     await answerRows([['1', '2'], ['3', '4'], ['5', '6', '7'], ['8', '9']]);

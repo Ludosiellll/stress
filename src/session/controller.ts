@@ -385,7 +385,7 @@ export class SessionController {
         lines: span === null ? memoryLines(exact, n, positionsCorrect, params.length) : spanLines(exact, n, span),
         rows: () => ({ trials: [], items: [] }),
         onCommit: () => {
-          if (span !== null) this.diagParts.push({ module: 'memory', span });
+          if (!this.counted && span !== null) this.diagParts.push({ module: 'memory', span });
         },
       });
     });

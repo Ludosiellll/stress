@@ -141,7 +141,8 @@ export default function MemoryView({ step, exposeAnswer, busy, onSubmit, onAbort
           data-e2e-answer={exposeAnswer ? trial.items.join(',') : undefined}
         >
           <p className="muted">
-            Проба {index + 1} из {trials.length}
+            {/* The span protocol usually stops well before its last row: no total there. */}
+            {step.protocol === 'span' ? `Проба ${String(index + 1)}` : `Проба ${String(index + 1)} из ${String(trials.length)}`}
           </p>
           {trial.mode === 'positions' ? (
             <>
