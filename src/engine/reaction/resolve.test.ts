@@ -126,6 +126,10 @@ describe('rule 3: presses after the window', () => {
     ]);
   });
 
+  it('a late press stays late even under 100 ms (only possible with windowMs < 100)', () => {
+    expect(single(press('Space', 50), [space(1080)])).toMatchObject([{ outcome: 'late', rtMs: 80, key: 'Space' }]);
+  });
+
   it('only the first press after the window is late; the next one marks the next trial false start', () => {
     const presses = [space(1600), space(1700), space(3300)];
     const r = resolveBlock([press('Space', 500), press()], timeline([1000, 3000], presses));
@@ -244,9 +248,9 @@ describe('rule 4: outcomes', () => {
     ]);
   });
 
-  it('timed: rt under 100 → false_start, errorMs still recorded for the right key', () => {
+  it('timed: rt under 100 → false_start, errorMs null even for the right key (R10)', () => {
     expect(single(timed(500, 10), [space(1099)])).toMatchObject([
-      { outcome: 'false_start', rtMs: 99, errorMs: -401, key: 'Space' },
+      { outcome: 'false_start', rtMs: 99, errorMs: null, key: 'Space' },
     ]);
   });
 
@@ -254,12 +258,12 @@ describe('rule 4: outcomes', () => {
     expect(single(timed(500, 10), [])).toMatchObject([{ outcome: 'miss', rtMs: null, errorMs: null, key: null }]);
   });
 
-  it('timed: a false-start mark overrides an on-target response', () => {
+  it('timed: a false-start mark overrides an on-target response and clears errorMs (R10)', () => {
     const presses = [space(1500), space(2500), space(3500)];
     const r = resolveBlock([timed(500, 10, 1000), timed(500, 10)], timeline([1000, 3000], presses));
     expect(r).toMatchObject([
       { outcome: 'hit', errorMs: 0 },
-      { outcome: 'false_start', success: false, rtMs: 500, errorMs: 0 },
+      { outcome: 'false_start', success: false, rtMs: 500, errorMs: null, key: 'Space' },
     ]);
   });
 });
@@ -341,6 +345,7 @@ const ALLOWED: Record<Expected['kind'], readonly Outcome[]> = {
 };
 
 const NEEDS_RT: readonly Outcome[] = ['hit', 'wrong', 'late', 'commission'];
+const WITH_ERROR: readonly Outcome[] = ['hit', 'early', 'timing_late'];
 
 describe('resolveBlock properties', () => {
   it('one consistent result per trial', () => {
@@ -357,7 +362,10 @@ describe('resolveBlock properties', () => {
           if (NEEDS_RT.includes(r.outcome)) expect(r.rtMs).not.toBeNull();
           expect(r.rtMs === null).toBe(r.key === null);
           if (r.rtMs !== null) expect(r.rtMs).toBeGreaterThanOrEqual(0);
-          if (r.kind !== 'timed') expect(r.errorMs).toBeNull();
+          if (r.errorMs !== null) {
+            expect(r.kind).toBe('timed');
+            expect(WITH_ERROR).toContain(r.outcome);
+          }
           expect(r.frameDropped).toBe(tl.droppedOnset[i]);
           expect(r.practice).toBe(spec?.practice ?? false);
         });

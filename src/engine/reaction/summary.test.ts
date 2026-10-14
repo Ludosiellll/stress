@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { cv, sd } from '../stats';
+import { resolveBlock } from './resolve';
 import { summarize } from './summary';
-import type { Outcome, ReactionSummary, TrialResult } from './types';
+import type { Outcome, ReactionSummary, TrialResult, TrialSpec } from './types';
 
 function res(over: Partial<TrialResult> = {}): TrialResult {
   return {
@@ -136,6 +137,24 @@ describe('summarize', () => {
     expect(s.meanSignedErrorMs).toBeCloseTo(5 / 3, 10);
     expect(s.meanRt).toBeNull();
     expect(s.score).toBe(0.2);
+  });
+
+  it('false starts never enter error statistics (resolveBlock → summarize, R10)', () => {
+    const spec: TrialSpec = {
+      isiMs: 1000,
+      windowMs: 1000,
+      stimulus: { kind: 'rdo', startDeg: 0, targetDeg: 90, periodMs: 2000 },
+      expected: { kind: 'timed', key: 'Space', targetOffsetMs: 500, toleranceMs: 10 },
+    };
+    const sp = (ts: number) => ({ key: 'Space', ts });
+    // trial 0: err +5 hit; trial 1: rt 50 false start; trial 2: ISI press marks it, then an on-target press
+    const presses = [sp(1505), sp(3050), sp(4500), sp(5500)];
+    const tl = { onsets: [1000, 3000, 5000], droppedOnset: [false, false, false], presses };
+    const results = resolveBlock([spec, spec, spec], tl);
+    const s = summarize(results);
+    expect(s.counts.false_start).toBe(2);
+    expect(s.meanAbsErrorMs).toBe(5);
+    expect(s.meanSignedErrorMs).toBe(5);
   });
 
   it('practice trials do not affect anything', () => {

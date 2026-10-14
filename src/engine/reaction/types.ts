@@ -51,7 +51,7 @@ export interface TrialResult {
   success: boolean;
   /** Response time from onset; set whenever the trial got a response (in-window or late). */
   rtMs: number | null;
-  /** `timed` trials answered with the expected key: rtMs − targetOffsetMs (signed). */
+  /** `timed` trials answered with the expected key, false starts excluded: rtMs − targetOffsetMs (signed). */
   errorMs: number | null;
   key: InputKey | null;
   frameDropped: boolean;

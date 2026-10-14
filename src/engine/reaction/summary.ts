@@ -6,7 +6,7 @@ const MAX_DROPPED_RATIO = 0.05;
 
 /**
  * Block summary over non-practice trials. RT statistics use hits of `press` trials only;
- * error statistics use every result with an errorMs (timed trials answered with the right key).
+ * error statistics use every result with an errorMs (timed trials answered with the right key, no false starts).
  */
 export function summarize(results: readonly TrialResult[]): ReactionSummary {
   const counts: Record<Outcome, number> = {

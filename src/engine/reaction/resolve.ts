@@ -1,4 +1,4 @@
-import type { BlockTimeline, Outcome, Press, TrialResult, TrialSpec } from './types';
+import type { BlockTimeline, Expected, Outcome, Press, TrialResult, TrialSpec } from './types';
 
 /** A response this soon after onset cannot be a reaction to the stimulus (`press` and `timed` trials). */
 export const FALSE_START_MS = 100;
@@ -49,6 +49,12 @@ function outcomeOf(t: Trial): Outcome {
   if (err < -expected.toleranceMs) return 'early';
   if (err > expected.toleranceMs) return 'timing_late';
   return 'hit';
+}
+
+/** Signed timing error of a `timed` trial answered with the right key; false starts never get one (ruling R10). */
+function timingErrorOf(expected: Expected, outcome: Outcome, r: Press | null, rtMs: number | null): number | null {
+  if (expected.kind !== 'timed' || outcome === 'false_start' || rtMs === null || r?.key !== expected.key) return null;
+  return rtMs - expected.targetOffsetMs;
 }
 
 /**
@@ -102,8 +108,7 @@ export function resolveBlock(specs: readonly TrialSpec[], tl: BlockTimeline): Tr
       outcome,
       success: outcome === 'hit' || outcome === 'correct_reject',
       rtMs,
-      errorMs:
-        expected.kind === 'timed' && rtMs !== null && r?.key === expected.key ? rtMs - expected.targetOffsetMs : null,
+      errorMs: timingErrorOf(expected, outcome, r, rtMs),
       key: r?.key ?? null,
       frameDropped: tl.droppedOnset[idx] === true,
       practice: t.spec.practice ?? false,
