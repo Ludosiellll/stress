@@ -1,6 +1,13 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { BASE_ITEM_LIMIT_MS, MIN_ITEM_LIMIT_MS, effectiveDifficulty, itemTimeLimit } from './itemLimit';
+import {
+  BASE_ITEM_LIMIT_MS,
+  MIN_ITEM_LIMIT_MS,
+  effectiveDifficulty,
+  itemEffectiveDifficulty,
+  itemLimitMs,
+  itemTimeLimit,
+} from './itemLimit';
 
 describe('item limit constants', () => {
   it('are 40 s and 8 s', () => {
@@ -23,6 +30,19 @@ describe('effectiveDifficulty', () => {
     for (const limitMs of [0, -1000, Number.NaN, Infinity]) {
       expect(() => effectiveDifficulty(950, limitMs), String(limitMs)).toThrow(RangeError);
     }
+  });
+});
+
+describe('stored items (R36)', () => {
+  it('an item keeps its own limit; a row stored before 0.2.0 had 40 s', () => {
+    expect(itemLimitMs({ timeLimitMs: 11_900 })).toBe(11_900);
+    expect(itemLimitMs({ timeLimitMs: null })).toBe(BASE_ITEM_LIMIT_MS);
+  });
+
+  it('the effective difficulty comes from the stored limit, 40 s without one', () => {
+    expect(itemEffectiveDifficulty({ difficulty: 950, timeLimitMs: 11_900 })).toBe(effectiveDifficulty(950, 11_900));
+    expect(itemEffectiveDifficulty({ difficulty: 950, timeLimitMs: 20_000 })).toBe(1150);
+    expect(itemEffectiveDifficulty({ difficulty: 950, timeLimitMs: null })).toBe(950);
   });
 });
 

@@ -15,6 +15,16 @@ export function effectiveDifficulty(dStruct: number, limitMs: number): number {
   return dStruct + D_PER_HALVING * Math.log2(BASE_ITEM_LIMIT_MS / limitMs);
 }
 
+/** The limit a stored item was answered under: its own, or 40 s for rows stored before 0.2.0 (R36). */
+export function itemLimitMs(item: { readonly timeLimitMs: number | null }): number {
+  return item.timeLimitMs ?? BASE_ITEM_LIMIT_MS;
+}
+
+/** D_eff of an item at its stored limit (R36): the one rule for live rating updates and for rebuilds. */
+export function itemEffectiveDifficulty(item: { readonly difficulty: number; readonly timeLimitMs: number | null }): number {
+  return effectiveDifficulty(item.difficulty, itemLimitMs(item));
+}
+
 /** 40000 while targetD ≤ familyMaxD; otherwise clamp(round100(40000·2^(−(targetD − dStruct)/200)), 8000, 40000). */
 export function itemTimeLimit(targetD: number, dStruct: number, familyMaxD: number): number {
   if (![targetD, dStruct, familyMaxD].every(Number.isFinite)) {

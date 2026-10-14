@@ -1,4 +1,6 @@
+import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
+import { deriveRatings } from '../engine/derive';
 import { EMPTY_METRICS, diagnosticSegmentSeed, diagnosticSeriesSchedule, planDiagnostic } from '../engine/diagnostic';
 import { R0, updateRating, type Rating } from '../engine/elo';
 import { effectiveDifficulty } from '../engine/itemLimit';
@@ -10,6 +12,7 @@ import { REACTION_MODULE_IDS, type FamilyId, type ReactionModuleId } from '../en
 import { createRng, deriveSeed } from '../engine/rng';
 import { generateMemoryTrials, spanProtocolTrials } from '../modules/memory/generate';
 import { memoryModeForBlock, memoryParams } from '../modules/memory/params';
+import { FAMILIES } from '../modules/numseries/families';
 import { generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
 import { NO_STRESSORS } from '../modules/reaction/common';
 import { pomeh } from '../modules/reaction/pomeh';
@@ -443,6 +446,37 @@ describe('number series', () => {
     const first = updateRating({ rating: 1400, n: 30 }, effectiveDifficulty(950, 11_900), true);
     expect(updatedRatings(start, outcomes).get('arith')).toEqual(updateRating(first, 900, true));
     expect(updatedRatings(new Map(), outcomes.slice(1)).get('arith')).toEqual(updateRating({ rating: R0, n: 0 }, 900, true));
+  });
+
+  it('ratings updated live equal deriveRatings over the stored rows, for limits under 40 s (R36)', () => {
+    const item = fc.record({
+      family: fc.constantFrom(...FAMILIES),
+      difficulty: fc.integer({ min: 500, max: 1800 }),
+      timeLimitMs: fc.integer({ min: 80, max: 399 }).map((x) => x * 100),
+      correct: fc.boolean(),
+      timeMs: fc.integer({ min: 500, max: 45_000 }),
+    });
+    fc.assert(
+      fc.property(fc.array(fc.array(item, { minLength: 1, maxLength: 10 }), { minLength: 1, maxLength: 3 }), (blocks) => {
+        let live = new Map<FamilyId, Rating>();
+        const rows = blocks.flatMap((block, b) => {
+          const s: StepOf<'numseries_block'> = {
+            kind: 'numseries_block',
+            items: block.map((it, i) => ({ ...seriesItem(i, it.timeLimitMs, it.difficulty), id: `${String(b)}:${String(i)}`, family: it.family })),
+            totalLimitMs: null,
+          };
+          const outcomes = scoreSeries(
+            s,
+            block.map((it, i) => ({ itemId: `${String(b)}:${String(i)}`, given: it.correct ? 4 : 5, timeMs: it.timeMs })),
+          );
+          live = updatedRatings(live, outcomes);
+          return logicItemRows(`b${String(b)}`, outcomes, new Date(Date.UTC(2026, 9, 14 + b)).toISOString());
+        });
+        expect(rows.every((r) => r.timeLimitMs !== null && r.timeLimitMs < 40_000)).toBe(true);
+        expect(live).toEqual(deriveRatings(rows));
+      }),
+      { numRuns: 1000 },
+    );
   });
 
   it('logicItemRows store timeLimitMs', () => {

@@ -1,6 +1,6 @@
 import { EMPTY_METRICS, diagnosticSegmentSeed, diagnosticSeriesSchedule, type DiagnosticResults } from '../engine/diagnostic';
 import { R0, updateRating, type Rating } from '../engine/elo';
-import { BASE_ITEM_LIMIT_MS, effectiveDifficulty } from '../engine/itemLimit';
+import { itemEffectiveDifficulty } from '../engine/itemLimit';
 import { keyLabel, layoutKeys } from '../engine/layouts';
 import { FINISHER_AUDIO, mergeAudio } from '../engine/audio/stressors';
 import { OVERLOAD_LEVEL_STEP, type Segment } from '../engine/planner';
@@ -362,8 +362,7 @@ export function updatedRatings(
   const next = new Map(ratings);
   for (const o of outcomes) {
     const current = next.get(o.item.family) ?? { rating: R0, n: 0 };
-    const dEff = effectiveDifficulty(o.item.difficulty, o.item.timeLimitMs ?? BASE_ITEM_LIMIT_MS);
-    next.set(o.item.family, updateRating(current, dEff, o.success));
+    next.set(o.item.family, updateRating(current, itemEffectiveDifficulty(o.item), o.success));
   }
   return next;
 }

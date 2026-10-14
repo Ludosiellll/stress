@@ -1,6 +1,6 @@
 import { isPlateau, savedLevel } from './adaptive';
 import { R0, updateRating, type Rating } from './elo';
-import { BASE_ITEM_LIMIT_MS, effectiveDifficulty } from './itemLimit';
+import { itemEffectiveDifficulty, itemLimitMs } from './itemLimit';
 import type { ModuleState } from './planner';
 import { MODULE_IDS, type BlockFlag, type FamilyId, type ModuleId, type SessionKind } from './types';
 
@@ -114,8 +114,7 @@ export function deriveRatings(items: readonly DeriveItem[]): Map<FamilyId, Ratin
   const ratings = new Map<FamilyId, Rating>();
   for (const it of items) {
     const current = ratings.get(it.family) ?? { rating: R0, n: 0 };
-    const limitMs = it.timeLimitMs ?? BASE_ITEM_LIMIT_MS;
-    ratings.set(it.family, updateRating(current, effectiveDifficulty(it.difficulty, limitMs), it.correct && it.timeMs <= limitMs));
+    ratings.set(it.family, updateRating(current, itemEffectiveDifficulty(it), it.correct && it.timeMs <= itemLimitMs(it)));
   }
   return ratings;
 }
