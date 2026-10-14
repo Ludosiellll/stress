@@ -10,13 +10,15 @@ import { OVERLOAD_LEVEL_STEP, type ModuleState, type Segment, type SessionPlan }
 import type { BlockTimeline } from '../engine/reaction/types';
 import { isReactionModule, type BlockFlag, type FamilyId, type LayoutId, type ModuleId } from '../engine/types';
 import { describeChanges } from '../modules/describe';
-import { scoreMemoryTrial, type MemoryAnswer } from '../modules/memory/score';
+import type { MemoryTrial } from '../modules/memory/generate';
+import { memorySpan, scoreMemoryTrial, type MemoryAnswer } from '../modules/memory/score';
 import { moduleTitles, reactionModules } from '../modules/registry';
 import type { TableTaskId } from '../modules/tables/gorbov';
 import { scoreTableRun, type TableRun } from '../modules/tables/score';
 import {
   blockInstruction,
   buildBlock,
+  checkMemoryAnswers,
   diagnosticBlockSeed,
   diagnosticResults,
   planBlock,
@@ -37,6 +39,7 @@ import {
   reactionLines,
   saveErrorMessage,
   seriesLines,
+  spanLines,
   stabilityLine,
   tableLines,
   UNRELIABLE_REPLAY_NOTICE,
@@ -54,7 +57,10 @@ export interface SessionStartOptions {
   /** Wall clock: session/block dates and segment budgets (never trial timing). */
   now: () => Date;
   appVersion: string;
-  /** e2e only (Task 15): budgets and the series total limit × scale, block sizes and item counts max(3, round(n·scale)). */
+  /**
+   * e2e only (Task 15): budgets and the series total limit × scale, block sizes and item counts max(3, round(n·scale))
+   * (12 for the modules with trial conditions, so each condition keeps ≥ 3 RTs).
+   */
   scale?: number;
   /** Pause between save attempts; tests inject an instant one. Default: setTimeout. */
   sleep?: (ms: number) => Promise<void>;
@@ -272,7 +278,7 @@ export class SessionController {
         ],
         rows: (blockId) => ({ trials: trialRows(blockId, step.specs, tl, results), items: [] }),
         onCommit: () => {
-          if (!this.counted) this.diagParts.push({ module, summary });
+          if (!this.counted) this.diagParts.push({ module, summary, conditions });
         },
       });
     });
@@ -343,28 +349,35 @@ export class SessionController {
   }
 
   /**
-   * One answer per trial, in order. s = exact trials / trials (W2-R9); the level moves by nextLevel with no
-   * stability rule (no RTs). The summary keeps every answer.
+   * One answer per trial, in order; the span protocol (diagnostics) ends early when it stops (checkMemoryAnswers).
+   * s = exact rows / rows answered: all the trials of a fixed block (W2-R9), the ones shown of the span protocol.
+   * The level moves by nextLevel with no stability rule (no RTs). The summary keeps every answer; the span goes
+   * to the diagnostic results.
    */
   async submitMemory(answers: readonly MemoryAnswer[]): Promise<void> {
     const step = this.take('memory_block');
-    const { trials, params, mode } = step;
-    if (answers.length !== trials.length) {
-      throw new RangeError(`submitMemory: ${String(answers.length)} answers for ${String(trials.length)} trials`);
-    }
+    checkMemoryAnswers(step, answers);
+    const { trials, params, mode, protocol } = step;
     await this.exclusive(async () => {
-      const scored = trials.map((t, i) => scoreMemoryTrial(t, answers[i] as MemoryAnswer));
+      const scored = answers.map((a, i) => scoreMemoryTrial(trials[i] as MemoryTrial, a));
       const exact = scored.filter((r) => r.exact).length;
+      const n = answers.length;
+      const span = protocol === 'span' ? memorySpan(trials, answers) : null;
       const positionsCorrect = scored.reduce((sum, r) => sum + r.positionsCorrect, 0);
       await this.completeBlock({
         module: 'memory',
         L: step.L,
-        score: exact / trials.length,
+        score: exact / n,
         level: { cvRt: null, cvMax: null, timingUnreliable: false },
         hitRts: [],
-        summaryJson: JSON.stringify({ mode, length: params.length, exact, positionsCorrect, answers }),
-        lines: memoryLines(exact, trials.length, positionsCorrect, params.length),
+        summaryJson: JSON.stringify(
+          span === null ? { mode, length: params.length, exact, positionsCorrect, answers } : { protocol, mode, exact, span, answers },
+        ),
+        lines: span === null ? memoryLines(exact, n, positionsCorrect, params.length) : spanLines(exact, n, span),
         rows: () => ({ trials: [], items: [] }),
+        onCommit: () => {
+          if (span !== null) this.diagParts.push({ module: 'memory', span });
+        },
       });
     });
   }

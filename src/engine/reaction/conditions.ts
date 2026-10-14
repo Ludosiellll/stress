@@ -1,8 +1,28 @@
 import { median } from '../stats';
+import type { ReactionModuleId } from '../types';
 import type { TrialCond, TrialResult, TrialSpec } from './types';
 
 /** Fewer RTs than this give no median for a condition. */
 export const MIN_COND_RTS = 3;
+
+/** Two conditions a module compares: condCost(stats, slow, fast). */
+export interface CondPair {
+  slow: TrialCond;
+  fast: TrialCond;
+}
+
+/** The pairs of the modules with trial conditions: noise cost, interference, switch cost. */
+export const COND_PAIRS = Object.freeze({
+  pomeh: { slow: 'noisy', fast: 'quiet' },
+  stroop: { slow: 'incongruent', fast: 'congruent' },
+  taskswitch: { slow: 'switch', fast: 'repeat' },
+} as const satisfies Partial<Record<ReactionModuleId, CondPair>>);
+
+/** The pair a module compares; null for a module without trial conditions. */
+export function condPairOf(module: ReactionModuleId): CondPair | null {
+  const pairs: Partial<Record<ReactionModuleId, CondPair>> = COND_PAIRS;
+  return pairs[module] ?? null;
+}
 
 export interface CondStats {
   /** Non-practice trials with this condition. */

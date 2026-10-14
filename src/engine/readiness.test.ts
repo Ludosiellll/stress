@@ -4,13 +4,17 @@ import {
   BAND_GORBOV_P,
   BAND_GORBOV_PI,
   BAND_GORBOV_V,
+  DIFF_SCALE_MS,
   baselineScore,
   bandScore,
+  diffScore,
   readiness,
 } from './readiness';
-import type { DiagnosticMetrics } from './diagnostic';
+import { EMPTY_METRICS, type DiagnosticMetrics } from './diagnostic';
 
+/** A 0.1.0 diagnostic: the W2 metrics are null. */
 const full = (over: Partial<DiagnosticMetrics> = {}): DiagnosticMetrics => ({
+  ...EMPTY_METRICS,
   pzmrMedianRt: 250,
   szmrMedianRt: 400,
   gonogoScore: 80,
@@ -20,14 +24,58 @@ const full = (over: Partial<DiagnosticMetrics> = {}): DiagnosticMetrics => ({
   ...over,
 });
 
-const empty: DiagnosticMetrics = {
-  pzmrMedianRt: null,
-  szmrMedianRt: null,
-  gonogoScore: null,
-  rdoMeanAbsErrorMs: null,
-  gorbov: null,
-  numseriesCorrect: null,
-};
+/** A 0.2.0 diagnostic with every metric. */
+const fullW2 = (over: Partial<DiagnosticMetrics> = {}): DiagnosticMetrics =>
+  full({
+    pomehQuietRt: 280,
+    pomehNoisyRt: 330,
+    pomehDeltaMs: 50,
+    stroopCongruentRt: 520,
+    stroopIncongruentRt: 620,
+    stroopInterferenceMs: 100,
+    switchRepeatRt: 600,
+    switchSwitchRt: 720,
+    switchCostMs: 120,
+    memorySpan: 7,
+    ...over,
+  });
+
+const empty: DiagnosticMetrics = EMPTY_METRICS;
+
+describe('diffScore (П1)', () => {
+  it('60 at the baseline, 40 points per scale step, clamped to [0, 100]', () => {
+    expect(diffScore(70, 100, 60)).toBe(80);
+    expect(diffScore(100, 100, 40)).toBe(60);
+    expect(diffScore(-100, 100, 40)).toBe(100);
+    expect(diffScore(300, 100, 40)).toBe(0);
+    expect(diffScore(160, 100, 60)).toBe(20);
+  });
+
+  it('works around zero and below it', () => {
+    expect(diffScore(-20, -10, 40)).toBe(70);
+    expect(diffScore(0, 0, 60)).toBe(60);
+    expect(diffScore(10, 0, 40)).toBe(50);
+  });
+
+  it('scales: pomeh 40 ms, stroop and taskswitch 60 ms', () => {
+    expect(DIFF_SCALE_MS).toEqual({ pomeh: 40, stroop: 60, taskswitch: 60 });
+  });
+
+  it('property: always within [0, 100]', () => {
+    fc.assert(
+      fc.property(
+        fc.double({ min: -2000, max: 2000, noNaN: true }),
+        fc.double({ min: -2000, max: 2000, noNaN: true }),
+        fc.constantFrom(40, 60),
+        (v, v0, scale) => {
+          const s = diffScore(v, v0, scale);
+          return s >= 0 && s <= 100;
+        },
+      ),
+      { numRuns: 1000 },
+    );
+  });
+});
 
 describe('bandScore', () => {
   it('hits the published points and interpolates', () => {
@@ -109,6 +157,53 @@ describe('readiness', () => {
     expect(r.overall).toBeCloseTo(vals.reduce((a, b) => a + b, 0) / 4, 12);
   });
 
+  it('0.1.0 results give the 0.1.0 abilities', () => {
+    // The two diagnostics of the W1 Home test; the W2 metrics are missing (null), not zero.
+    const baseline = full({ pzmrMedianRt: 400, szmrMedianRt: 600, rdoMeanAbsErrorMs: 50, gonogoScore: 80, numseriesCorrect: 10, gorbov: { V: 60, P: 100, Pi: 40 } });
+    const latest = full({ pzmrMedianRt: 300, szmrMedianRt: 450, rdoMeanAbsErrorMs: 40, gonogoScore: 90, numseriesCorrect: 14, gorbov: { V: 30, P: 60, Pi: 10 } });
+    const r = readiness(latest, baseline);
+    expect(r.abilities.reaction).toBeCloseTo((100 + 100 + 92) / 3, 12);
+    expect(Math.round(r.abilities.reaction ?? NaN)).toBe(97);
+    expect(Math.round(r.abilities.attention ?? NaN)).toBe(89);
+    expect(Math.round(r.abilities.switching ?? NaN)).toBe(98);
+    expect(r.abilities.logic).toBe(100);
+    expect(r.abilities.memory).toBeNull();
+    expect(Math.round(r.overall ?? NaN)).toBe(96);
+    // A W2 latest against a 0.1.0 baseline: the W2 parts have no baseline, so they are left out, never scored as 0.
+    const latestW2 = { ...latest, pomehDeltaMs: 30, stroopInterferenceMs: 90, switchCostMs: 100, memorySpan: 7 };
+    expect(readiness(latestW2, baseline)).toEqual(r);
+  });
+
+  it('with latest = baseline and the W2 metrics every ability is 60, except the Gorbov bands; memory 60', () => {
+    const d = fullW2();
+    const r = readiness(d, d);
+    expect(r.abilities.reaction).toBe(60);
+    expect(r.abilities.attention).toBe((bandScore(33, BAND_GORBOV_V) + 60 + 60) / 3);
+    expect(r.abilities.switching).toBe((bandScore(24, BAND_GORBOV_PI) + 60) / 2);
+    expect(r.abilities.memory).toBe(60);
+    expect(r.abilities.logic).toBe(60);
+  });
+
+  it('the pomeh difference 40 ms better scores 100 in reaction', () => {
+    const r = readiness(fullW2({ pomehDeltaMs: 10 }), fullW2({ pomehDeltaMs: 50 }));
+    expect(r.abilities.reaction).toBe((60 + 60 + 60 + 100) / 4);
+  });
+
+  it('interference goes into attention, the switch cost into switching, both by diffScore', () => {
+    const base = fullW2({ gorbov: null });
+    const r = readiness(fullW2({ gorbov: null, stroopInterferenceMs: 70, switchCostMs: 180 }), fullW2({ ...base, stroopInterferenceMs: 100 }));
+    expect(r.abilities.attention).toBe((60 + diffScore(70, 100, 60)) / 2);
+    expect(r.abilities.attention).toBe(70);
+    expect(r.abilities.switching).toBe(diffScore(180, 120, 60));
+    expect(r.abilities.switching).toBe(20);
+  });
+
+  it('memory: span against the own baseline, max(span0, 1)', () => {
+    expect(readiness(fullW2({ memorySpan: 8 }), fullW2({ memorySpan: 7 })).abilities.memory).toBeCloseTo(60 + (40 * 1) / (0.25 * 7), 12);
+    expect(readiness(fullW2({ memorySpan: 3 }), fullW2({ memorySpan: 0 })).abilities.memory).toBe(100);
+    expect(readiness(fullW2({ memorySpan: null }), fullW2()).abilities.memory).toBeNull();
+  });
+
   it('reflects improvement relative to baseline', () => {
     const base = full();
     const latest = full({ pzmrMedianRt: 200, szmrMedianRt: 320, rdoMeanAbsErrorMs: 48, numseriesCorrect: 15 });
@@ -166,6 +261,7 @@ describe('readiness', () => {
       }),
       { nil: null },
     );
+    const diff = fc.option(fc.double({ min: -500, max: 500, noNaN: true }), { nil: null });
     const res = fc.record({
       pzmrMedianRt: num,
       szmrMedianRt: num,
@@ -173,6 +269,16 @@ describe('readiness', () => {
       rdoMeanAbsErrorMs: num,
       gorbov: g,
       numseriesCorrect: num,
+      pomehQuietRt: num,
+      pomehNoisyRt: num,
+      pomehDeltaMs: diff,
+      stroopCongruentRt: num,
+      stroopIncongruentRt: num,
+      stroopInterferenceMs: diff,
+      switchRepeatRt: num,
+      switchSwitchRt: num,
+      switchCostMs: diff,
+      memorySpan: fc.option(fc.integer({ min: 0, max: 12 }), { nil: null }),
     });
     fc.assert(
       fc.property(res, res, (a, b) => {

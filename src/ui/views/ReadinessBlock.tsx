@@ -10,9 +10,8 @@ const ABILITIES: readonly (readonly [Ability, string])[] = [
   ['logic', 'Логика'],
 ];
 
-function abilityText(ability: Ability, value: number | null): string {
-  if (value !== null) return String(Math.round(value));
-  return ability === 'memory' ? 'появится позже' : 'нет данных';
+function abilityText(value: number | null): string {
+  return value === null ? 'нет данных' : String(Math.round(value));
 }
 
 /** Readiness index by ability; shared by Home and Progress. */
@@ -28,7 +27,7 @@ export default function ReadinessBlock({ readiness }: { readiness: HomeModel['re
             {ABILITIES.map(([id, label]) => (
               <div key={id}>
                 <dt>{label}</dt>
-                <dd>{abilityText(id, readiness.abilities[id])}</dd>
+                <dd>{abilityText(readiness.abilities[id])}</dd>
               </div>
             ))}
           </dl>

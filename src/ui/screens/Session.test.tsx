@@ -1,7 +1,7 @@
 import { act, cleanup, createEvent, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { MemoryRepository } from '../../data/memoryRepository';
-import type { DiagnosticResults } from '../../engine/diagnostic';
+import { EMPTY_METRICS, type DiagnosticResults } from '../../engine/diagnostic';
 import { planFree, type SessionPlan } from '../../engine/planner';
 import { NO_STRESSORS } from '../../modules/reaction/common';
 import { moduleTitles } from '../../modules/registry';
@@ -391,6 +391,7 @@ describe('Session steps', () => {
 
   it('shows the diagnostic results with units', async () => {
     const diagnostic: DiagnosticResults = {
+      ...EMPTY_METRICS,
       pzmrMedianRt: 251.4,
       szmrMedianRt: 402,
       gonogoScore: 93.3,
@@ -414,21 +415,17 @@ describe('Session steps', () => {
       ['Горбов — P, время 3-й таблицы', '70,5 с'],
       ['Горбов — Π, переключение внимания', '−12,0 с'],
       ['Числовые ряды — решено верно', '14 из 20'],
+      ['Помехоустойчивость — разница с помехами и без', 'нет данных'],
+      ['Струп — интерференция', 'нет данных'],
+      ['Переключение правил — цена переключения', 'нет данных'],
+      ['Память — объём', 'нет данных'],
     ]);
   });
 
   it('marks missing diagnostic metrics', async () => {
-    const diagnostic: DiagnosticResults = {
-      pzmrMedianRt: null,
-      szmrMedianRt: null,
-      gonogoScore: null,
-      rdoMeanAbsErrorMs: null,
-      gorbov: null,
-      numseriesCorrect: null,
-      unreliable: [],
-    };
+    const diagnostic: DiagnosticResults = { ...EMPTY_METRICS, unreliable: [] };
     await renderSession(fakeDriver({ kind: 'done', sessionId: 's', diagnostic, seriesTotal: null }));
-    expect(screen.getAllByText('нет данных')).toHaveLength(8);
+    expect(screen.getAllByText('нет данных')).toHaveLength(12);
   });
 });
 

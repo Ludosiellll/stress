@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { diagnosticSegmentSeed, diagnosticSeriesSchedule, planDiagnostic } from '../engine/diagnostic';
+import { EMPTY_METRICS, diagnosticSegmentSeed, diagnosticSeriesSchedule, planDiagnostic } from '../engine/diagnostic';
 import { R0, updateRating, type Rating } from '../engine/elo';
 import { effectiveDifficulty } from '../engine/itemLimit';
 import { FINISHER_AUDIO } from '../engine/audio/stressors';
@@ -7,7 +7,7 @@ import { OVERLOAD_LEVEL_STEP, type Segment } from '../engine/planner';
 import type { Outcome, ReactionSummary } from '../engine/reaction/types';
 import type { FamilyId } from '../engine/types';
 import { createRng, deriveSeed } from '../engine/rng';
-import { generateMemoryTrials } from '../modules/memory/generate';
+import { generateMemoryTrials, spanProtocolTrials } from '../modules/memory/generate';
 import { memoryModeForBlock, memoryParams } from '../modules/memory/params';
 import { generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
 import { NO_STRESSORS } from '../modules/reaction/common';
@@ -30,7 +30,7 @@ import {
   updatedRatings,
 } from './blocks';
 import { logicItemRows } from './rowsBuild';
-import { OVERLOAD_PREFIX, type StepOf } from './steps';
+import { MEMORY_SPAN_INSTRUCTION, OVERLOAD_PREFIX, type StepOf } from './steps';
 
 const counts = {} as Record<Outcome, number>;
 const summary = (over: Partial<ReactionSummary>): ReactionSummary => ({
@@ -50,6 +50,30 @@ const summary = (over: Partial<ReactionSummary>): ReactionSummary => ({
 describe('scale', () => {
   it('block sizes and item counts: max(3, round(n·scale))', () => {
     expect([scaledCount(15, 1), scaledCount(15, 0.02), scaledCount(50, 0.1), scaledCount(10, 2)]).toEqual([15, 3, 5, 20]);
+  });
+
+  it('scaledCount takes another floor: max(min, round(n·scale))', () => {
+    expect([scaledCount(40, 0.02, 12), scaledCount(48, 0.5, 12), scaledCount(20, 1, 12), scaledCount(20, 0.02, 3)]).toEqual([12, 24, 20, 3]);
+  });
+
+  it('under the e2e scale pomeh, stroop and taskswitch blocks keep 12 trials (≥ 3 RTs per condition); the others 3', () => {
+    const ctx = { layout: 'keyboard', scale: 0.02, diagnostic: true } as const;
+    const sizes = planDiagnostic(1).segments.flatMap((seg) => {
+      const plan = planBlock(seg, seg.fixedL ?? 0, 0, ctx);
+      return plan.kind === 'reaction' ? [[plan.module, plan.size, plan.practice]] : [];
+    });
+    expect(sizes).toEqual([
+      ['pzmr', 3, 1],
+      ['szmr', 3, 1],
+      ['gonogo', 3, 1],
+      ['rdo', 3, 1],
+      ['pomeh', 12, 1],
+      ['stroop', 12, 1],
+      ['taskswitch', 12, 1],
+    ]);
+    const free: Segment = { module: 'stroop', budgetMs: 300_000, purpose: 'free' };
+    expect(planBlock(free, 0, 0, { ...ctx, diagnostic: false })).toMatchObject({ size: 12 });
+    expect(planBlock(free, 0, 0, { ...ctx, scale: 1, diagnostic: false })).toMatchObject({ size: 20 });
   });
 
   it('practice trials only shrink under scale < 1, never below 1', () => {
@@ -93,7 +117,7 @@ describe('planBlock', () => {
     const segment: Segment = { module: 'memory', budgetMs: 300_000, purpose: 'free' };
     const ctx = { layout: 'pult' as const, scale: 1, diagnostic: false };
     const plan = planBlock(segment, 9, 2, ctx);
-    expect(plan).toEqual({ kind: 'memory', L: 9, mode: 'card', params: memoryParams(9), count: 6, overload: false });
+    expect(plan).toEqual({ kind: 'memory', protocol: 'fixed', L: 9, mode: 'card', params: memoryParams(9), count: 6, overload: false });
     expect(planBlock(segment, 9, 0, { ...ctx, scale: 0.02 })).toMatchObject({ mode: 'digits', count: 3 });
     expect(blockInstruction(plan, 'pult')).toEqual({
       text: 'На карточке 7 цифр. Запомни их по строкам, слева направо. Потом набери и нажми Enter.',
@@ -110,6 +134,36 @@ describe('planBlock', () => {
       protocol: 'fixed',
     });
     expect(JSON.parse(paramsJson)).toEqual({ mode: 'card', length: 7, itemMs: 630, gapMs: 158, trials: 6 });
+  });
+
+  it('diagnostic memory: the span protocol, digits at 1000 / 250 ms, the first scaledCount(20) trials', () => {
+    const segment = planDiagnostic(1).segments[9] as Segment;
+    expect(segment.module).toBe('memory');
+    const ctx = { layout: 'keyboard' as const, scale: 1, diagnostic: true };
+    const plan = planBlock(segment, 0, 0, ctx);
+    expect(plan).toEqual({
+      kind: 'memory',
+      protocol: 'span',
+      L: 0,
+      mode: 'digits',
+      params: { length: 3, itemMs: 1000, gapMs: 250 },
+      count: 20,
+      overload: false,
+    });
+    expect(planBlock(segment, 0, 0, { ...ctx, scale: 0.02 })).toMatchObject({ protocol: 'span', count: 3 });
+    expect(blockInstruction(plan, 'keyboard')).toEqual({ text: MEMORY_SPAN_INSTRUCTION, keysHint: 'Цифры, Backspace, Enter' });
+    const { step, paramsJson } = buildBlock(plan, 42, 'keyboard', new Map());
+    expect(step).toEqual({
+      kind: 'memory_block',
+      L: 0,
+      mode: 'digits',
+      params: { length: 3, itemMs: 1000, gapMs: 250 },
+      trials: spanProtocolTrials(createRng(42)),
+      protocol: 'span',
+    });
+    expect(JSON.parse(paramsJson)).toEqual({ protocol: 'span', mode: 'digits', length: 3, itemMs: 1000, gapMs: 250, trials: 20 });
+    const short = buildBlock(planBlock(segment, 0, 0, { ...ctx, scale: 0.02 }), 42, 'keyboard', new Map()).step as StepOf<'memory_block'>;
+    expect(short.trials).toEqual(spanProtocolTrials(createRng(42)).slice(0, 3));
   });
 });
 
@@ -361,26 +415,32 @@ describe('number series', () => {
 describe('diagnosticResults', () => {
   it('lists the reaction modules whose stored block was timingUnreliable, keeping their values (I1)', () => {
     const r = diagnosticResults([
-      { module: 'pzmr', summary: summary({ medianRt: 301, timingUnreliable: true }) },
-      { module: 'szmr', summary: summary({ medianRt: 402 }) },
-      { module: 'rdo', summary: summary({ meanAbsErrorMs: 20, timingUnreliable: true }) },
+      { module: 'pzmr', summary: summary({ medianRt: 301, timingUnreliable: true }), conditions: {} },
+      { module: 'szmr', summary: summary({ medianRt: 402 }), conditions: {} },
+      { module: 'rdo', summary: summary({ meanAbsErrorMs: 20, timingUnreliable: true }), conditions: {} },
       { module: 'gorbov', run: 0, seconds: 30 },
+      { module: 'stroop', summary: summary({ timingUnreliable: true }), conditions: {} },
     ]);
-    expect(r.unreliable).toEqual(['pzmr', 'rdo']);
+    expect(r.unreliable).toEqual(['pzmr', 'rdo', 'stroop']);
     expect(r.pzmrMedianRt).toBe(301);
     expect(r.rdoMeanAbsErrorMs).toBe(20);
   });
 
   it('fills each metric from its block; Gorbov needs all three runs completed', () => {
+    const cond = (medianRt: number | null) => ({ n: 20, errors: 0, medianRt });
     const all = diagnosticResults([
-      { module: 'pzmr', summary: summary({ medianRt: 301 }) },
-      { module: 'szmr', summary: summary({ medianRt: 402 }) },
-      { module: 'gonogo', summary: summary({ score: 57 / 60 }) },
-      { module: 'rdo', summary: summary({ meanAbsErrorMs: 23.5 }) },
+      { module: 'pzmr', summary: summary({ medianRt: 301 }), conditions: {} },
+      { module: 'szmr', summary: summary({ medianRt: 402 }), conditions: {} },
+      { module: 'gonogo', summary: summary({ score: 57 / 60 }), conditions: {} },
+      { module: 'rdo', summary: summary({ meanAbsErrorMs: 23.5 }), conditions: {} },
       { module: 'gorbov', run: 0, seconds: 30 },
       { module: 'gorbov', run: 1, seconds: 35 },
       { module: 'gorbov', run: 2, seconds: 70 },
       { module: 'numseries', correct: 14, total: 20 },
+      { module: 'pomeh', summary: summary({}), conditions: { quiet: cond(300), noisy: cond(335) } },
+      { module: 'stroop', summary: summary({}), conditions: { congruent: cond(520), incongruent: cond(610) } },
+      { module: 'taskswitch', summary: summary({}), conditions: { repeat: cond(600), switch: cond(580) } },
+      { module: 'memory', span: 7 },
     ]);
     expect(all).toEqual({
       pzmrMedianRt: 301,
@@ -389,18 +449,29 @@ describe('diagnosticResults', () => {
       rdoMeanAbsErrorMs: 23.5,
       gorbov: gorbovMetrics(30, 35, 70),
       numseriesCorrect: 14,
+      pomehQuietRt: 300,
+      pomehNoisyRt: 335,
+      pomehDeltaMs: 35,
+      stroopCongruentRt: 520,
+      stroopIncongruentRt: 610,
+      stroopInterferenceMs: 90,
+      switchRepeatRt: 600,
+      switchSwitchRt: 580,
+      switchCostMs: -20,
+      memorySpan: 7,
       unreliable: [],
+    });
+    // A condition with fewer than 3 RTs has no median: its difference is missing, the other median is kept.
+    const partial = diagnosticResults([{ module: 'stroop', summary: summary({}), conditions: { congruent: cond(520), incongruent: cond(null) } }]);
+    expect(partial).toMatchObject({ stroopCongruentRt: 520, stroopIncongruentRt: null, stroopInterferenceMs: null });
+    expect(diagnosticResults([{ module: 'pomeh', summary: summary({}), conditions: {} }])).toMatchObject({
+      pomehQuietRt: null,
+      pomehNoisyRt: null,
+      pomehDeltaMs: null,
     });
     expect(diagnosticResults([{ module: 'gorbov', run: 0, seconds: 30 }, { module: 'gorbov', run: 1, seconds: null }, { module: 'gorbov', run: 2, seconds: 70 }]).gorbov).toBeNull();
     expect(diagnosticResults([{ module: 'gorbov', run: 0, seconds: 30 }, { module: 'gorbov', run: 2, seconds: 70 }]).gorbov).toBeNull();
-    expect(diagnosticResults([])).toEqual({
-      pzmrMedianRt: null,
-      szmrMedianRt: null,
-      gonogoScore: null,
-      rdoMeanAbsErrorMs: null,
-      gorbov: null,
-      numseriesCorrect: null,
-      unreliable: [],
-    });
+    expect(diagnosticResults([])).toEqual({ ...EMPTY_METRICS, unreliable: [] });
+    expect(Object.values(EMPTY_METRICS).every((v) => v === null)).toBe(true);
   });
 });

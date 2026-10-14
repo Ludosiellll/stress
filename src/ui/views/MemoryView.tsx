@@ -1,6 +1,6 @@
 import { useEffect, useEffectEvent, useRef, useState, type CSSProperties, type MouseEvent } from 'react';
 import { digitFromKey, letterFromKey } from '../../modules/memory/input';
-import type { MemoryAnswer } from '../../modules/memory/score';
+import { spanProtocolStops, type MemoryAnswer } from '../../modules/memory/score';
 import { attachFocusGuard } from '../../runtime/focusGuard';
 import { browserFrameClock } from '../../runtime/frameClock';
 import { presentMemoryTrial } from '../../runtime/memoryPresenter';
@@ -25,8 +25,9 @@ type Phase = 'present' | 'respond';
  * A memory block, one trial at a time: the row is shown on a full-screen canvas (presentMemoryTrial, frame
  * timing, no cursor), then reproduced on a DOM screen — typed (digits, letters, card: Backspace erases, Enter
  * sends) or clicked (positions: a click on the last chosen cell takes it back; Enter or «Готово» sends).
- * After the last trial every answer goes to `onSubmit`. The focus guard covers the whole block; Escape is the
- * session screen's (it pauses and discards the block, as for tables).
+ * After the last trial every answer goes to `onSubmit`; the span protocol sends them as soon as it stops
+ * (spanProtocolStops). The focus guard covers the whole block; Escape is the session screen's (it pauses and
+ * discards the block, as for tables).
  */
 export default function MemoryView({ step, exposeAnswer, busy, onSubmit, onAbort }: MemoryViewProps) {
   const { trials } = step;
@@ -87,7 +88,9 @@ export default function MemoryView({ step, exposeAnswer, busy, onSubmit, onAbort
     if (locked || trial === undefined || answers.current.length !== index) return;
     answers.current.push({ given, timeMs: performance.now() - respondStart.current });
     setGiven([]);
-    if (index + 1 >= trials.length) {
+    // The span protocol (diagnostics) ends as soon as both rows of a length are wrong.
+    const stopped = step.protocol === 'span' && spanProtocolStops(trials, answers.current);
+    if (stopped || index + 1 >= trials.length) {
       sent.current = true;
       setOver(true);
       onSubmit([...answers.current]);

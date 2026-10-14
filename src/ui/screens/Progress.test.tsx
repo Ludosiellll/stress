@@ -2,7 +2,7 @@ import { fireEvent, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { MemoryRepository } from '../../data/memoryRepository';
 import { block, session } from '../../data/repository.contract';
-import type { DiagnosticResults } from '../../engine/diagnostic';
+import { EMPTY_METRICS, type DiagnosticResults } from '../../engine/diagnostic';
 import { defaultModuleState } from '../../engine/derive';
 import { L_NORM } from '../../engine/planner';
 import { MODULE_IDS } from '../../engine/types';
@@ -13,6 +13,7 @@ import { renderWithApp } from '../testUtils';
 import Progress from './Progress';
 
 const base: DiagnosticResults = {
+  ...EMPTY_METRICS,
   pzmrMedianRt: 320,
   szmrMedianRt: 450,
   gonogoScore: 80,

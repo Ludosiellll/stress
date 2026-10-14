@@ -1,7 +1,7 @@
 import type { DiagnosticResults } from '../../engine/diagnostic';
 import type { ModuleId, ReactionModuleId } from '../../engine/types';
 import { moduleTitles } from '../../modules/registry';
-import type { BlockSummaryView } from '../../session/steps';
+import { signedMs, type BlockSummaryView } from '../../session/steps';
 import { decimal } from '../format';
 
 export interface DoneProps {
@@ -19,6 +19,8 @@ const NO_DATA = 'нет данных';
 const UNRELIABLE = 'замер ненадёжен';
 
 const ms = (x: number | null): string => (x === null ? NO_DATA : `${String(Math.round(x))} мс`);
+/** A difference of medians: «+35 мс», «−12 мс», «0 мс». */
+const diffMs = (x: number | null): string => (x === null ? NO_DATA : `${signedMs(x)} мс`);
 const seconds = (x: number): string => `${decimal(x).replace('-', '−')} с`;
 
 function seriesText(correct: number | null, total: number | null): string {
@@ -39,6 +41,10 @@ function diagnosticRows(d: DiagnosticResults, seriesTotal: number | null): Array
     ['Горбов — P, время 3-й таблицы', g === null ? NO_DATA : seconds(g.P)],
     ['Горбов — Π, переключение внимания', g === null ? NO_DATA : seconds(g.Pi)],
     [`${moduleTitles.numseries} — решено верно`, seriesText(d.numseriesCorrect, seriesTotal)],
+    [`${moduleTitles.pomeh} — разница с помехами и без`, mark('pomeh', diffMs(d.pomehDeltaMs))],
+    [`${moduleTitles.stroop} — интерференция`, mark('stroop', diffMs(d.stroopInterferenceMs))],
+    [`${moduleTitles.taskswitch} — цена переключения`, mark('taskswitch', diffMs(d.switchCostMs))],
+    [`${moduleTitles.memory} — объём`, d.memorySpan === null ? NO_DATA : String(d.memorySpan)],
   ];
 }
 

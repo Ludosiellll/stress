@@ -2,7 +2,7 @@ import type { Repository } from '../data/repository';
 import type { DiagnosticRow, SessionRow } from '../data/rows';
 import { localDayNumber } from '../engine/dates';
 import { MODULE_IDS } from '../engine/derive';
-import { planDiagnostic, type DiagnosticMetrics, type DiagnosticResults } from '../engine/diagnostic';
+import { EMPTY_METRICS, planDiagnostic, type DiagnosticMetrics, type DiagnosticResults } from '../engine/diagnostic';
 import { BASE_DAYS, CALIBRATION_BLOCKS, currentPhase, type PhaseId, type PhaseInfo } from '../engine/phases';
 import {
   OVERLOAD_REACTION_MINUTES,
@@ -43,18 +43,10 @@ const NO_ABILITIES: Record<Ability, number | null> = { reaction: null, attention
 const REACTION_IDS: readonly string[] = REACTION_MODULE_IDS;
 const isReactionId = (v: unknown): v is ReactionModuleId => typeof v === 'string' && REACTION_IDS.includes(v);
 
-const NO_METRICS: DiagnosticMetrics = {
-  pzmrMedianRt: null,
-  szmrMedianRt: null,
-  gonogoScore: null,
-  rdoMeanAbsErrorMs: null,
-  gorbov: null,
-  numseriesCorrect: null,
-};
-
 /**
  * The stored results of a diagnostic, or null when the row does not hold a JSON object. A missing metric
- * reads as null; rows written before `unreliable` existed read as reliable (I1); unknown entries are dropped.
+ * reads as null (the W2 metrics of a 0.1.0 row: missing, never 0); rows written before `unreliable` existed
+ * read as reliable (I1); unknown entries are dropped.
  */
 export function parseResults(row: DiagnosticRow): DiagnosticResults | null {
   try {
@@ -62,7 +54,7 @@ export function parseResults(row: DiagnosticRow): DiagnosticResults | null {
     if (typeof value !== 'object' || value === null) return null;
     const r = value as Partial<DiagnosticResults>;
     const unreliable = Array.isArray(r.unreliable) ? (r.unreliable as unknown[]).filter(isReactionId) : [];
-    return { ...NO_METRICS, ...r, unreliable };
+    return { ...EMPTY_METRICS, ...r, unreliable };
   } catch {
     return null;
   }
@@ -84,6 +76,16 @@ export function mergedBaseline(results: readonly DiagnosticResults[]): Diagnosti
     rdoMeanAbsErrorMs: first('rdoMeanAbsErrorMs'),
     gorbov: first('gorbov'),
     numseriesCorrect: first('numseriesCorrect'),
+    pomehQuietRt: first('pomehQuietRt'),
+    pomehNoisyRt: first('pomehNoisyRt'),
+    pomehDeltaMs: first('pomehDeltaMs'),
+    stroopCongruentRt: first('stroopCongruentRt'),
+    stroopIncongruentRt: first('stroopIncongruentRt'),
+    stroopInterferenceMs: first('stroopInterferenceMs'),
+    switchRepeatRt: first('switchRepeatRt'),
+    switchSwitchRt: first('switchSwitchRt'),
+    switchCostMs: first('switchCostMs'),
+    memorySpan: first('memorySpan'),
   };
 }
 

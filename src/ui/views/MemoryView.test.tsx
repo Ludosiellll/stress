@@ -162,6 +162,50 @@ describe('MemoryView', () => {
     expect(onSubmit.mock.calls[0]?.[0]?.map((a) => a.given)).toEqual([['7'], ['5', '2', '6', '0']]);
   });
 
+  /** Rows of lengths 2, 2, 3, 3, 4, 4 (the span protocol's order, shortened). */
+  const spanTrials = (): MemoryTrial[] =>
+    [['1', '2'], ['3', '4'], ['5', '6', '7'], ['8', '9', '0'], ['1', '2', '3', '4'], ['5', '6', '7', '8']].map((items) => trial({ items }));
+
+  async function answerRows(rows: string[][]): Promise<void> {
+    for (const digits of rows) {
+      await showTrial();
+      for (const d of digits) key(d);
+      key('Enter');
+    }
+  }
+
+  it('span protocol submits early when both trials of a length fail', async () => {
+    const { onSubmit, container } = renderView(step(spanTrials(), { protocol: 'span' }));
+    // Right at length 2, both rows of 3 wrong: the answers go out after the 4th trial.
+    await answerRows([['1', '2'], ['3', '4'], ['5', '6'], ['8', '9', '1']]);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit.mock.calls[0]?.[0]?.map((a) => a.given)).toEqual([['1', '2'], ['3', '4'], ['5', '6'], ['8', '9', '1']]);
+    // The block is over: trial 5 is never shown, and a late Enter sends nothing more.
+    expect(container.querySelector('.memory canvas')).toBeNull();
+    key('Enter');
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it('span protocol goes on while one row of the length was right', async () => {
+    const { onSubmit } = renderView(step(spanTrials(), { protocol: 'span' }));
+    await answerRows([['1', '2'], ['3', '4'], ['5', '6', '7'], ['8', '9']]);
+    expect(onSubmit).not.toHaveBeenCalled();
+    await answerRows([['1', '2', '3'], ['5', '6', '7', '9']]);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit.mock.calls[0]?.[0]).toHaveLength(6);
+  });
+
+  it('a fixed block never stops early, even when every row is wrong', async () => {
+    const trials = [['1', '2'], ['3', '4'], ['5', '6']].map((items) => trial({ items }));
+    const { onSubmit } = renderView(step(trials));
+    for (let i = 0; i < 2; i++) {
+      await showTrial();
+      key('9');
+      key('Enter');
+    }
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
   it('the card is shown whole, then typed like digits', async () => {
     const { onSubmit } = renderView(step([trial({ mode: 'card', gridSide: 3 })]));
     await showTrial();

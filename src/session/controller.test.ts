@@ -1,19 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
 import { MemoryRepository } from '../data/memoryRepository';
 import type { Repository } from '../data/repository';
-import { block, session } from '../data/repository.contract';
+import { rebuildCaches } from '../data/export';
+import { block, item, session } from '../data/repository.contract';
 import type { BlockRow, WellbeingRow } from '../data/rows';
 import { FINISHER_AUDIO } from '../engine/audio/stressors';
 import { deriveModuleStates, deriveRatings, defaultModuleState } from '../engine/derive';
-import { diagnosticSegmentSeed, diagnosticSeriesSchedule, planDiagnostic, type DiagnosticResults } from '../engine/diagnostic';
+import { EMPTY_METRICS, diagnosticSegmentSeed, diagnosticSeriesSchedule, planDiagnostic, type DiagnosticResults } from '../engine/diagnostic';
 import { currentPhase, type PhaseInfo } from '../engine/phases';
 import { planFree, planTraining, type ModuleState, type Segment, type SessionPlan } from '../engine/planner';
 import { createRng, deriveSeed } from '../engine/rng';
-import type { LayoutId, ModuleId } from '../engine/types';
+import { MODULE_IDS, type LayoutId, type ModuleId } from '../engine/types';
 import { describeChanges } from '../modules/describe';
-import { generateMemoryTrials } from '../modules/memory/generate';
+import { generateMemoryTrials, spanProtocolTrials, type MemoryTrial } from '../modules/memory/generate';
 import { memoryInstruction, memoryParams } from '../modules/memory/params';
-import type { MemoryAnswer } from '../modules/memory/score';
+import { spanProtocolStops, type MemoryAnswer } from '../modules/memory/score';
 import { FAMILIES } from '../modules/numseries/families';
 import { pomeh } from '../modules/reaction/pomeh';
 import { pzmr } from '../modules/reaction/pzmr';
@@ -28,7 +29,7 @@ import {
   type Respond,
 } from '../testing/sessionPlayers';
 import { SessionController, type SessionStartOptions } from './controller';
-import { AUDIO_NOT_PLAYED, OVERLOAD_PREFIX, type BlockSummaryView, type Step, type StepOf } from './steps';
+import { AUDIO_NOT_PLAYED, MEMORY_SPAN_INSTRUCTION, OVERLOAD_PREFIX, type BlockSummaryView, type Step, type StepOf } from './steps';
 
 const MIN = 60_000;
 const DAY = 86_400_000;
@@ -1531,12 +1532,18 @@ describe('SessionController — diagnostics', () => {
   /** Fails every practice trial (no press), perfect otherwise. */
   const skipsPractice: Respond = (spec, idx) => (spec.practice ? null : perfectPlayer(spec, idx));
 
+  /** The diagnostic with only the six segments of 0.1.0. */
+  const w1Only = (n = 1): SessionPlan => {
+    const plan = planDiagnostic(n);
+    return { ...plan, segments: plan.segments.slice(0, 6) };
+  };
+
   it('diagnostic uses fixed L, ignores module state, writes diagnostic row', async () => {
     const repo = new MemoryRepository();
     const trained = stateWith('pzmr', { lSaved: 20, lastTrainedAt: T0, lifetimeBlocks: 30, sessionEndLevels: [20], savedHistory: [20] });
     await repo.saveModuleState(trained);
     const statesBefore = await repo.getModuleStates();
-    const h = await begin(planDiagnostic(1), { repo });
+    const h = await begin(w1Only(), { repo });
 
     const levels: Array<[string, number]> = [];
     const seen: string[] = [];
@@ -1584,6 +1591,7 @@ describe('SessionController — diagnostics', () => {
     expect(seen).not.toContain('wellbeing');
 
     const expected: DiagnosticResults = {
+      ...EMPTY_METRICS,
       pzmrMedianRt: 300,
       szmrMedianRt: 300,
       gonogoScore: 100,
@@ -1626,13 +1634,181 @@ describe('SessionController — diagnostics', () => {
         // 3 items, 600 s × 0.02 = 12 s in total: the third answer ends after the limit.
         expect(s.totalLimitMs).toBe(12_000);
         await h.c.submitNumSeries(perfectSeriesAnswers(s.items).map((a, idx) => ({ ...a, timeMs: idx === 2 ? 3001 : 4500 })));
-      } else if (s.kind === 'summary') await h.c.continueAfterSummary();
+      } else if (s.kind === 'memory_block') await h.c.submitMemory(perfectMemoryAnswers(s.trials));
+      else if (s.kind === 'summary') await h.c.continueAfterSummary();
       else throw new Error(`unexpected ${s.kind}`);
     }
     const done = expectStep(h.c, 'done');
     expect(done.diagnostic?.gorbov).toBeNull();
     expect(done.diagnostic?.numseriesCorrect).toBe(2);
     expect(done.seriesTotal).toBe(3);
+  });
+
+  /** Answers rows up to `span` digits exactly and longer ones wrong (the last digit changed). */
+  const spanPlayer = (trials: readonly MemoryTrial[], span: number): MemoryAnswer[] =>
+    trials.map((t) => {
+      const given = [...t.items];
+      if (t.items.length > span) given[given.length - 1] = given.at(-1) === '0' ? '1' : '0';
+      return { given, timeMs: 2500 };
+    });
+
+  /** The diagnostic with only the segment of `module`. */
+  const only = (module: ModuleId, n = 1): SessionPlan => {
+    const plan = planDiagnostic(n);
+    return { ...plan, segments: plan.segments.filter((x) => x.module === module) };
+  };
+
+  it('diagnostic plays ten segments and fills the W2 metrics', async () => {
+    const h = await begin(planDiagnostic(1));
+    // 80 ms slower on incongruent Stroop and on switch trials, 30 ms slower with noise.
+    const slower: Respond = (spec, idx) => {
+      const r = perfectPlayer(spec, idx);
+      if (r === null) return r;
+      const extra = spec.cond === 'incongruent' || spec.cond === 'switch' ? 80 : spec.cond === 'noisy' ? 30 : 0;
+      return { ...r, rtMs: r.rtMs + extra };
+    };
+    const blocks: string[] = [];
+    let memory: StepOf<'memory_block'> | null = null;
+    for (let i = 0; i < 200 && h.c.step.kind !== 'done'; i++) {
+      const s = h.c.step;
+      if (s.kind === 'instruction') h.c.ackInstruction();
+      else if (s.kind === 'reaction_block') {
+        blocks.push(`${s.module}:${String(s.L)}:${String(s.specs.length)}`);
+        await h.c.submitReaction(playTimeline(s.specs, slower));
+      } else if (s.kind === 'table_block') {
+        blocks.push(s.task);
+        await h.c.submitTable(perfectTableRun(s));
+      } else if (s.kind === 'numseries_block') {
+        blocks.push('numseries');
+        await h.c.submitNumSeries(perfectSeriesAnswers(s.items, 20_000));
+      } else if (s.kind === 'memory_block') {
+        blocks.push(`memory:${s.protocol}:${String(s.trials.length)}`);
+        memory = s;
+        // Lengths 3–7 right, both rows of 8 wrong: the protocol stops after the 12th answer.
+        const answers = spanPlayer(s.trials, 7).slice(0, 12);
+        expect(spanProtocolStops(s.trials, answers)).toBe(true);
+        await h.c.submitMemory(answers);
+        const { view } = expectStep(h.c, 'summary');
+        expect(view).toMatchObject({ module: 'memory', score: 10 / 12, lines: ['Верно воспроизведено: 10 из 12', 'Объём памяти: 7 цифр'], showLevel: false });
+      } else if (s.kind === 'summary') await h.c.continueAfterSummary();
+      else throw new Error(`unexpected ${s.kind}`);
+    }
+    expect(blocks).toEqual([
+      'pzmr:0:55',
+      'szmr:0:75',
+      'gonogo:10:65',
+      'rdo:0:55',
+      'black_up',
+      'red_down',
+      'alternate',
+      'numseries',
+      'pomeh:8:45',
+      'stroop:8:53',
+      'taskswitch:5:53',
+      'memory:span:20',
+    ]);
+    expect(memory?.trials).toEqual(spanProtocolTrials(createRng(diagnosticSegmentSeed(1, 'memory'))));
+    const done = expectStep(h.c, 'done');
+    expect(done.diagnostic).toEqual({
+      pzmrMedianRt: 300,
+      szmrMedianRt: 300,
+      gonogoScore: 100,
+      rdoMeanAbsErrorMs: 0,
+      gorbov: gorbovMetrics(7.2, 7.5, 14.7),
+      numseriesCorrect: 20,
+      pomehQuietRt: 300,
+      pomehNoisyRt: 330,
+      pomehDeltaMs: 30,
+      stroopCongruentRt: 300,
+      stroopIncongruentRt: 380,
+      stroopInterferenceMs: 80,
+      switchRepeatRt: 300,
+      switchSwitchRt: 380,
+      switchCostMs: 80,
+      memorySpan: 7,
+      unreliable: [],
+    });
+    const [row] = await h.repo.listDiagnostics();
+    expect(JSON.parse(row?.resultsJson ?? '')).toEqual(done.diagnostic);
+    const memoryRow = (await h.repo.listBlocks()).find((b) => b.module === 'memory');
+    expect(memoryRow).toMatchObject({ lBefore: 0, lAfter: 0, score: 10 / 12, flags: [] });
+    expect(JSON.parse(memoryRow?.summaryJson ?? '')).toMatchObject({ protocol: 'span', mode: 'digits', exact: 10, span: 7 });
+    expect(JSON.parse(memoryRow?.paramsJson ?? '')).toMatchObject({ protocol: 'span', trials: 20 });
+  });
+
+  it('a diagnostic session leaves every module level, L_saved and the number-series ratings unchanged', async () => {
+    const repo = new MemoryRepository();
+    // A training history for every module (number series with two items), then the caches built from it.
+    await repo.createSession(session('t', '2026-10-10T10:00:00', { endedAt: '2026-10-10T10:40:00' }));
+    for (const [i, m] of MODULE_IDS.entries()) {
+      const at = `2026-10-10T10:${String(i).padStart(2, '0')}:00`;
+      const items = m === 'numseries' ? [item('i1', 'b-numseries', at), item('i2', 'b-numseries', at, { family: 'geom', correct: false })] : [];
+      await repo.addBlock(block(`b-${m}`, 't', at, { module: m, lBefore: 5, lAfter: 6 }), [], items);
+    }
+    await rebuildCaches(repo);
+    const states = await repo.getModuleStates();
+    const ratings = await repo.getRatings();
+    expect(states.stroop.lSaved).toBe(6);
+    expect(states.memory.lifetimeBlocks).toBe(1);
+    expect(ratings.size).toBe(2);
+
+    const h = await begin(planDiagnostic(1), { repo, scale: 0.02 });
+    const seen = await drive(h);
+    expect(seen).toContain('memory_block');
+    expect(await repo.getModuleStates()).toEqual(states);
+    expect(await repo.getRatings()).toEqual(ratings);
+    // Rebuilt from the whole history, the diagnostic included, the caches are the same: diagnostics never count.
+    await rebuildCaches(repo);
+    expect(await repo.getModuleStates()).toEqual(states);
+    expect(await repo.getRatings()).toEqual(ratings);
+    const played = (await repo.listBlocks()).filter((b) => b.sessionId === h.c.sessionId);
+    expect(new Set(played.map((b) => b.module))).toEqual(new Set(planDiagnostic(1).segments.map((x) => x.module)));
+    expect(played.every((b) => b.lBefore === b.lAfter && b.flags.length === 0)).toBe(true);
+  });
+
+  it('a W2 module that stays unreliable is listed in unreliable', async () => {
+    const h = await begin(only('stroop'));
+    h.c.ackInstruction();
+    await h.c.submitReaction(playTimeline(expectStep(h.c, 'reaction_block').specs, perfectPlayer, { dropped: droppedFive }));
+    expect(expectStep(h.c, 'notice').module).toBe('stroop');
+    h.c.ackNotice();
+    await h.c.submitReaction(playTimeline(expectStep(h.c, 'reaction_block').specs, perfectPlayer, { dropped: droppedFive }));
+    expect(expectStep(h.c, 'summary').view.flags).toEqual(['timing_unreliable']);
+    await h.c.continueAfterSummary();
+    const done = expectStep(h.c, 'done');
+    // The value is kept (from the trials whose onset frame was not dropped) and marked.
+    expect(done.diagnostic).toMatchObject({ stroopCongruentRt: 300, stroopIncongruentRt: 300, stroopInterferenceMs: 0, unreliable: ['stroop'] });
+  });
+
+  it('span protocol answers must stop where the protocol stops', async () => {
+    const h = await begin(only('memory'));
+    expect(expectStep(h.c, 'instruction')).toMatchObject({ module: 'memory', text: MEMORY_SPAN_INSTRUCTION });
+    h.c.ackInstruction();
+    const step = expectStep(h.c, 'memory_block');
+    expect(step.protocol).toBe('span');
+    // Lengths 3 and 4 right, both rows of 5 wrong: the protocol stops after the 6th answer.
+    const answers = spanPlayer(step.trials, 4);
+    await expect(h.c.submitMemory(answers.slice(0, 5))).rejects.toThrow(RangeError);
+    await expect(h.c.submitMemory(answers.slice(0, 7))).rejects.toThrow(/stopped after answer 6/);
+    await expect(h.c.submitMemory(answers)).rejects.toThrow(/stopped after answer 6/);
+    await expect(h.c.submitMemory([])).rejects.toThrow(RangeError);
+    await expect(h.c.submitMemory([...perfectMemoryAnswers(step.trials), { given: [], timeMs: 1 }])).rejects.toThrow(/21 answers for 20 trials/);
+    expectStep(h.c, 'memory_block');
+    expect(await h.repo.listBlocks()).toEqual([]);
+    await h.c.submitMemory(answers.slice(0, 6));
+    expect(expectStep(h.c, 'summary').view.lines).toEqual(['Верно воспроизведено: 4 из 6', 'Объём памяти: 4 цифры']);
+    await h.c.continueAfterSummary();
+    expect(expectStep(h.c, 'done').diagnostic).toMatchObject({ memorySpan: 4, unreliable: [] });
+  });
+
+  it('a span protocol that never stops takes one answer per trial', async () => {
+    const h = await begin(only('memory'));
+    h.c.ackInstruction();
+    const step = expectStep(h.c, 'memory_block');
+    await h.c.submitMemory(perfectMemoryAnswers(step.trials));
+    expect(expectStep(h.c, 'summary').view).toMatchObject({ score: 1, lines: ['Верно воспроизведено: 20 из 20', 'Объём памяти: 12 цифр'] });
+    await h.c.continueAfterSummary();
+    expect(expectStep(h.c, 'done').diagnostic?.memorySpan).toBe(12);
   });
 
   it('the three diagnostic Gorbov tables come from different seeds', async () => {

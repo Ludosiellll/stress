@@ -11,6 +11,16 @@ const RESULTS: DiagnosticResults = {
   rdoMeanAbsErrorMs: 18.6,
   gorbov: { V: 41.25, P: 70.5, Pi: -12 },
   numseriesCorrect: 14,
+  pomehQuietRt: 300,
+  pomehNoisyRt: 335.2,
+  pomehDeltaMs: 35.2,
+  stroopCongruentRt: 520,
+  stroopIncongruentRt: 610,
+  stroopInterferenceMs: 90,
+  switchRepeatRt: 600,
+  switchSwitchRt: 588,
+  switchCostMs: -12,
+  memorySpan: 7,
   unreliable: [],
 };
 
@@ -27,6 +37,53 @@ function cells(): string[][] {
 }
 
 describe('Done', () => {
+  it('lists the twelve diagnostic results, the W2 ones after the number series', () => {
+    render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} onHome={vi.fn()} />);
+    expect(cells()).toEqual([
+      ['ПЗМР — медиана времени реакции', '251 мс'],
+      ['Сложная реакция (СЗМР) — медиана времени реакции', '402 мс'],
+      ['Go/No-Go — верные ответы', '93 %'],
+      ['Реакция на движущийся объект — средняя ошибка', '19 мс'],
+      ['Горбов — V, среднее время 1-й и 2-й таблиц', '41,3 с'],
+      ['Горбов — P, время 3-й таблицы', '70,5 с'],
+      ['Горбов — Π, переключение внимания', '−12,0 с'],
+      ['Числовые ряды — решено верно', '14 из 20'],
+      ['Помехоустойчивость — разница с помехами и без', '+35 мс'],
+      ['Струп — интерференция', '+90 мс'],
+      ['Переключение правил — цена переключения', '−12 мс'],
+      ['Память — объём', '7'],
+    ]);
+  });
+
+  it('a 0.1.0-style result has no W2 values: «нет данных», never zero', () => {
+    const w1 = {
+      ...RESULTS,
+      pomehQuietRt: null,
+      pomehNoisyRt: null,
+      pomehDeltaMs: null,
+      stroopCongruentRt: null,
+      stroopIncongruentRt: null,
+      stroopInterferenceMs: null,
+      switchRepeatRt: null,
+      switchSwitchRt: null,
+      switchCostMs: null,
+      memorySpan: null,
+      unreliable: ['stroop' as const],
+    };
+    render(<Done diagnostic={w1} seriesTotal={20} summaries={[]} onHome={vi.fn()} />);
+    expect(cells().slice(8).map((r) => r[1])).toEqual(['нет данных', 'нет данных', 'нет данных', 'нет данных']);
+  });
+
+  it('marks the W2 differences measured with dropped frames; a zero difference reads «0 мс»', () => {
+    render(<Done diagnostic={{ ...RESULTS, stroopInterferenceMs: 0, unreliable: ['pomeh', 'stroop', 'taskswitch'] }} seriesTotal={20} summaries={[]} onHome={vi.fn()} />);
+    expect(cells().slice(8)).toEqual([
+      ['Помехоустойчивость — разница с помехами и без', '+35 мс, замер ненадёжен'],
+      ['Струп — интерференция', '0 мс, замер ненадёжен'],
+      ['Переключение правил — цена переключения', '−12 мс, замер ненадёжен'],
+      ['Память — объём', '7'],
+    ]);
+  });
+
   it('marks the metrics of modules measured with dropped frames and says the index uses them (I1)', () => {
     render(<Done diagnostic={{ ...RESULTS, unreliable: ['pzmr', 'rdo'] }} seriesTotal={20} summaries={[]} onHome={vi.fn()} />);
     const rows = cells();

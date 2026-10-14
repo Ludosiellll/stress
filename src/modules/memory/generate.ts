@@ -22,6 +22,10 @@ const SPAN_GAP_MS = 250;
 const SPAN_MIN_LENGTH: number = 3;
 const SPAN_MAX_LENGTH: number = 12;
 const SPAN_TRIALS_PER_LENGTH = 2;
+/** Trials of the whole span protocol: 2 per length 3…12. */
+export const SPAN_PROTOCOL_TRIALS = (SPAN_MAX_LENGTH - SPAN_MIN_LENGTH + 1) * SPAN_TRIALS_PER_LENGTH;
+/** The span protocol's timing, with the length of its first rows (its rows grow; the block step carries these). */
+export const SPAN_PROTOCOL_PARAMS: Readonly<MemoryParams> = Object.freeze({ length: SPAN_MIN_LENGTH, itemMs: SPAN_ITEM_MS, gapMs: SPAN_GAP_MS });
 
 /** `length` picks from `pool` with no item twice in a row. */
 function sequence(pool: readonly string[], length: number, rng: Rng): string[] {

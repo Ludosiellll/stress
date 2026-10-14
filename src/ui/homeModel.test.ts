@@ -2,22 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { MemoryRepository } from '../data/memoryRepository';
 import { block, session } from '../data/repository.contract';
 import type { DiagnosticRow } from '../data/rows';
-import { diagnosticSegmentSeed, type DiagnosticResults } from '../engine/diagnostic';
+import { EMPTY_METRICS, diagnosticSegmentSeed, type DiagnosticResults } from '../engine/diagnostic';
 import type { PhaseInfo } from '../engine/phases';
 import type { Segment, SessionPlan } from '../engine/planner';
 import { readiness } from '../engine/readiness';
 import { MODULE_IDS } from '../engine/types';
 import { loadHomeModel, mergedBaseline, parseResults, phaseTexts, planLine, readinessOf } from './homeModel';
 
-const EMPTY: DiagnosticResults = {
-  pzmrMedianRt: null,
-  szmrMedianRt: null,
-  gonogoScore: null,
-  rdoMeanAbsErrorMs: null,
-  gorbov: null,
-  numseriesCorrect: null,
-  unreliable: [],
-};
+const EMPTY: DiagnosticResults = { ...EMPTY_METRICS, unreliable: [] };
 
 function row(number: number, results: Partial<DiagnosticResults> | string): DiagnosticRow {
   const resultsJson = typeof results === 'string' ? results : JSON.stringify({ ...EMPTY, ...results });
@@ -32,6 +24,31 @@ describe('parseResults', () => {
 
   it('a missing metric reads as null', () => {
     expect(parseResults(row(1, '{}'))).toEqual(EMPTY);
+  });
+
+  it('a 0.1.0 row reads with the W2 metrics null, never zero', () => {
+    const w1 = {
+      pzmrMedianRt: 300,
+      szmrMedianRt: 450,
+      gonogoScore: 90,
+      rdoMeanAbsErrorMs: 40,
+      gorbov: { V: 30, P: 60, Pi: 10 },
+      numseriesCorrect: 14,
+      unreliable: [],
+    };
+    expect(parseResults(row(1, JSON.stringify(w1)))).toEqual({
+      ...w1,
+      pomehQuietRt: null,
+      pomehNoisyRt: null,
+      pomehDeltaMs: null,
+      stroopCongruentRt: null,
+      stroopIncongruentRt: null,
+      stroopInterferenceMs: null,
+      switchRepeatRt: null,
+      switchSwitchRt: null,
+      switchCostMs: null,
+      memorySpan: null,
+    });
   });
 
   it('keeps only reaction module ids in `unreliable`', () => {
@@ -52,12 +69,42 @@ describe('mergedBaseline (M2)', () => {
       { ...EMPTY, pzmrMedianRt: 280, rdoMeanAbsErrorMs: 30, numseriesCorrect: 12 },
     ]);
     expect(merged).toEqual({
+      ...EMPTY_METRICS,
       pzmrMedianRt: 320,
       szmrMedianRt: null,
       gonogoScore: null,
       rdoMeanAbsErrorMs: 40,
       gorbov: { V: 40, P: 80, Pi: 20 },
       numseriesCorrect: 12,
+    });
+  });
+
+  it('takes every W2 metric from the first diagnostic that has it (a 0.1.0 one has none)', () => {
+    const w2 = {
+      pomehQuietRt: 300,
+      pomehNoisyRt: 340,
+      pomehDeltaMs: 40,
+      stroopCongruentRt: 500,
+      stroopIncongruentRt: 600,
+      stroopInterferenceMs: 100,
+      switchRepeatRt: 550,
+      switchSwitchRt: 640,
+      switchCostMs: 90,
+      memorySpan: 6,
+    };
+    const merged = mergedBaseline([
+      { ...EMPTY, pzmrMedianRt: 320 },
+      { ...EMPTY, ...w2, stroopInterferenceMs: null, stroopIncongruentRt: null, memorySpan: 0 },
+      { ...EMPTY, ...w2, pomehDeltaMs: -5, stroopInterferenceMs: 70, stroopIncongruentRt: 570, memorySpan: 8 },
+    ]);
+    expect(merged).toEqual({
+      ...EMPTY_METRICS,
+      pzmrMedianRt: 320,
+      ...w2,
+      stroopIncongruentRt: 570,
+      stroopInterferenceMs: 70,
+      // 0 is a value (a span of 0), not a missing one.
+      memorySpan: 0,
     });
   });
 });

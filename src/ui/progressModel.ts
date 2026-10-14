@@ -1,6 +1,6 @@
 import type { Repository } from '../data/repository';
 import type { DiagnosticRow, SessionRow } from '../data/rows';
-import type { DiagnosticResults } from '../engine/diagnostic';
+import type { DiagnosticMetrics, DiagnosticResults } from '../engine/diagnostic';
 import { L_NORM } from '../engine/planner';
 import { MODULE_IDS, type ModuleId, type ReactionModuleId, type SessionKind } from '../engine/types';
 import { moduleTitles } from '../modules/registry';
@@ -85,11 +85,12 @@ function gorbovOf(r: DiagnosticResults | null): { V: number | null; P: number | 
 const UNRELIABLE_NOTE = 'замер ненадёжен';
 
 /** The numeric metrics of DiagnosticResults (gorbov is an object). */
-type NumericMetric = 'pzmrMedianRt' | 'szmrMedianRt' | 'gonogoScore' | 'rdoMeanAbsErrorMs' | 'numseriesCorrect';
+type NumericMetric = Exclude<keyof DiagnosticMetrics, 'gorbov'>;
 
 /**
- * One chart per metric of the control diagnostics; a missing metric is a gap, never a zero. A value measured
- * with dropped frames (DiagnosticResults.unreliable) keeps its point, with a note on it and under the chart.
+ * One chart per metric of the control diagnostics; a missing metric is a gap, never a zero (0.1.0 rows have no
+ * W2 metrics). A value measured with dropped frames (DiagnosticResults.unreliable) keeps its point, with a note on
+ * it and under the chart. Differences of medians (noise, interference, switch cost) can be negative: no bound.
  */
 export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
   const parsed = rows.map((row) => ({ x: `№${String(row.number)}`, r: parseResults(row) }));
@@ -137,6 +138,18 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
       yLabel: 'верно из 20',
       lowerIsBetter: false,
       series: [line('Числовые ряды', (r) => metric(r, 'numseriesCorrect'))],
+      unreliable: [],
+      domain: NON_NEGATIVE,
+    },
+    reaction('pomeh', 'Помехоустойчивость: разница, мс', 'мс', true, moduleTitles.pomeh, 'pomehDeltaMs', {}),
+    reaction('stroop', 'Струп: интерференция, мс', 'мс', true, moduleTitles.stroop, 'stroopInterferenceMs', {}),
+    reaction('taskswitch', 'Переключение правил: цена переключения, мс', 'мс', true, moduleTitles.taskswitch, 'switchCostMs', {}),
+    {
+      id: 'memory',
+      title: 'Память: объём',
+      yLabel: 'цифр',
+      lowerIsBetter: false,
+      series: [line(moduleTitles.memory, (r) => metric(r, 'memorySpan'))],
       unreliable: [],
       domain: NON_NEGATIVE,
     },

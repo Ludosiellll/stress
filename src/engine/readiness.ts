@@ -36,16 +36,35 @@ export function baselineScore(v: number, v0: number, lowerIsBetter: boolean): nu
   return Math.min(100, Math.max(0, raw));
 }
 
+/** Step of diffScore per module: 40 points per this many ms (≈ 2 standard errors of a median difference, П1). */
+export const DIFF_SCALE_MS: Readonly<{ pomeh: 40; stroop: 60; taskswitch: 60 }> = Object.freeze({ pomeh: 40, stroop: 60, taskswitch: 60 });
+
+/**
+ * Score of a difference of medians (noise, interference, switch cost; lower is better) against its baseline v0:
+ * 60 at the baseline, ±40 per scaleMs, clamped to [0, 100]. Works for v0 near or below zero, unlike baselineScore (П1).
+ */
+export function diffScore(v: number, v0: number, scaleMs: number): number {
+  const raw = 60 + (40 * (v0 - v)) / scaleMs;
+  return Math.min(100, Math.max(0, raw));
+}
+
 function avg(scores: readonly number[]): number | null {
   return scores.length === 0 ? null : mean(scores);
 }
 
+/**
+ * Abilities of the latest diagnostic against the baseline (§7.5). An ability is the mean of the parts that both
+ * diagnostics have; a part missing on either side (e.g. a W2 metric of a 0.1.0 row) is left out, never scored as 0,
+ * and an ability without any part is null. The overall index is the mean of the abilities that are not null.
+ */
 export function readiness(
   latest: DiagnosticMetrics,
   baseline: DiagnosticMetrics,
 ): { abilities: Record<Ability, number | null>; overall: number | null } {
   const rel = (v: number | null, v0: number | null, lowerIsBetter: boolean): number[] =>
     v === null || v0 === null ? [] : [baselineScore(v, Math.max(v0, 1), lowerIsBetter)];
+  const diff = (v: number | null, v0: number | null, scaleMs: number): number[] =>
+    v === null || v0 === null ? [] : [diffScore(v, v0, scaleMs)];
   // Absolute published bands: scored from the latest result alone, no baseline needed (R18a).
   const band = (
     pick: (g: { V: number; P: number; Pi: number }) => number,
@@ -58,13 +77,15 @@ export function readiness(
       ...rel(latest.pzmrMedianRt, baseline.pzmrMedianRt, true),
       ...rel(latest.szmrMedianRt, baseline.szmrMedianRt, true),
       ...rel(latest.rdoMeanAbsErrorMs, baseline.rdoMeanAbsErrorMs, true),
+      ...diff(latest.pomehDeltaMs, baseline.pomehDeltaMs, DIFF_SCALE_MS.pomeh),
     ]),
     attention: avg([
       ...band((g) => g.V, BAND_GORBOV_V),
       ...rel(latest.gonogoScore, baseline.gonogoScore, false),
+      ...diff(latest.stroopInterferenceMs, baseline.stroopInterferenceMs, DIFF_SCALE_MS.stroop),
     ]),
-    switching: avg(band((g) => g.Pi, BAND_GORBOV_PI)),
-    memory: null,
+    switching: avg([...band((g) => g.Pi, BAND_GORBOV_PI), ...diff(latest.switchCostMs, baseline.switchCostMs, DIFF_SCALE_MS.taskswitch)]),
+    memory: avg(rel(latest.memorySpan, baseline.memorySpan, false)),
     logic: avg(rel(latest.numseriesCorrect, baseline.numseriesCorrect, false)),
   };
   const available = Object.values(abilities).filter((a): a is number => a !== null);

@@ -17,16 +17,20 @@ function checkSummaries(page: Page, titles: string[]): (kind: Screen) => Promise
   };
 }
 
+/** A whole diagnostic: the six 0.1.0 segments, then Помехоустойчивость, Струп, Переключение правил and the span protocol. */
 async function runDiagnostic(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Контрольная диагностика' }).click();
   const titles: string[] = [];
-  await playSession(page, { onScreen: checkSummaries(page, titles) });
+  await playSession(page, { onScreen: checkSummaries(page, titles), timeoutMs: 300_000 });
   await expect(page.getByRole('heading', { name: 'Сессия завершена' })).toBeVisible();
   const results = page.getByRole('table', { name: 'Результаты диагностики' });
-  await expect(results.locator('tbody tr')).toHaveCount(8);
-  // Every indicator has a value: the diagnostic covered all six modules.
+  await expect(results.locator('tbody tr')).toHaveCount(12);
+  // Every indicator has a value: the diagnostic covered all ten modules, each condition with enough RTs.
   await expect(results).not.toContainText('нет данных');
-  expect(titles.length).toBeGreaterThanOrEqual(6);
+  expect(titles.length).toBeGreaterThanOrEqual(10);
+  for (const module of ['Помехоустойчивость', 'Струп', 'Переключение правил', 'Память']) {
+    expect(titles, `a ${module} block was played`).toContain(module);
+  }
 }
 
 /** Waits until the reaction bot has seen at least `n` stimuli. */
@@ -94,6 +98,8 @@ test('a test date in 20 days shows the overload phase on Home', async ({ page })
 });
 
 test('diagnostic run writes results and home shows readiness', async ({ page }) => {
+  // Two whole diagnostics of ten segments each.
+  test.setTimeout(480_000);
   await openApp(page, E2E_URL);
   await expect(page.getByText('Пройди диагностику, чтобы увидеть индекс')).toBeVisible();
   // First diagnostic = the baseline; the second is scored against it.
@@ -105,11 +111,10 @@ test('diagnostic run writes results and home shows readiness', async ({ page }) 
 
   const readiness = page.locator('.readiness');
   await expect(readiness).toBeVisible();
-  for (const ability of ['Реакция', 'Внимание', 'Переключение', 'Логика']) {
+  for (const ability of ['Реакция', 'Внимание', 'Переключение', 'Память', 'Логика']) {
     const value = readiness.locator('div').filter({ has: page.getByText(ability, { exact: true }) }).locator('dd');
     await expect(value, ability).toHaveText(/^\d+$/);
   }
-  await expect(readiness.locator('div').filter({ hasText: 'Память' }).locator('dd')).toHaveText('появится позже');
   await expect(page.getByText(/^Общий индекс: \d+$/)).toBeVisible();
   await expect(page.getByText('Пора пройти контрольную диагностику')).toHaveCount(0);
 });

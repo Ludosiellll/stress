@@ -1,6 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { condCost, conditionStats, MIN_COND_RTS, type ConditionStats } from './conditions';
+import { REACTION_MODULE_IDS } from '../types';
+import { COND_PAIRS, condCost, condPairOf, conditionStats, MIN_COND_RTS, type ConditionStats } from './conditions';
 import type { TrialCond, TrialResult, TrialSpec } from './types';
 
 const spec = (cond?: TrialCond, practice = false): TrialSpec => ({
@@ -132,5 +133,18 @@ describe('condCost', () => {
   it('null when a condition is missing', () => {
     expect(condCost({ quiet: { n: 5, errors: 0, medianRt: 320 } }, 'noisy', 'quiet')).toBeNull();
     expect(condCost({}, 'incongruent', 'congruent')).toBeNull();
+  });
+});
+
+describe('COND_PAIRS', () => {
+  it('pomeh noisy − quiet, stroop incongruent − congruent, taskswitch switch − repeat; none for the other modules', () => {
+    expect(COND_PAIRS).toEqual({
+      pomeh: { slow: 'noisy', fast: 'quiet' },
+      stroop: { slow: 'incongruent', fast: 'congruent' },
+      taskswitch: { slow: 'switch', fast: 'repeat' },
+    });
+    expect(REACTION_MODULE_IDS.filter((m) => condPairOf(m) !== null)).toEqual(['stroop', 'taskswitch', 'pomeh']);
+    expect(condPairOf('stroop')).toBe(COND_PAIRS.stroop);
+    expect(condPairOf('pzmr')).toBeNull();
   });
 });

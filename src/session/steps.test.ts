@@ -3,11 +3,13 @@ import type { Outcome, ReactionSummary } from '../engine/reaction/types';
 import {
   AUDIO_NOT_PLAYED,
   conditionLines,
+  MEMORY_SPAN_INSTRUCTION,
   memoryLines,
   plural,
   reactionLines,
   seriesDiagnosticInstruction,
   seriesLines,
+  spanLines,
   tableLines,
 } from './steps';
 
@@ -174,6 +176,21 @@ describe('memoryLines', () => {
   it('exact trials, share of items in place, row length', () => {
     expect(memoryLines(4, 6, 31, 6)).toEqual(['Верно воспроизведено: 4 из 6', 'Позиции на своих местах: 86 %', 'Длина ряда: 6']);
     expect(memoryLines(0, 0, 0, 4)[1]).toBe('Позиции на своих местах: 0 %');
+  });
+});
+
+describe('spanLines', () => {
+  it('rows reproduced out of the rows shown, then the span in digits', () => {
+    expect(spanLines(9, 14, 7)).toEqual(['Верно воспроизведено: 9 из 14', 'Объём памяти: 7 цифр']);
+    expect(spanLines(2, 4, 3)[1]).toBe('Объём памяти: 3 цифры');
+    expect(spanLines(0, 2, 0)[1]).toBe('Объём памяти: 0 цифр');
+  });
+
+  it('the span instruction', () => {
+    expect(MEMORY_SPAN_INSTRUCTION).toBe(
+      'Запомни цифры по порядку. Потом набери их и нажми Enter. Сначала ряд из 3 цифр, после каждых двух проб он удлиняется ' +
+        'на одну цифру. Проверка закончится, когда оба ряда одной длины будут набраны с ошибкой.',
+    );
   });
 });
 

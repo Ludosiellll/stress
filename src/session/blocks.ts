@@ -1,10 +1,10 @@
-import { diagnosticSegmentSeed, diagnosticSeriesSchedule, type DiagnosticResults } from '../engine/diagnostic';
+import { EMPTY_METRICS, diagnosticSegmentSeed, diagnosticSeriesSchedule, type DiagnosticResults } from '../engine/diagnostic';
 import { R0, updateRating, type Rating } from '../engine/elo';
 import { BASE_ITEM_LIMIT_MS, effectiveDifficulty } from '../engine/itemLimit';
 import { keyLabel, layoutKeys } from '../engine/layouts';
 import { FINISHER_AUDIO, mergeAudio } from '../engine/audio/stressors';
 import { OVERLOAD_LEVEL_STEP, type Segment } from '../engine/planner';
-import { conditionStats, type ConditionStats } from '../engine/reaction/conditions';
+import { COND_PAIRS, condCost, condPairOf, conditionStats, type CondPair, type ConditionStats } from '../engine/reaction/conditions';
 import { resolveBlock } from '../engine/reaction/resolve';
 import { summarize } from '../engine/reaction/summary';
 import type { BlockTimeline, ReactionSummary, TrialResult, TrialSpec } from '../engine/reaction/types';
@@ -18,7 +18,8 @@ import {
   type ReactionModuleId,
   type TableModuleId,
 } from '../engine/types';
-import { generateMemoryTrials } from '../modules/memory/generate';
+import { generateMemoryTrials, SPAN_PROTOCOL_PARAMS, SPAN_PROTOCOL_TRIALS, spanProtocolTrials } from '../modules/memory/generate';
+import { spanProtocolStops, type MemoryAnswer } from '../modules/memory/score';
 import {
   MEMORY_TRIALS,
   memoryInstruction,
@@ -42,6 +43,7 @@ import {
 } from '../modules/tables/gorbov';
 import { generateSchulteTable, schulteParams } from '../modules/tables/schulte';
 import {
+  MEMORY_SPAN_INSTRUCTION,
   OVERLOAD_PREFIX,
   SERIES_INSTRUCTION_TRAINING,
   SERIES_KEYS_HINT,
@@ -56,10 +58,12 @@ import {
 const SERIES_BLOCK_ITEMS = 10;
 /** Floor for block sizes and item counts under the e2e scale. */
 const MIN_SCALED = 3;
+/** Floor for blocks of modules with trial conditions (COND_PAIRS) under the e2e scale: ≥ 3 RTs per condition. */
+const MIN_SCALED_COND = 12;
 
-/** Block size or item count under the e2e scale: max(3, round(n·scale)). */
-export function scaledCount(n: number, scale: number): number {
-  return Math.max(MIN_SCALED, Math.round(n * scale));
+/** Block size or item count under the e2e scale: max(min, round(n·scale)), min 3 by default. */
+export function scaledCount(n: number, scale: number, min: number = MIN_SCALED): number {
+  return Math.max(min, Math.round(n * scale));
 }
 
 /** Practice trials stay as planned unless the e2e scale shrinks them: max(1, round(n·scale)). */
@@ -85,8 +89,11 @@ export type BlockPlan =
       overload: boolean;
     }
   | { kind: 'table'; module: TableModuleId; L: number; task: TableTaskId; params: TableParams; overload: boolean }
-  /** Memory blocks cycle their mode by block index; `count` trials. */
-  | { kind: 'memory'; L: number; mode: MemoryMode; params: MemoryParams; count: number; overload: boolean }
+  /**
+   * Memory blocks cycle their mode by block index; `count` trials. A diagnostic plays the span protocol instead:
+   * digits, its first `count` trials, ending early when it stops.
+   */
+  | { kind: 'memory'; protocol: 'fixed' | 'span'; L: number; mode: MemoryMode; params: MemoryParams; count: number; overload: boolean }
   /** Training items carry their own limits (R36); `totalLimitMs` is the diagnostic's block limit. */
   | { kind: 'numseries'; diagnostic: boolean; count: number; totalLimitMs: number | null };
 
@@ -124,7 +131,7 @@ export function planBlock(segment: Segment, segmentL: number, blockIndex: number
       params,
       keys,
       layout: effectiveLayout,
-      size: scaledCount(segment.trialCount ?? mod.blockSize, ctx.scale),
+      size: scaledCount(segment.trialCount ?? mod.blockSize, ctx.scale, condPairOf(module) === null ? MIN_SCALED : MIN_SCALED_COND),
       practice: scaledPractice(segment.practiceTrials ?? 0, ctx.scale),
       overload,
     };
@@ -135,8 +142,12 @@ export function planBlock(segment: Segment, segmentL: number, blockIndex: number
   }
   if (module === 'schulte') return { kind: 'table', module, L, task: 'schulte', params: schulteParams(L), overload };
   if (module === 'memory') {
+    if (ctx.diagnostic) {
+      const count = scaledCount(SPAN_PROTOCOL_TRIALS, ctx.scale);
+      return { kind: 'memory', protocol: 'span', L, mode: 'digits', params: { ...SPAN_PROTOCOL_PARAMS }, count, overload };
+    }
     const count = scaledCount(MEMORY_TRIALS, ctx.scale);
-    return { kind: 'memory', L, mode: memoryModeForBlock(blockIndex), params: memoryParams(L), count, overload };
+    return { kind: 'memory', protocol: 'fixed', L, mode: memoryModeForBlock(blockIndex), params: memoryParams(L), count, overload };
   }
   if (ctx.diagnostic) {
     const scheduled = diagnosticSeriesSchedule().length;
@@ -167,7 +178,10 @@ function plainInstruction(plan: BlockPlan, layout: LayoutId): { text: string; ke
     case 'table':
       return { text: tableInstruction(plan.task, plan.params.size), keysHint: TABLE_KEYS_HINT };
     case 'memory':
-      return { text: memoryInstruction(plan.mode, plan.params), keysHint: memoryKeysHint(plan.mode) };
+      return {
+        text: plan.protocol === 'span' ? MEMORY_SPAN_INSTRUCTION : memoryInstruction(plan.mode, plan.params),
+        keysHint: memoryKeysHint(plan.mode),
+      };
     case 'numseries':
       return {
         text: plan.diagnostic ? seriesDiagnosticInstruction(plan.count, plan.totalLimitMs) : SERIES_INSTRUCTION_TRAINING,
@@ -232,10 +246,15 @@ export function buildBlock(
       };
     }
     case 'memory': {
-      const { L, mode, params, count } = plan;
-      const trials = generateMemoryTrials(params, mode, count, createRng(seed));
+      const { L, mode, params, count, protocol } = plan;
+      if (protocol === 'span') {
+        return {
+          step: { kind: 'memory_block', L, mode, params, trials: spanProtocolTrials(createRng(seed)).slice(0, count), protocol },
+          paramsJson: JSON.stringify({ protocol, mode, ...params, trials: count }),
+        };
+      }
       return {
-        step: { kind: 'memory_block', L, mode, params, trials, protocol: 'fixed' },
+        step: { kind: 'memory_block', L, mode, params, trials: generateMemoryTrials(params, mode, count, createRng(seed)), protocol },
         paramsJson: JSON.stringify({ mode, ...params, trials: count }),
       };
     }
@@ -321,27 +340,47 @@ export function updatedRatings(
   return next;
 }
 
+/**
+ * The answers of a memory block: one per trial, or for the span protocol fewer when it stopped exactly on the last
+ * one (spanProtocolStops) and on no answer before it. RangeError otherwise.
+ */
+export function checkMemoryAnswers(step: StepOf<'memory_block'>, answers: readonly MemoryAnswer[]): void {
+  const { trials, protocol } = step;
+  const n = answers.length;
+  if (n > trials.length) throw new RangeError(`submitMemory: ${String(n)} answers for ${String(trials.length)} trials`);
+  if (protocol === 'span') {
+    for (let k = 1; k < n; k++) {
+      if (spanProtocolStops(trials, answers.slice(0, k))) {
+        throw new RangeError(`submitMemory: the span protocol stopped after answer ${String(k)}, got ${String(n)} answers`);
+      }
+    }
+    if (n === trials.length || spanProtocolStops(trials, answers)) return;
+  } else if (n === trials.length) {
+    return;
+  }
+  throw new RangeError(`submitMemory: ${String(n)} answers for ${String(trials.length)} trials`);
+}
+
 /** What one diagnostic block adds to DiagnosticResults. */
 export type DiagnosticPart =
-  | { module: ReactionModuleId; summary: ReactionSummary }
+  | { module: ReactionModuleId; summary: ReactionSummary; conditions: ConditionStats }
   | { module: 'gorbov'; run: number; seconds: number | null }
-  | { module: 'numseries'; correct: number; total: number };
+  | { module: 'numseries'; correct: number; total: number }
+  | { module: 'memory'; span: number };
+
+/** The fast and slow condition medians of a block and their difference; null where a median is missing. */
+function condMetrics(conditions: ConditionStats, { slow, fast }: CondPair): [fast: number | null, slow: number | null, cost: number | null] {
+  return [conditions[fast]?.medianRt ?? null, conditions[slow]?.medianRt ?? null, condCost(conditions, slow, fast)];
+}
 
 /**
  * pzmr/szmr medianRt, gonogo score × 100 (percent, Ruling R18), rdo meanAbsErrorMs, Gorbov metrics only when
- * all three runs were completed, number series correct within the total limit. Missing parts stay null.
+ * all three runs were completed, number series correct within the total limit; the condition medians and their
+ * difference of pomeh, stroop and taskswitch, the memory span. Missing parts stay null.
  * Reaction blocks stored with timingUnreliable (after their replay) list their module in `unreliable`.
  */
 export function diagnosticResults(parts: readonly DiagnosticPart[]): DiagnosticResults {
-  const r: DiagnosticResults = {
-    pzmrMedianRt: null,
-    szmrMedianRt: null,
-    gonogoScore: null,
-    rdoMeanAbsErrorMs: null,
-    gorbov: null,
-    numseriesCorrect: null,
-    unreliable: [],
-  };
+  const r: DiagnosticResults = { ...EMPTY_METRICS, unreliable: [] };
   const seconds: Array<number | null> = [];
   for (const p of parts) {
     if ('summary' in p && p.summary.timingUnreliable) r.unreliable.push(p.module);
@@ -363,6 +402,18 @@ export function diagnosticResults(parts: readonly DiagnosticPart[]): DiagnosticR
         break;
       case 'numseries':
         r.numseriesCorrect = p.correct;
+        break;
+      case 'pomeh':
+        [r.pomehQuietRt, r.pomehNoisyRt, r.pomehDeltaMs] = condMetrics(p.conditions, COND_PAIRS.pomeh);
+        break;
+      case 'stroop':
+        [r.stroopCongruentRt, r.stroopIncongruentRt, r.stroopInterferenceMs] = condMetrics(p.conditions, COND_PAIRS.stroop);
+        break;
+      case 'taskswitch':
+        [r.switchRepeatRt, r.switchSwitchRt, r.switchCostMs] = condMetrics(p.conditions, COND_PAIRS.taskswitch);
+        break;
+      case 'memory':
+        r.memorySpan = p.span;
         break;
     }
   }

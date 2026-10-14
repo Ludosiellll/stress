@@ -1,26 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import type { DiagnosticRow } from '../data/rows';
 import { session } from '../data/repository.contract';
-import { diagnosticCharts, durationText, ruDate, sessionLines, SESSION_LINES } from './progressModel';
+import { MemoryRepository } from '../data/memoryRepository';
+import { MODULE_IDS } from '../engine/types';
+import { diagnosticCharts, durationText, loadProgressModel, ruDate, sessionLines, SESSION_LINES } from './progressModel';
 
 function row(number: number, results: unknown): DiagnosticRow {
   return { id: `d${String(number)}`, sessionId: 's', number, at: '2026-10-01T10:00:00.000Z', resultsJson: typeof results === 'string' ? results : JSON.stringify(results) };
 }
 
 const full = { pzmrMedianRt: 300, szmrMedianRt: 420, gonogoScore: 85, rdoMeanAbsErrorMs: 55, gorbov: { V: 40, P: 80, Pi: 12 }, numseriesCorrect: 12 };
+const fullW2 = { ...full, pomehDeltaMs: 35, stroopInterferenceMs: 90, switchCostMs: -10, memorySpan: 7 };
 
 describe('diagnosticCharts', () => {
-  it('makes six charts with the metrics of every diagnostic', () => {
+  it('makes ten charts with the metrics of every diagnostic', () => {
     const charts = diagnosticCharts([row(1, full), row(2, { ...full, pzmrMedianRt: 290, gonogoScore: 90 })]);
-    expect(charts.map((c) => c.id)).toEqual(['pzmr', 'szmr', 'gonogo', 'rdo', 'gorbov', 'numseries']);
+    expect(charts.map((c) => c.id)).toEqual(['pzmr', 'szmr', 'gonogo', 'rdo', 'gorbov', 'numseries', 'pomeh', 'stroop', 'taskswitch', 'memory']);
     expect(charts[0]?.series[0]?.points).toEqual([{ x: '№1', y: 300 }, { x: '№2', y: 290 }]);
     expect(charts[2]?.series[0]?.points.map((p) => p.y)).toEqual([85, 90]);
-    expect(charts.map((c) => c.lowerIsBetter)).toEqual([true, true, false, true, true, false]);
+    expect(charts.map((c) => c.lowerIsBetter)).toEqual([true, true, false, true, true, false, true, true, true, false]);
     expect(charts[4]?.series.map((s) => s.name)).toEqual(['V', 'P', 'Π']);
     expect(charts[4]?.series.map((s) => s.points[0]?.y)).toEqual([40, 80, 12]);
   });
 
-  it('bounds every axis by what the metric can take; Π of Gorbov can be negative', () => {
+  it('bounds every axis by what the metric can take; Π of Gorbov and the differences can be negative', () => {
     const domains = Object.fromEntries(diagnosticCharts([]).map((c) => [c.id, c.domain]));
     expect(domains).toEqual({
       pzmr: { min: 0 },
@@ -29,7 +32,31 @@ describe('diagnosticCharts', () => {
       rdo: { min: 0 },
       gorbov: {},
       numseries: { min: 0 },
+      pomeh: {},
+      stroop: {},
+      taskswitch: {},
+      memory: { min: 0 },
     });
+  });
+
+  it('the four W2 charts: differences and the span; gaps for 0.1.0 rows', () => {
+    const charts = diagnosticCharts([row(1, full), row(2, fullW2), row(3, { ...fullW2, unreliable: ['taskswitch'] })]);
+    const byId = Object.fromEntries(charts.map((c) => [c.id, c]));
+    expect(charts.slice(6).map((c) => [c.title, c.yLabel])).toEqual([
+      ['Помехоустойчивость: разница, мс', 'мс'],
+      ['Струп: интерференция, мс', 'мс'],
+      ['Переключение правил: цена переключения, мс', 'мс'],
+      ['Память: объём', 'цифр'],
+    ]);
+    expect(byId.pomeh?.series[0]?.points.map((p) => p.y)).toEqual([null, 35, 35]);
+    expect(byId.stroop?.series[0]?.points.map((p) => p.y)).toEqual([null, 90, 90]);
+    expect(byId.taskswitch?.series[0]?.points).toEqual([
+      { x: '№1', y: null },
+      { x: '№2', y: -10 },
+      { x: '№3', y: -10, note: 'замер ненадёжен' },
+    ]);
+    expect(byId.taskswitch?.unreliable).toEqual(['№3']);
+    expect(byId.memory?.series[0]?.points.map((p) => p.y)).toEqual([null, 7, 7]);
   });
 
   it('turns missing and non-finite values and unreadable rows into gaps, never zeros', () => {
@@ -56,6 +83,15 @@ describe('diagnosticCharts', () => {
 
   it('has no points without diagnostics', () => {
     expect(diagnosticCharts([]).every((c) => c.series.every((s) => s.points.length === 0))).toBe(true);
+  });
+});
+
+describe('loadProgressModel', () => {
+  it('level charts for every module except the number series', async () => {
+    const model = await loadProgressModel(new MemoryRepository());
+    expect(model.levels.map((l) => l.module)).toEqual(MODULE_IDS.filter((m) => m !== 'numseries'));
+    expect(model.levels.find((l) => l.module === 'memory')).toMatchObject({ title: 'Память', norm: 9 });
+    expect(model.diagnostics).toHaveLength(10);
   });
 });
 

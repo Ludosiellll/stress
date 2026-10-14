@@ -2,19 +2,33 @@ import { describe, expect, it } from 'vitest';
 import { diagnosticSegmentSeed, diagnosticSeriesSchedule, planDiagnostic } from './diagnostic';
 import { hashString } from './rng';
 
+/** The six segments of the 0.1.0 diagnostic, as 0.1.0 played them (order, fixedL, volumes). */
+const W1_SEGMENTS = [
+  { module: 'pzmr', budgetMs: 0, purpose: 'diagnostic', fixedL: 0, trialCount: 50, practiceTrials: 5 },
+  { module: 'szmr', budgetMs: 0, purpose: 'diagnostic', fixedL: 0, trialCount: 70, practiceTrials: 5 },
+  { module: 'gonogo', budgetMs: 0, purpose: 'diagnostic', fixedL: 10, trialCount: 60, practiceTrials: 5 },
+  { module: 'rdo', budgetMs: 0, purpose: 'diagnostic', fixedL: 0, trialCount: 50, practiceTrials: 5 },
+  { module: 'gorbov', budgetMs: 0, purpose: 'diagnostic', fixedL: 0, runs: 3 },
+  { module: 'numseries', budgetMs: 0, purpose: 'diagnostic', items: 20, totalTimeLimitMs: 600000 },
+];
+
 describe('planDiagnostic', () => {
-  it('matches the reference volumes exactly', () => {
+  it('W1 segments are unchanged', () => {
     const plan = planDiagnostic(3);
     expect(plan.kind).toBe('diagnostic');
     expect(plan.diagnosticNumber).toBe(3);
     expect(plan.seed).toBe(hashString('diag:3'));
-    expect(plan.segments).toEqual([
-      { module: 'pzmr', budgetMs: 0, purpose: 'diagnostic', fixedL: 0, trialCount: 50, practiceTrials: 5 },
-      { module: 'szmr', budgetMs: 0, purpose: 'diagnostic', fixedL: 0, trialCount: 70, practiceTrials: 5 },
-      { module: 'gonogo', budgetMs: 0, purpose: 'diagnostic', fixedL: 10, trialCount: 60, practiceTrials: 5 },
-      { module: 'rdo', budgetMs: 0, purpose: 'diagnostic', fixedL: 0, trialCount: 50, practiceTrials: 5 },
-      { module: 'gorbov', budgetMs: 0, purpose: 'diagnostic', fixedL: 0, runs: 3 },
-      { module: 'numseries', budgetMs: 0, purpose: 'diagnostic', items: 20, totalTimeLimitMs: 600000 },
+    expect(plan.segments.slice(0, 6)).toEqual(W1_SEGMENTS);
+    // Block seeds hash the number and the module only, so the W1 tables and series of diagnostic n stay the same.
+    expect(diagnosticSegmentSeed(3, 'gorbov')).toBe(hashString('diag:3:gorbov'));
+  });
+
+  it('the W2 segments follow the number series (П8)', () => {
+    expect(planDiagnostic(3).segments.slice(6)).toEqual([
+      { module: 'pomeh', budgetMs: 0, purpose: 'diagnostic', fixedL: 8, trialCount: 40, practiceTrials: 5 },
+      { module: 'stroop', budgetMs: 0, purpose: 'diagnostic', fixedL: 8, trialCount: 48, practiceTrials: 5 },
+      { module: 'taskswitch', budgetMs: 0, purpose: 'diagnostic', fixedL: 5, trialCount: 48, practiceTrials: 5 },
+      { module: 'memory', budgetMs: 0, purpose: 'diagnostic' },
     ]);
   });
 

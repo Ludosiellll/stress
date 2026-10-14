@@ -1,7 +1,7 @@
 import type { DiagnosticResults } from '../engine/diagnostic';
 import { BASE_ITEM_LIMIT_MS } from '../engine/itemLimit';
-import { condCost, type ConditionStats } from '../engine/reaction/conditions';
-import type { Outcome, ReactionSummary, TrialCond, TrialSpec } from '../engine/reaction/types';
+import { condCost, condPairOf, type ConditionStats } from '../engine/reaction/conditions';
+import type { Outcome, ReactionSummary, TrialSpec } from '../engine/reaction/types';
 import type { BlockFlag, InputKey, LayoutId, ModuleId, ReactionModuleId, TableModuleId } from '../engine/types';
 import type { ParamChange } from '../modules/describe';
 import type { MemoryTrial } from '../modules/memory/generate';
@@ -40,8 +40,11 @@ export type Step =
     }
   /** Every item carries its own limit (training, R36); diagnostic items have none and `totalLimitMs` applies. */
   | { kind: 'numseries_block'; items: TimedSeriesItem[]; totalLimitMs: number | null }
-  /** «Память»: each trial is shown, then reproduced; answered with submitMemory (one answer per trial). */
-  | { kind: 'memory_block'; L: number; mode: MemoryMode; params: MemoryParams; trials: MemoryTrial[]; protocol: 'fixed' }
+  /**
+   * «Память»: each trial is shown, then reproduced; answered with submitMemory. `fixed`: one answer per trial.
+   * `span` (diagnostics): the span protocol, whose answers end early once spanProtocolStops says so.
+   */
+  | { kind: 'memory_block'; L: number; mode: MemoryMode; params: MemoryParams; trials: MemoryTrial[]; protocol: 'fixed' | 'span' }
   | { kind: 'summary'; view: BlockSummaryView }
   /** Diagnostics: the reaction block just played was timingUnreliable and is replayed once (I1); ackNotice() starts it. */
   | { kind: 'notice'; module: ReactionModuleId; text: string }
@@ -90,6 +93,10 @@ export const UNRELIABLE_REPLAY_NOTICE = 'Замер ненадёжен (проп
 export const AUDIO_NOT_PLAYED = 'Звук не воспроизводился: проверь устройство вывода и громкость помех в настройках.';
 export const SERIES_INSTRUCTION_TRAINING =
   'Найди закономерность и введи следующее число. На задачу до 40 секунд, на трудных уровнях меньше: остаток времени показывает полоса.';
+/** The span protocol of the diagnostic (digits only; its rows grow every two trials). */
+export const MEMORY_SPAN_INSTRUCTION =
+  'Запомни цифры по порядку. Потом набери их и нажми Enter. Сначала ряд из 3 цифр, после каждых двух проб он удлиняется ' +
+  'на одну цифру. Проверка закончится, когда оба ряда одной длины будут набраны с ошибкой.';
 export const TABLE_KEYS_HINT = 'Мышь';
 export const SERIES_KEYS_HINT = 'Цифры и Enter';
 
@@ -167,37 +174,35 @@ export function reactionLines(module: ReactionModuleId, s: ReactionSummary): str
 }
 
 /** Signed whole milliseconds: «+90», «−30», «0». */
-function signedMs(x: number): string {
+export function signedMs(x: number): string {
   const v = whole(x);
   if (v > 0) return `+${String(v)}`;
   if (v < 0) return `−${String(-v)}`;
   return '0';
 }
 
-/** Modules that compare two kinds of trials: the fast and slow conditions with their labels, and the difference. */
-interface CondLines {
-  fast: [cond: TrialCond, label: string];
-  slow: [cond: TrialCond, label: string];
-  cost: string;
-}
-
-const COND_LINES: Partial<Record<ReactionModuleId, CondLines>> = {
-  stroop: { fast: ['congruent', 'Цвет совпадает со словом'], slow: ['incongruent', 'Не совпадает'], cost: 'Интерференция' },
-  taskswitch: { fast: ['repeat', 'Правило повторяется'], slow: ['switch', 'Правило сменилось'], cost: 'Цена переключения' },
-  pomeh: { fast: ['quiet', 'Без помех'], slow: ['noisy', 'С помехами'], cost: 'Разница' },
+/** Labels of the fast and slow conditions of a module (COND_PAIRS) and of their difference. */
+const COND_LABELS: Partial<Record<ReactionModuleId, { fast: string; slow: string; cost: string }>> = {
+  stroop: { fast: 'Цвет совпадает со словом', slow: 'Не совпадает', cost: 'Интерференция' },
+  taskswitch: { fast: 'Правило повторяется', slow: 'Правило сменилось', cost: 'Цена переключения' },
+  pomeh: { fast: 'Без помех', slow: 'С помехами', cost: 'Разница' },
 };
 
 /** «Цвет совпадает со словом: 520 мс», «Не совпадает: 610 мс», «Интерференция: +90 мс»; a line only for a known value. */
 export function conditionLines(module: ReactionModuleId, stats: ConditionStats): string[] {
-  const spec = COND_LINES[module];
-  if (spec === undefined) return [];
+  const pair = condPairOf(module);
+  const labels = COND_LABELS[module];
+  if (pair === null || labels === undefined) return [];
   const lines: string[] = [];
-  for (const [cond, label] of [spec.fast, spec.slow]) {
+  for (const [cond, label] of [
+    [pair.fast, labels.fast],
+    [pair.slow, labels.slow],
+  ] as const) {
     const rt = stats[cond]?.medianRt ?? null;
     if (rt !== null) lines.push(`${label}: ${String(whole(rt))} мс`);
   }
-  const cost = condCost(stats, spec.slow[0], spec.fast[0]);
-  if (cost !== null) lines.push(`${spec.cost}: ${signedMs(cost)} мс`);
+  const cost = condCost(stats, pair.slow, pair.fast);
+  if (cost !== null) lines.push(`${labels.cost}: ${signedMs(cost)} мс`);
   return lines;
 }
 
@@ -219,6 +224,11 @@ export function memoryLines(exact: number, trials: number, positionsCorrect: num
     `Позиции на своих местах: ${String(whole(100 * share))} %`,
     `Длина ряда: ${String(length)}`,
   ];
+}
+
+/** The span protocol: «Верно воспроизведено: 9 из 14» (of the rows shown), «Объём памяти: 7 цифр». */
+export function spanLines(exact: number, shown: number, span: number): string[] {
+  return [`Верно воспроизведено: ${String(exact)} из ${String(shown)}`, `Объём памяти: ${String(span)} ${plural(span, 'цифра', 'цифры', 'цифр')}`];
 }
 
 /** «12 с», or «11,9 с» for a limit that is not whole seconds (limits are multiples of 100 ms). */

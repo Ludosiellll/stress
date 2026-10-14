@@ -1,6 +1,6 @@
 import { fireEvent, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DiagnosticResults } from '../../engine/diagnostic';
+import { EMPTY_METRICS, type DiagnosticResults } from '../../engine/diagnostic';
 import { MemoryRepository } from '../../data/memoryRepository';
 import { session } from '../../data/repository.contract';
 import type { SessionPlan } from '../../engine/planner';
@@ -12,15 +12,7 @@ import { renderWithApp } from '../testUtils';
 import Home from './Home';
 
 function noResults(over: Partial<DiagnosticResults>): string {
-  const base: DiagnosticResults = {
-    pzmrMedianRt: null,
-    szmrMedianRt: null,
-    gonogoScore: null,
-    rdoMeanAbsErrorMs: null,
-    gorbov: null,
-    numseriesCorrect: null,
-    unreliable: [],
-  };
+  const base: DiagnosticResults = { ...EMPTY_METRICS, unreliable: [] };
   return JSON.stringify({ ...base, ...over });
 }
 
@@ -267,10 +259,25 @@ describe('Home with history', () => {
     expect(value('Внимание')).toBe('89');
     expect(value('Переключение')).toBe('98');
     expect(value('Логика')).toBe('100');
-    expect(value('Память')).toBe('появится позже');
+    // 0.1.0 diagnostics have no memory span: no data, and the index stays the 0.1.0 one.
+    expect(value('Память')).toBe('нет данных');
     expect(screen.getByText('Общий индекс: 96')).toBeTruthy();
     expect(screen.getByText('Для большинства показателей 60 — уровень первой диагностики; таблица Горбова оценивается по опубликованным нормам.')).toBeTruthy();
     expect(screen.queryByText('Пройди диагностику, чтобы увидеть индекс')).toBeNull();
+  });
+
+  it('memory shows a number once diagnostics have a span', async () => {
+    const repo = new MemoryRepository();
+    await seedDiagnostic(repo, 1, daysFromNow(-20), noResults({ pzmrMedianRt: 400 }));
+    await seedDiagnostic(repo, 2, daysFromNow(-10), noResults({ pzmrMedianRt: 400, memorySpan: 6, stroopInterferenceMs: 100 }));
+    await seedDiagnostic(repo, 3, new Date(), noResults({ pzmrMedianRt: 400, memorySpan: 7, stroopInterferenceMs: 70 }));
+    await renderHome(repo);
+    const value = (label: string): string | null => screen.getByText(label).nextElementSibling?.textContent ?? null;
+    // Span 7 against the first one, 6: 60 + 40 · 1 / 1,5 = 87.
+    expect(value('Память')).toBe('87');
+    // Interference 70 against 100: 60 + 40 · 30 / 60 = 80.
+    expect(value('Внимание')).toBe('80');
+    expect(value('Реакция')).toBe('60');
   });
 
   it('writes "нет данных" for abilities without a result', async () => {
@@ -279,6 +286,7 @@ describe('Home with history', () => {
     await renderHome(repo);
     expect(screen.getByText('Внимание').nextElementSibling?.textContent).toBe('нет данных');
     expect(screen.getByText('Логика').nextElementSibling?.textContent).toBe('нет данных');
+    expect(screen.getByText('Память').nextElementSibling?.textContent).toBe('нет данных');
     expect(screen.getByText('Реакция').nextElementSibling?.textContent).toBe('60');
   });
 
