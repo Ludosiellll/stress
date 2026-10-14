@@ -118,8 +118,8 @@ export type BlockPlan =
     }
   | { kind: 'table'; module: TableModuleId; L: number; task: TableTaskId; params: TableParams; overload: boolean }
   /**
-   * Memory blocks cycle their mode by block index; `count` trials. A diagnostic plays the span protocol instead:
-   * digits, its first `count` trials, ending early when it stops.
+   * Memory blocks cycle their mode by block index (by pairs of blocks in a plateau mix); `count` trials. A diagnostic
+   * plays the span protocol instead: digits, its first `count` trials, ending early when it stops.
    */
   | { kind: 'memory'; protocol: 'fixed' | 'span'; L: number; mode: MemoryMode; params: MemoryParams; count: number; overload: boolean }
   /** Training items carry their own limits (R36); `totalLimitMs` is the diagnostic's block limit. */
@@ -175,7 +175,9 @@ export function planBlock(segment: Segment, segmentL: number, blockIndex: number
       return { kind: 'memory', protocol: 'span', L, mode: 'digits', params: { ...SPAN_PROTOCOL_PARAMS }, count, overload };
     }
     const count = scaledCount(MEMORY_TRIALS, ctx.scale);
-    return { kind: 'memory', protocol: 'fixed', L, mode: memoryModeForBlock(blockIndex), params: memoryParams(L), count, overload };
+    // A mix alternates normal and overload blocks, so its modes advance every two blocks: each mode gets both (W2-R27).
+    const modeIndex = segment.overload === 'mix' ? Math.floor(blockIndex / 2) : blockIndex;
+    return { kind: 'memory', protocol: 'fixed', L, mode: memoryModeForBlock(modeIndex), params: memoryParams(L), count, overload };
   }
   if (ctx.diagnostic) {
     const scheduled = diagnosticSeriesSchedule().length;

@@ -326,8 +326,19 @@ describe('overload blocks', () => {
     expect(planBlock(seg('szmr'), 10, 1, ctx)).toMatchObject({ L: 10, overload: false });
     expect(planBlock(seg('schulte', 'mix'), 4, 1, ctx)).toMatchObject({ kind: 'table', L: 7, overload: true });
     expect(planBlock(seg('gorbov', 'mix'), 4, 1, ctx)).toMatchObject({ kind: 'table', L: 7, task: 'red_down', overload: true });
-    expect(planBlock(seg('memory', 'mix'), 9, 1, ctx)).toMatchObject({ kind: 'memory', L: 12, mode: memoryModeForBlock(1), overload: true });
+    expect(planBlock(seg('memory', 'mix'), 9, 1, ctx)).toMatchObject({ kind: 'memory', L: 12, mode: memoryModeForBlock(0), overload: true });
     expect(planBlock(seg('memory', 'mix'), 9, 2, ctx)).toMatchObject({ kind: 'memory', L: 9, overload: false });
+  });
+
+  it('a memory mix gives every mode a normal and an overload block (W2-R27); other segments cycle by block index', () => {
+    const modes = (overload: 'finisher' | 'mix' | undefined) =>
+      Array.from({ length: 8 }, (_, i) => planBlock(seg('memory', overload), 9, i, ctx)).map((p) =>
+        p.kind === 'memory' ? `${p.mode}${p.overload ? '+3' : ''}` : p.kind,
+      );
+    expect(modes('mix')).toEqual(['digits', 'digits+3', 'positions', 'positions+3', 'card', 'card+3', 'letters', 'letters+3']);
+    const cycle = ['digits', 'positions', 'card', 'letters', 'digits', 'positions', 'card', 'letters'];
+    expect(modes(undefined)).toEqual(cycle);
+    expect(modes('finisher')).toEqual(cycle.map((m) => m + '+3'));
   });
 
   it('an overload reaction block adds the finisher sound for every trial; the noise keeps its own trials (W2-R10)', () => {
