@@ -6,6 +6,9 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env['CI'],
   retries: process.env['CI'] ? 1 : 0,
+  // The e2e sessions mostly wait on real ISIs and timers, not the CPU: two workers halve the CI time
+  // (one worker took 5.6 min). The timing probe passed under three parallel workers locally.
+  ...(process.env['CI'] ? { workers: 2 } : {}),
   reporter: process.env['CI'] ? [['list'], ['html', { open: 'never' }]] : 'list',
   use: {
     baseURL: 'http://localhost:4173',
