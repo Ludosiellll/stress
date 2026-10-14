@@ -21,6 +21,8 @@ export function createWebPlatform(): Platform {
     },
     powerCharging: batteryCharging,
     backupStatus: () => Promise.resolve(null),
+    // Data lives in memory: there is no database file to copy.
+    backupNow: () => Promise.resolve(null),
     openRepository: () => Promise.resolve(new MemoryRepository()),
   };
 }

@@ -565,3 +565,10 @@ legend {
 .sessions th:last-child {
   text-align: right;
 }
+
+/* ---------- restore from an export file (Task 14) ---------- */
+.restore progress {
+  width: 100%;
+  max-width: 420px;
+  accent-color: var(--accent);
+}

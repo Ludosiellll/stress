@@ -8,6 +8,7 @@ import { useApp } from '../AppContext';
 import { buildReport, logEvent, safeAppVersion } from '../errorLog';
 import { decimal, localDate, localStamp } from '../format';
 import { collectFrameTimestamps } from '../frameSampler';
+import RestoreSection from '../views/RestoreSection';
 
 export interface SettingsProps {
   onBack: () => void;
@@ -104,7 +105,7 @@ function SelfCheckResult({ check, fresh }: { check: SelfCheck; fresh: boolean })
   );
 }
 
-type Busy = 'check' | 'export' | 'report' | null;
+type Busy = 'check' | 'export' | 'report' | 'restore' | null;
 type SoundCheck = 'idle' | 'playing' | 'unavailable' | 'silent';
 
 export default function Settings({ onBack, measureFrames = (signal) => collectFrameTimestamps(CHECK_MS, signal) }: SettingsProps) {
@@ -124,6 +125,8 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
   const [reportMessage, setReportMessage] = useState<{ ok: boolean; text: string } | null>(null);
   // Aborted when the screen closes, so a running measurement stops and saves nothing.
   const lifetime = useRef<AbortController | null>(null);
+  // A restore writes history: nothing else on the screen may run or change, and the screen stays open.
+  const restoring = busy === 'restore';
 
   useEffect(() => {
     const controller = new AbortController();
@@ -160,8 +163,8 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
-      // The measurement must not be disturbed, and Escape would also hide the result.
-      if (e.key === 'Escape' && busy !== 'check') onBack();
+      // The measurement must not be disturbed (Escape would also hide the result), nor a restore.
+      if (e.key === 'Escape' && busy !== 'check' && busy !== 'restore') onBack();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => {
@@ -262,6 +265,23 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
     }
   };
 
+  /** A restore may have taken the test date and layout from the file: show what is stored now. */
+  const restoreBusy = (on: boolean): void => {
+    setBusy(on ? 'restore' : null);
+    if (on) return;
+    const signal = lifetime.current?.signal;
+    repo.getSettings().then(
+      (s) => {
+        if (signal?.aborted === true) return;
+        setLayout(s.layout);
+        setTestDate(s.testDate ?? '');
+      },
+      (e: unknown) => {
+        void logEvent(repo, 'warn', `Настройки: не удалось перечитать после восстановления: ${errorText(e)}`);
+      },
+    );
+  };
+
   const exportData = async (): Promise<void> => {
     setBusy('export');
     setExportMessage(null);
@@ -322,7 +342,7 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
         <legend>Раскладка</legend>
         {LAYOUTS.map(([id, label]) => (
           <label key={id} className="choice">
-            <input type="radio" name="layout" checked={layout === id} onChange={() => { chooseLayout(id); }} /> {label}
+            <input type="radio" name="layout" checked={layout === id} disabled={restoring} onChange={() => { chooseLayout(id); }} /> {label}
           </label>
         ))}
       </fieldset>
@@ -331,9 +351,9 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
         <div className="row">
           <label>
             Дата теста
-            <input type="date" value={testDate} onChange={(e) => { changeDate(e.target.value); }} />
+            <input type="date" value={testDate} disabled={restoring} onChange={(e) => { changeDate(e.target.value); }} />
           </label>
-          <button type="button" onClick={() => { changeDate(''); }}>
+          <button type="button" disabled={restoring} onClick={() => { changeDate(''); }}>
             Очистить
           </button>
         </div>
@@ -361,11 +381,12 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
             max={100}
             step={5}
             value={volume}
+            disabled={restoring}
             onChange={(e) => { changeVolume(Number(e.target.value)); }}
           />
           <span>{volume} %</span>
         </div>
-        <button type="button" disabled={sound === 'playing'} onClick={() => void checkSound()}>
+        <button type="button" disabled={sound === 'playing' || restoring} onClick={() => void checkSound()}>
           Проверить звук
         </button>
         {sound === 'unavailable' && <p role="status">{SOUND_UNAVAILABLE}</p>}
@@ -396,11 +417,12 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
           </div>
         )}
         {reportMessage !== null && <p role={reportMessage.ok ? 'status' : 'alert'}>{reportMessage.text}</p>}
+        <RestoreSection busy={busy !== null} onBusy={restoreBusy} />
       </section>
 
       <p>Версия приложения: {version ?? 'неизвестна'}</p>
       <div className="actions">
-        <button type="button" onClick={onBack}>
+        <button type="button" disabled={restoring} onClick={onBack}>
           Назад
         </button>
       </div>

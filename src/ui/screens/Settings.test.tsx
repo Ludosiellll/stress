@@ -1,5 +1,6 @@
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { exportBundle } from '../../data/export';
 import { MemoryRepository } from '../../data/memoryRepository';
 import { block, session, trial } from '../../data/repository.contract';
 import type { AudioOut, StressorHandle } from '../../runtime/audio/audioOut';
@@ -415,5 +416,79 @@ describe('Settings sound', () => {
     expect(screen.getByText('Звук не воспроизводился')).toBeTruthy();
     expect(handle.setActive).not.toHaveBeenCalled();
     expect(handle.stop).toHaveBeenCalled();
+  });
+});
+
+describe('Settings restore', () => {
+  async function chooseExportFile(): Promise<void> {
+    const source = new MemoryRepository();
+    await source.createSession(session('s1', '2026-10-01T08:00:00.000Z'));
+    await source.addBlock(block('b1', 's1', '2026-10-01T08:01:00.000Z'), [trial('t1', 'b1', 0)], []);
+    const text = await exportBundle(source, '0.2.0');
+    fireEvent.change(screen.getByLabelText('Файл экспорта'), { target: { files: [new File([text], 'trainer-export.json')] } });
+    await settleUntil(() => screen.queryByRole('button', { name: 'Восстановить' }) !== null, 'the preview');
+  }
+
+  const disabled = (name: string): boolean | undefined => screen.queryByRole<HTMLButtonElement>('button', { name })?.disabled;
+
+  it('while a restore runs, every other control is locked and Escape does not leave', async () => {
+    const { platform, onBack, repo } = await renderSettings();
+    let release: () => void = () => undefined;
+    platform.backupNow = () =>
+      new Promise((resolve) => {
+        release = () => { resolve(null); };
+      });
+    await chooseExportFile();
+    fireEvent.click(screen.getByRole('button', { name: 'Восстановить' }));
+    await settleUntil(() => screen.queryByText('Резервная копия…') !== null, 'the restore');
+
+    for (const name of ['Проверить тайминги (3 с)', 'Экспорт данных (JSON и CSV)', 'Сохранить отчёт об ошибке', 'Назад', 'Очистить', 'Проверить звук']) {
+      expect(disabled(name), name).toBe(true);
+    }
+    for (const radio of screen.getAllByRole<HTMLInputElement>('radio')) expect(radio.disabled).toBe(true);
+    expect(screen.getByLabelText<HTMLInputElement>('Дата теста').disabled).toBe(true);
+    expect(screen.getByRole<HTMLInputElement>('slider', { name: 'Громкость помех' }).disabled).toBe(true);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(onBack).not.toHaveBeenCalled();
+
+    release();
+    await settleUntil(() => screen.queryByText(/^Готово\./) !== null, 'the result');
+    expect(await repo.listIds('blocks')).toEqual(new Set(['b1']));
+    for (const name of ['Проверить тайминги (3 с)', 'Экспорт данных (JSON и CSV)', 'Сохранить отчёт об ошибке', 'Назад', 'Очистить', 'Проверить звук']) {
+      expect(disabled(name), name).toBe(false);
+    }
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it('the restore is locked while an export runs', async () => {
+    const { platform } = await renderSettings();
+    let release: () => void = () => undefined;
+    platform.exportFile = () =>
+      new Promise((resolve) => {
+        release = () => { resolve('C:\\Downloads\\x'); };
+      });
+    expect(disabled('Восстановить из файла экспорта')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Экспорт данных (JSON и CSV)' }));
+    await waitFor(() => { expect(disabled('Восстановить из файла экспорта')).toBe(true); });
+    release();
+  });
+});
+
+describe('Settings after a restore', () => {
+  it('shows the test date and layout the restore took from the file', async () => {
+    await renderSettings();
+    const source = new MemoryRepository();
+    await source.createSession(session('s1', '2026-10-01T08:00:00.000Z'));
+    await source.saveSettings({ layout: 'pult', testDate: '2026-12-01' });
+    const text = await exportBundle(source, '0.2.0');
+    fireEvent.change(screen.getByLabelText('Файл экспорта'), { target: { files: [new File([text], 'trainer-export.json')] } });
+    await settleUntil(() => screen.queryByRole('button', { name: 'Восстановить' }) !== null, 'the preview');
+    fireEvent.click(screen.getByRole('button', { name: 'Восстановить' }));
+    await settleUntil(() => screen.queryByText(/Из файла взяты: дата теста, раскладка\.$/) !== null, 'the result');
+    await waitFor(() => {
+      expect(screen.getByRole<HTMLInputElement>('radio', { name: 'Пульт (стрелки и цифры)' }).checked).toBe(true);
+    });
+    expect(screen.getByLabelText<HTMLInputElement>('Дата теста').value).toBe('2026-12-01');
   });
 });

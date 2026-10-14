@@ -39,6 +39,8 @@ export function createFakePlatform(options: FakePlatformOptions = {}): FakePlatf
     },
     powerCharging: () => Promise.resolve(options.charging ?? null),
     backupStatus: () => Promise.resolve(options.backup ?? null),
+    // Like the web build; tests replace it to hold or fail the backup before a restore.
+    backupNow: () => Promise.resolve(null),
     openRepository: () => Promise.resolve(repo),
   };
 }

@@ -33,6 +33,15 @@ export function backupStatus(): Promise<BackupStatus | null> {
   return invoke<BackupStatus>('backup_status');
 }
 
+/** The backup_now command; its Err arrives as a plain string, which becomes the message of an Error. */
+export async function backupNow(): Promise<string> {
+  try {
+    return await invoke<string>('backup_now');
+  } catch (e) {
+    throw e instanceof Error ? e : new Error(String(e));
+  }
+}
+
 export function createTauriPlatform(): Platform {
   return {
     kind: 'tauri',
@@ -41,6 +50,7 @@ export function createTauriPlatform(): Platform {
     exportFile: (name, contents) => invoke<string>('export_file', { name, contents }),
     powerCharging: batteryCharging,
     backupStatus,
+    backupNow,
     openRepository: async () => new SqliteRepository(createTauriExecutor(await Database.load(DB_URL))),
   };
 }

@@ -10,6 +10,11 @@ export function localStamp(d: Date = new Date()): string {
   return `${localDate(d)}-${two(d.getHours())}${two(d.getMinutes())}`;
 }
 
+/** A whole count with its thousands kept together by no-break spaces: 1234 → «1 234». */
+export function thousands(n: number): string {
+  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0');
+}
+
 /** Number with a decimal comma, as the Russian UI writes it. */
 export function decimal(n: number, digits = 1): string {
   return n.toFixed(digits).replace('.', ',');

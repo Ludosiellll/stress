@@ -84,6 +84,24 @@ describe('tauri platform', () => {
     expect(invoke).toHaveBeenCalledWith('export_file', { name: 'x.json', contents: '{}' });
   });
 
+  it('backupNow invokes backup_now and returns the path', async () => {
+    const copy = 'C:\\Users\\me\\AppData\\Roaming\\app\\backups\\trainer-1790000001.db';
+    invoke.mockResolvedValue(copy);
+    expect(await createTauriPlatform().backupNow()).toBe(copy);
+    expect(invoke).toHaveBeenCalledWith('backup_now');
+  });
+
+  it('backupNow rejects with the command error', async () => {
+    // invoke rejects with the command's Err string itself, not an Error.
+    invoke.mockRejectedValue('нет файла базы данных C:\\app\\trainer.db');
+    const failed = createTauriPlatform().backupNow();
+    await expect(failed).rejects.toBeInstanceOf(Error);
+    await expect(failed).rejects.toThrow('нет файла базы данных C:\\app\\trainer.db');
+    const bridge = new Error('IPC unavailable');
+    invoke.mockRejectedValue(bridge);
+    await expect(createTauriPlatform().backupNow()).rejects.toBe(bridge);
+  });
+
   it('returns the startup backup status', async () => {
     const status = { ok: false, path: null, error: 'disk full', at: 5 };
     invoke.mockResolvedValue(status);

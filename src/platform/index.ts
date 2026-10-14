@@ -14,6 +14,11 @@ export interface Platform {
   powerCharging(): Promise<boolean | null>;
   /** Outcome of the backup made at startup; null where there is none (web). */
   backupStatus(): Promise<BackupStatus | null>;
+  /**
+   * Copies the database now (before a restore) and returns the path of the copy; null where there is no database
+   * file (web). Rejects with an Error whose message is the reason.
+   */
+  backupNow(): Promise<string | null>;
   /** Called once per start: the web repository is empty each time. */
   openRepository(): Promise<Repository>;
 }

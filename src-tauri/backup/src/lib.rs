@@ -53,6 +53,39 @@ pub fn run_backup_if_needed(
         return Ok(None);
     }
 
+    let target = copy_and_prune(db, dir, newest, now_unix)?;
+    write_atomic(&dir.join(VERSION_FILE), app_version.as_bytes())?;
+    Ok(Some(target))
+}
+
+/// Copies the database now, whatever the age of the newest copy (the forced copy before a
+/// restore). Same naming and stamp rule as `run_backup_if_needed` (a stamp not newer than the
+/// newest copy becomes newest + 1), keeps the KEEP newest, leaves `last_version` alone.
+/// Err (`NotFound`) when the database file is missing; nothing is created then.
+///
+/// The file is copied as it is on disk: the caller makes it consistent first (checkpoint the
+/// WAL, keep writers out until this returns).
+pub fn backup_now(db: &Path, dir: &Path, now_unix: u64) -> io::Result<PathBuf> {
+    if !db.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("нет файла базы данных {}", db.display()),
+        ));
+    }
+    fs::create_dir_all(dir)?;
+    remove_stale(dir);
+    let newest = list_backups(dir)?.into_iter().max();
+    copy_and_prune(db, dir, newest, now_unix)
+}
+
+/// Copies `db` to `dir/trainer-<stamp>.db` (one second after `newest` if the clock is not
+/// past it), removes everything of that stamp on failure, then keeps the KEEP newest.
+fn copy_and_prune(
+    db: &Path,
+    dir: &Path,
+    newest: Option<u64>,
+    now_unix: u64,
+) -> io::Result<PathBuf> {
     let stamp = match newest {
         Some(n) if now_unix <= n => n + 1,
         _ => now_unix,
@@ -63,8 +96,7 @@ pub fn run_backup_if_needed(
         return Err(e);
     }
     prune(dir);
-    write_atomic(&dir.join(VERSION_FILE), app_version.as_bytes())?;
-    Ok(Some(target))
+    Ok(target)
 }
 
 /// The database first (the bulk of the space), then its side files.
@@ -465,6 +497,65 @@ mod tests {
         fs::create_dir_all(e.dir.join("trainer-99999999999.db")).unwrap();
         let r = run_backup_if_needed(&e.db, &e.dir, "0.1.0", T0).unwrap();
         assert_eq!(r, Some(e.dir.join(format!("trainer-{T0}.db"))));
+    }
+
+    #[test]
+    fn backup_now_copies_even_when_a_fresh_copy_exists() {
+        let e = env_with_db();
+        fs::write(e.db.with_file_name("trainer.db-wal"), b"wal").unwrap();
+        run_backup_if_needed(&e.db, &e.dir, "0.1.0", T0).unwrap();
+        let copy = backup_now(&e.db, &e.dir, T0 + 60).unwrap();
+        assert_eq!(copy, e.dir.join(format!("trainer-{}.db", T0 + 60)));
+        assert_eq!(fs::read(&copy).unwrap(), fs::read(&e.db).unwrap());
+        assert_eq!(fs::read(companion(&copy, "-wal")).unwrap(), b"wal");
+        assert_eq!(backups(&e.dir).len(), 4);
+        // last_version is left alone: the startup rule still sees a fresh copy of this version.
+        assert_eq!(
+            fs::read_to_string(e.dir.join("last_version")).unwrap(),
+            "0.1.0"
+        );
+        assert_eq!(
+            run_backup_if_needed(&e.db, &e.dir, "0.1.0", T0 + 120).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn backup_now_after_a_startup_copy_in_the_same_second_takes_the_next_stamp() {
+        let e = env_with_db();
+        let startup = run_backup_if_needed(&e.db, &e.dir, "0.1.0", T0)
+            .unwrap()
+            .unwrap();
+        let copy = backup_now(&e.db, &e.dir, T0).unwrap();
+        assert_eq!(copy, e.dir.join(format!("trainer-{}.db", T0 + 1)));
+        assert!(startup.exists());
+        assert_eq!(fs::read(&copy).unwrap(), fs::read(&e.db).unwrap());
+        // A clock behind the newest copy also lands after it.
+        let later = backup_now(&e.db, &e.dir, T0 - 3600).unwrap();
+        assert_eq!(later, e.dir.join(format!("trainer-{}.db", T0 + 2)));
+    }
+
+    #[test]
+    fn backup_now_keeps_the_newest_eight() {
+        let e = env_with_db();
+        for i in 0..10u64 {
+            backup_now(&e.db, &e.dir, T0 + i).unwrap();
+        }
+        let expected: Vec<String> = (2..10u64)
+            .map(|i| format!("trainer-{}.db", T0 + i))
+            .collect();
+        assert_eq!(backups(&e.dir), expected);
+        assert!(!e.dir.join("last_version").exists());
+    }
+
+    #[test]
+    fn backup_now_fails_without_database() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("backups");
+        let err = backup_now(&tmp.path().join("trainer.db"), &dir, T0).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(err.to_string().contains("trainer.db"), "{err}");
+        assert!(!dir.exists());
     }
 
     #[test]

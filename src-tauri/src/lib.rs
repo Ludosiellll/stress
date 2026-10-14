@@ -12,6 +12,13 @@ pub const DB_URL: &str = "sqlite:trainer.db";
 const DB_FILE: &str = "trainer.db";
 const BACKUP_DIR: &str = "backups";
 
+/// Seconds since the Unix epoch; 0 if the clock is before it.
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
 /// Versioned schema migrations; the plugin runs them when the frontend loads the database.
 fn migrations() -> Vec<Migration> {
     vec![
@@ -39,9 +46,7 @@ fn backup_plugin<R: Runtime>() -> TauriPlugin<R> {
     PluginBuilder::new("db-backup")
         .setup(|app, _api| {
             let version = app.package_info().version.to_string();
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs());
+            let now = unix_now();
             let result = app
                 .path()
                 .app_config_dir()
@@ -92,6 +97,7 @@ pub fn run() {
                 .build(),
         )
         .invoke_handler(tauri::generate_handler![
+            commands::backup_now,
             commands::backup_status,
             commands::db_batch,
             commands::export_file

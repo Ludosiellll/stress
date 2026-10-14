@@ -41,6 +41,10 @@ describe('web platform', () => {
     expect(await createWebPlatform().backupStatus()).toBeNull();
   });
 
+  it('backupNow resolves null: there is no database file to copy', async () => {
+    expect(await createWebPlatform().backupNow()).toBeNull();
+  });
+
   it('downloads an export through a Blob and returns the file name, bytes intact (BOM)', async () => {
     const blobs: Blob[] = [];
     const createObjectURL = vi.fn((b: Blob) => {

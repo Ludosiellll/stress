@@ -1,5 +1,7 @@
 //! Tauri commands of the app (the SQL plugin brings its own load/execute/select).
 
+use std::future::Future;
+use std::io;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -85,6 +87,59 @@ pub async fn export_file<R: Runtime>(
         .map_err(|e| e.to_string())
 }
 
+/// Copies the database now (`backup::backup_now`, before a restore writes anything) and returns
+/// the path of the copy. Works on the pool tauri-plugin-sql opened for `DB_URL`, reached through
+/// `DbInstances` like `db_batch`, so the copy holds every row the frontend has committed.
+#[tauri::command]
+pub async fn backup_now<R: Runtime>(
+    app: AppHandle<R>,
+    instances: State<'_, DbInstances>,
+) -> Result<String, String> {
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let (db, backups) = (dir.join(crate::DB_FILE), dir.join(crate::BACKUP_DIR));
+    let now = crate::unix_now();
+    let pools = instances.0.read().await;
+    let pool = match pools.get(crate::DB_URL) {
+        Some(DbPool::Sqlite(pool)) => pool,
+        None => return Err(format!("database {} is not loaded", crate::DB_URL)),
+    };
+    copy_consistent(pool, || async move {
+        tauri::async_runtime::spawn_blocking(move || backup::backup_now(&db, &backups, now))
+            .await
+            .map_err(|e| io::Error::other(e.to_string()))?
+    })
+    .await
+    .map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Runs `copy` on a database file that is complete and stays unchanged until `copy` is done:
+/// 1. `PRAGMA wal_checkpoint(TRUNCATE)` moves committed WAL pages into the main file (a no-op in
+///    the rollback-journal mode sqlx opens the plugin's database in);
+/// 2. `BEGIN IMMEDIATE` on one pooled connection takes the write lock, so no other connection can
+///    commit while the file is copied (a write waits for the lock, up to the busy timeout; reads
+///    go on). A commit that lands between 1 and 2 in WAL mode stays in the `-wal` file, which the
+///    backup crate copies with the database;
+/// 3. the transaction is rolled back: the backup writes nothing.
+pub(crate) async fn copy_consistent<F, Fut>(pool: &SqlitePool, copy: F) -> Result<PathBuf, String>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = io::Result<PathBuf>>,
+{
+    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(pool)
+        .await
+        .map_err(|e| format!("checkpoint: {e}"))?;
+    let lock = pool
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|e| e.to_string())?;
+    let copied = copy().await.map_err(|e| e.to_string());
+    let released = lock.rollback().await.map_err(|e| e.to_string());
+    let path = copied?;
+    released?;
+    Ok(path)
+}
+
 pub(crate) async fn run_batch(pool: &SqlitePool, statements: &[Statement]) -> Result<(), String> {
     if statements.is_empty() {
         return Ok(());
@@ -136,8 +191,12 @@ async fn execute_one(
 mod tests {
     use super::*;
     use serde_json::json;
-    use sqlx::sqlite::SqlitePoolOptions;
+    use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
     use sqlx::Row;
+    use std::fs;
+    use std::path::Path;
+    use std::pin::Pin;
+    use std::time::Duration;
 
     fn st(sql: &str, params: Vec<Value>) -> Statement {
         Statement {
@@ -281,6 +340,156 @@ mod tests {
             serde_json::to_value(&failed).unwrap(),
             json!({ "ok": false, "path": null, "error": "disk full", "at": 7 })
         );
+    }
+
+    const T0: u64 = 1_790_000_000;
+
+    /// A file database like the app's (several pooled connections) with `rows` committed rows.
+    async fn file_pool(dir: &Path, mode: SqliteJournalMode, rows: i64) -> SqlitePool {
+        let options = SqliteConnectOptions::new()
+            .filename(dir.join("trainer.db"))
+            .create_if_missing(true)
+            .journal_mode(mode)
+            .busy_timeout(Duration::from_millis(200));
+        let pool = SqlitePoolOptions::new()
+            .max_connections(3)
+            .connect_with(options)
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        for i in 0..rows {
+            sqlx::query("INSERT INTO t (id) VALUES (?)")
+                .bind(i)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        pool
+    }
+
+    async fn rows_in(db: &Path) -> i64 {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(SqliteConnectOptions::new().filename(db))
+            .await
+            .unwrap();
+        let n = sqlx::query("SELECT COUNT(*) AS c FROM t")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .get("c");
+        pool.close().await;
+        n
+    }
+
+    /// The copy as `backup_now` makes it, after `during` ran inside the copy step.
+    async fn backup_with(
+        pool: &SqlitePool,
+        dir: &Path,
+        during: impl FnOnce() -> Pin<Box<dyn Future<Output = ()>>>,
+    ) -> Result<PathBuf, String> {
+        let (db, backups) = (dir.join("trainer.db"), dir.join("backups"));
+        copy_consistent(pool, || async move {
+            during().await;
+            backup::backup_now(&db, &backups, T0)
+        })
+        .await
+    }
+
+    #[test]
+    fn consistent_copy_holds_every_committed_row() {
+        tauri::async_runtime::block_on(async {
+            let tmp = tempfile::tempdir().unwrap();
+            let pool = file_pool(tmp.path(), SqliteJournalMode::Delete, 50).await;
+            let copy = backup_with(&pool, tmp.path(), || Box::pin(async {}))
+                .await
+                .unwrap();
+            assert_eq!(
+                copy,
+                tmp.path().join("backups").join(format!("trainer-{T0}.db"))
+            );
+            pool.close().await;
+            assert_eq!(rows_in(&copy).await, 50);
+        });
+    }
+
+    #[test]
+    fn consistent_copy_checkpoints_the_wal_first() {
+        tauri::async_runtime::block_on(async {
+            let tmp = tempfile::tempdir().unwrap();
+            let pool = file_pool(tmp.path(), SqliteJournalMode::Wal, 50).await;
+            let wal = tmp.path().join("trainer.db-wal");
+            assert!(
+                fs::metadata(&wal).unwrap().len() > 0,
+                "rows wait in the WAL"
+            );
+            let wal_seen = wal.clone();
+            let copy = backup_with(&pool, tmp.path(), move || {
+                Box::pin(async move {
+                    assert_eq!(
+                        fs::metadata(&wal_seen).unwrap().len(),
+                        0,
+                        "WAL checkpointed"
+                    );
+                })
+            })
+            .await
+            .unwrap();
+            pool.close().await;
+            assert_eq!(rows_in(&copy).await, 50);
+        });
+    }
+
+    #[test]
+    fn no_write_lands_while_the_file_is_copied() {
+        tauri::async_runtime::block_on(async {
+            for mode in [SqliteJournalMode::Delete, SqliteJournalMode::Wal] {
+                let tmp = tempfile::tempdir().unwrap();
+                let pool = file_pool(tmp.path(), mode, 3).await;
+                let writer = pool.clone();
+                let copy = backup_with(&pool, tmp.path(), move || {
+                    Box::pin(async move {
+                        let err = sqlx::query("INSERT INTO t (id) VALUES (100)")
+                            .execute(&writer)
+                            .await
+                            .unwrap_err();
+                        assert!(err.to_string().contains("locked"), "{mode:?}: {err}");
+                    })
+                })
+                .await
+                .unwrap();
+                // The lock is released and nothing was written by the backup.
+                sqlx::query("INSERT INTO t (id) VALUES (101)")
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+                pool.close().await;
+                assert_eq!(rows_in(&copy).await, 3, "{mode:?}");
+                assert_eq!(rows_in(&tmp.path().join("trainer.db")).await, 4, "{mode:?}");
+            }
+        });
+    }
+
+    #[test]
+    fn a_failed_copy_is_reported_and_releases_the_lock() {
+        tauri::async_runtime::block_on(async {
+            let tmp = tempfile::tempdir().unwrap();
+            let pool = file_pool(tmp.path(), SqliteJournalMode::Delete, 1).await;
+            let err = copy_consistent(&pool, || async {
+                Err(io::Error::new(io::ErrorKind::StorageFull, "disk full"))
+            })
+            .await
+            .unwrap_err();
+            assert_eq!(err, "disk full");
+            sqlx::query("INSERT INTO t (id) VALUES (7)")
+                .execute(&pool)
+                .await
+                .unwrap();
+            pool.close().await;
+        });
     }
 
     #[test]
