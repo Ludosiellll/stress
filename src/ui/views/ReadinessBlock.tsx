@@ -10,6 +10,9 @@ const ABILITIES: readonly (readonly [Ability, string])[] = [
   ['logic', 'Логика'],
 ];
 
+/** Some parts of the latest diagnostic are their own baseline and are left out until the next one (W2-R31). */
+export const DEFERRED_NOTE = 'Новые показатели войдут в индекс со следующей диагностики.';
+
 function abilityText(value: number | null): string {
   return value === null ? 'нет данных' : String(Math.round(value));
 }
@@ -32,6 +35,7 @@ export default function ReadinessBlock({ readiness }: { readiness: HomeModel['re
             ))}
           </dl>
           <p>Общий индекс: {readiness.overall === null ? 'нет данных' : Math.round(readiness.overall)}</p>
+          {readiness.deferred && <p className="muted">{DEFERRED_NOTE}</p>}
           {readiness.unreliable.length > 0 && (
             <p className="muted">
               В последней диагностике замер ненадёжен: {readiness.unreliable.map((m) => moduleTitles[m]).join(', ')}. Индекс учитывает

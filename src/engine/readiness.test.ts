@@ -8,8 +8,10 @@ import {
   baselineScore,
   bandScore,
   diffScore,
+  BASELINE_METRICS,
   mergedBaseline,
   readiness,
+  readinessOfLatest,
 } from './readiness';
 import { EMPTY_METRICS, type DiagnosticMetrics, type DiagnosticResults } from './diagnostic';
 
@@ -339,5 +341,55 @@ describe('mergedBaseline (M2)', () => {
       // 0 is a value (a span of 0), not a missing one.
       memorySpan: 0,
     });
+  });
+});
+
+describe('readinessOfLatest (W2-R31)', () => {
+  // The 0.1.0 pair of the W1 Home test: overall 96 from the W1 parts alone.
+  const w1First = full({ pzmrMedianRt: 400, szmrMedianRt: 600, rdoMeanAbsErrorMs: 50, gonogoScore: 80, numseriesCorrect: 10, gorbov: { V: 60, P: 100, Pi: 40 } });
+  const w1Latest = full({ pzmrMedianRt: 300, szmrMedianRt: 450, rdoMeanAbsErrorMs: 40, gonogoScore: 90, numseriesCorrect: 14, gorbov: { V: 30, P: 60, Pi: 10 } });
+  const w2Parts = { pomehDeltaMs: 30, stroopInterferenceMs: 90, switchCostMs: 100, memorySpan: 7 };
+
+  it('the first 0.2.0 diagnostic after 0.1.0 ones: its new parts wait, the index equals the W1 parts', () => {
+    const upgrade = { ...w1Latest, ...w2Parts };
+    const r = readinessOfLatest([w1First], upgrade);
+    const w1 = readiness(w1Latest, w1First);
+    expect(r).toEqual({ ...w1, deferred: true });
+    expect(Math.round(r.overall ?? NaN)).toBe(96);
+    expect(r.abilities.memory).toBeNull();
+    // Counted as their own baseline (60 each), the same W1 results would read as a drop to 81.
+    expect(Math.round(readiness(upgrade, mergedBaseline([w1First, upgrade])).overall ?? NaN)).toBe(81);
+  });
+
+  it('the very first diagnostic counts every part at 60, as in W1', () => {
+    const d = fullW2();
+    expect(readinessOfLatest([], d)).toEqual({ ...readiness(d, d), deferred: false });
+    expect(readinessOfLatest([], d).abilities).toMatchObject({ reaction: 60, memory: 60, logic: 60 });
+  });
+
+  it('the second 0.2.0 diagnostic counts the W2 parts against the first one', () => {
+    const second = { ...w1Latest, ...w2Parts, stroopInterferenceMs: 30, memorySpan: 8 };
+    const earlier = [w1First, { ...w1First, ...w2Parts }];
+    const r = readinessOfLatest(earlier, second);
+    expect(r).toEqual({ ...readiness(second, mergedBaseline([...earlier, second])), deferred: false });
+    expect(r.abilities.memory).toBeCloseTo(60 + (40 * 1) / (0.25 * 7), 12);
+    expect(r.abilities.attention).toBeGreaterThan(readiness(w1Latest, w1First).abilities.attention ?? NaN);
+  });
+
+  it('a part measured for the first time in the latest diagnostic waits alone', () => {
+    const first = fullW2({ pomehDeltaMs: null });
+    const latest = fullW2({ pzmrMedianRt: 180, pomehDeltaMs: 10 });
+    const r = readinessOfLatest([first], latest);
+    expect(r).toEqual({ ...readiness({ ...latest, pomehDeltaMs: null }, first), deferred: true });
+    expect(r.abilities.reaction).toBe((100 + 60 + 60) / 3);
+  });
+
+  it('BASELINE_METRICS are exactly the metrics readiness scores against a baseline', () => {
+    const keys = Object.keys(EMPTY_METRICS) as (keyof DiagnosticMetrics)[];
+    for (const k of keys.filter((key) => key !== 'gorbov')) {
+      const d: DiagnosticMetrics = { ...EMPTY_METRICS, [k]: 50 };
+      const scored = readiness(d, d).overall !== null;
+      expect(scored, k).toBe((BASELINE_METRICS as readonly string[]).includes(k));
+    }
   });
 });

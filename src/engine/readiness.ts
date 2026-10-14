@@ -120,3 +120,40 @@ export function readiness(
   const available = Object.values(abilities).filter((a): a is number => a !== null);
   return { abilities, overall: avg(available) };
 }
+
+/** The metrics readiness scores against the baseline (baselineScore, diffScore); Gorbov's bands need none. */
+export const BASELINE_METRICS = [
+  'pzmrMedianRt',
+  'szmrMedianRt',
+  'rdoMeanAbsErrorMs',
+  'pomehDeltaMs',
+  'gonogoScore',
+  'stroopInterferenceMs',
+  'switchCostMs',
+  'memorySpan',
+  'numseriesCorrect',
+] as const satisfies readonly (keyof DiagnosticMetrics)[];
+
+export interface Readiness {
+  abilities: Record<Ability, number | null>;
+  overall: number | null;
+  /** Some parts of the latest diagnostic are their own baseline and wait for the next one (W2-R31). */
+  deferred: boolean;
+}
+
+/**
+ * Readiness of `latest` after the `earlier` diagnostics (chronological), against the merged baseline (M2). A part
+ * whose baseline is `latest` itself would score 60 whatever was measured (a W2 part at the first 0.2.0 diagnostic
+ * pulls a 96 down to 81 while the W1 results stay the same), so it is left out of its ability and of the overall
+ * index until the next diagnostic, unless every part is (the very first diagnostic counts all of them at 60, as
+ * in W1). Spec deviation, see §7.5 (W2-R31).
+ */
+export function readinessOfLatest(earlier: readonly DiagnosticMetrics[], latest: DiagnosticMetrics): Readiness {
+  const before = mergedBaseline(earlier);
+  const scored = BASELINE_METRICS.filter((k) => latest[k] !== null);
+  const ownBaseline = scored.filter((k) => before[k] === null);
+  const deferred = ownBaseline.length > 0 && ownBaseline.length < scored.length;
+  const counted: DiagnosticMetrics = { ...latest };
+  if (deferred) for (const k of ownBaseline) counted[k] = null;
+  return { ...readiness(counted, mergedBaseline([...earlier, latest])), deferred };
+}

@@ -32,6 +32,13 @@ describe('readinessOf', () => {
     expect(r?.abilities.reaction).toBeGreaterThan(60);
   });
 
+  it('leaves out the parts the latest diagnostic is the baseline of, and says so (W2-R31)', () => {
+    const w1 = { pzmrMedianRt: 300, gonogoScore: 80, numseriesCorrect: 10 };
+    const r = readinessOf([row(1, w1), row(2, { ...w1, pzmrMedianRt: 240, memorySpan: 6, stroopInterferenceMs: 100 })]);
+    expect(r).toEqual({ ...readiness({ ...EMPTY, ...w1, pzmrMedianRt: 240 }, { ...EMPTY, ...w1 }), unreliable: [], deferred: true });
+    expect(readinessOf([row(1, { ...w1, memorySpan: 6 })])?.deferred).toBe(false);
+  });
+
   it('carries the unreliable modules of the latest diagnostic (I1)', () => {
     expect(readinessOf([row(1, { pzmrMedianRt: 300, unreliable: ['pzmr'] })])?.unreliable).toEqual(['pzmr']);
     expect(readinessOf([row(1, { unreliable: ['pzmr'] }), row(2, { pzmrMedianRt: 300 })])?.unreliable).toEqual([]);
@@ -42,6 +49,7 @@ describe('readinessOf', () => {
       abilities: { reaction: null, attention: null, switching: null, memory: null, logic: null },
       overall: null,
       unreliable: [],
+      deferred: false,
     });
   });
 });

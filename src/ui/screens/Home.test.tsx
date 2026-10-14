@@ -11,6 +11,8 @@ import { planLine } from '../homeModel';
 import { renderWithApp } from '../testUtils';
 import Home from './Home';
 
+const DEFERRED_NOTE = 'Новые показатели войдут в индекс со следующей диагностики.';
+
 function noResults(over: Partial<DiagnosticResults>): string {
   const base: DiagnosticResults = { ...EMPTY_METRICS, unreliable: [] };
   return JSON.stringify({ ...base, ...over });
@@ -264,6 +266,42 @@ describe('Home with history', () => {
     expect(screen.getByText('Общий индекс: 96')).toBeTruthy();
     expect(screen.getByText('Для большинства показателей 60 — уровень первой диагностики; таблица Горбова оценивается по опубликованным нормам.')).toBeTruthy();
     expect(screen.queryByText('Пройди диагностику, чтобы увидеть индекс')).toBeNull();
+    expect(screen.queryByText(DEFERRED_NOTE)).toBeNull();
+  });
+
+  it('the first 0.2.0 diagnostic after 0.1.0 ones keeps the 0.1.0 index and says when the new parts count (W2-R31)', async () => {
+    const repo = new MemoryRepository();
+    await seedDiagnostic(
+      repo,
+      1,
+      daysFromNow(-20),
+      noResults({ pzmrMedianRt: 400, szmrMedianRt: 600, rdoMeanAbsErrorMs: 50, gonogoScore: 80, numseriesCorrect: 10, gorbov: { V: 60, P: 100, Pi: 40 } }),
+    );
+    await seedDiagnostic(
+      repo,
+      2,
+      new Date(),
+      noResults({
+        pzmrMedianRt: 300,
+        szmrMedianRt: 450,
+        rdoMeanAbsErrorMs: 40,
+        gonogoScore: 90,
+        numseriesCorrect: 14,
+        gorbov: { V: 30, P: 60, Pi: 10 },
+        pomehDeltaMs: 30,
+        stroopInterferenceMs: 90,
+        switchCostMs: 100,
+        memorySpan: 7,
+      }),
+    );
+    await renderHome(repo);
+    const value = (label: string): string | null => screen.getByText(label).nextElementSibling?.textContent ?? null;
+    expect(value('Реакция')).toBe('97');
+    expect(value('Внимание')).toBe('89');
+    expect(value('Переключение')).toBe('98');
+    expect(value('Память')).toBe('нет данных');
+    expect(screen.getByText('Общий индекс: 96')).toBeTruthy();
+    expect(screen.getByText(DEFERRED_NOTE)).toBeTruthy();
   });
 
   it('memory shows a number once diagnostics have a span', async () => {

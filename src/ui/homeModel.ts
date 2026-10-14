@@ -13,7 +13,7 @@ import {
   type Segment,
   type SessionPlan,
 } from '../engine/planner';
-import { mergedBaseline, readiness, type Ability } from '../engine/readiness';
+import { readinessOfLatest, type Ability, type Readiness } from '../engine/readiness';
 import { hashString } from '../engine/rng';
 import { computeStreak, daysUntil } from '../engine/streak';
 import type { ReactionModuleId } from '../engine/types';
@@ -24,8 +24,11 @@ export interface HomeModel {
   plan: SessionPlan;
   diagnosticDue: boolean;
   diagnosticPlan: SessionPlan;
-  /** null until the first diagnostic exists. `unreliable`: reaction modules marked «замер ненадёжен» in the latest one. */
-  readiness: { abilities: Record<Ability, number | null>; overall: number | null; unreliable: ReactionModuleId[] } | null;
+  /**
+   * null until the first diagnostic exists. `unreliable`: reaction modules marked «замер ненадёжен» in the latest one;
+   * `deferred`: some of its parts count from the next diagnostic (W2-R31).
+   */
+  readiness: (Readiness & { unreliable: ReactionModuleId[] }) | null;
   streak: number;
   /** As in W1: 0 once the date has passed (the phase ignores a past date). */
   daysToTest: number | null;
@@ -42,15 +45,16 @@ const NO_ABILITIES: Record<Ability, number | null> = { reaction: null, attention
 
 /**
  * Readiness of the latest diagnostic against the merged baseline (each metric from the first diagnostic that
- * has it); null until the first diagnostic exists. Values marked unreliable still count (they are marked on screen).
+ * has it, readinessOfLatest); null until the first diagnostic exists. Values marked unreliable still count
+ * (they are marked on screen).
  */
 export function readinessOf(diagnostics: readonly DiagnosticRow[]): HomeModel['readiness'] {
   const last = diagnostics[diagnostics.length - 1];
   if (last === undefined) return null;
   const latest = parseResults(last);
-  if (latest === null) return { abilities: NO_ABILITIES, overall: null, unreliable: [] };
-  const all = diagnostics.flatMap((d) => parseResults(d) ?? []);
-  return { ...readiness(latest, mergedBaseline(all)), unreliable: latest.unreliable };
+  if (latest === null) return { abilities: NO_ABILITIES, overall: null, unreliable: [], deferred: false };
+  const earlier = diagnostics.slice(0, -1).flatMap((d) => parseResults(d) ?? []);
+  return { ...readinessOfLatest(earlier, latest), unreliable: latest.unreliable };
 }
 
 const PHASE_TITLES: Record<PhaseId, string> = {
