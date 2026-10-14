@@ -99,6 +99,22 @@ describe('TableView', () => {
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 
+  it('a second press on the cell just found correctly within 250 ms is a double click, not an error (M3)', () => {
+    const onSubmit = vi.fn();
+    render(<TableView step={step()} busy={false} onSubmit={onSubmit} />);
+    frames.run(1000);
+    press(1, 1100);
+    press(1, 1349); // bounce of the same click: ignored
+    press(2, 1400);
+    press(2, 1650); // 250 ms later: a real (wrong) click
+    press(1, 1700); // another cell than the last correct one: a wrong click too
+    for (let v = 3; v <= 9; v++) press(v, 1700 + v * 100);
+    const run = onSubmit.mock.calls[0]?.[0] as TableRun;
+    expect(run.clicks.map((c) => c.ts)).not.toContain(1349);
+    expect(run.clicks).toHaveLength(11);
+    expect(scoreTableRun(run)).toMatchObject({ completed: true, errors: 2, correct: 9 });
+  });
+
   it('ignores the right mouse button', () => {
     const onSubmit = vi.fn();
     render(<TableView step={step()} busy={false} onSubmit={onSubmit} />);

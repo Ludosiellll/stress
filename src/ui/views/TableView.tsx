@@ -13,6 +13,8 @@ export interface TableViewProps {
 
 /** Paper-form colours: the one light area of the app (spec §4, Gorbov tables). */
 const INK: Record<TableCell['color'], string> = { red: '#d64545', black: '#111' };
+/** A press on the cell just found correctly within this time is the same click bouncing (a double click), not an error. */
+const DOUBLE_CLICK_MS = 250;
 
 interface Progress {
   /** Timestamp of the first frame with the grid on screen; clicks before it are ignored. */
@@ -21,13 +23,16 @@ interface Progress {
   correct: number;
   reshuffles: number;
   finished: boolean;
+  /** The last correct click, for the double-click guard. */
+  lastCorrect: { cell: TableCell; ts: number } | null;
 }
 
 const same = (a: TableCell, b: TableCell): boolean => a.value === b.value && a.color === b.color;
 
 /**
  * A Schulte or Gorbov table, mouse only. The run starts at the first frame after the grid is drawn; a click
- * on the expected cell advances, any other click is an error. No timer on screen: the run ends with the
+ * on the expected cell advances, any other click is an error, except a repeat press on the cell just found
+ * within DOUBLE_CLICK_MS (M3). No timer on screen: the run ends with the
  * last correct click or at the deadline. With `reshuffleEvery` the cells are shuffled after every N
  * correct clicks (seeded by the block seed, so a run can be replayed).
  */
@@ -35,7 +40,7 @@ export default function TableView({ step, busy, onSubmit }: TableViewProps) {
   const { params, task } = step;
   const sequence = useMemo(() => taskSequence(task, params.size), [task, params.size]);
   const [cells, setCells] = useState(step.cells);
-  const progress = useRef<Progress>({ startTs: null, clicks: [], correct: 0, reshuffles: 0, finished: false });
+  const progress = useRef<Progress>({ startTs: null, clicks: [], correct: 0, reshuffles: 0, finished: false, lastCorrect: null });
   const deadline = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const finish = (): void => {
@@ -64,10 +69,13 @@ export default function TableView({ step, busy, onSubmit }: TableViewProps) {
     e.preventDefault();
     const p = progress.current;
     if (e.button !== 0 || p.startTs === null || p.finished) return;
+    const last = p.lastCorrect;
+    if (last !== null && same(last.cell, cell) && e.timeStamp - last.ts < DOUBLE_CLICK_MS) return;
     p.clicks.push({ cell, ts: e.timeStamp });
     const want = sequence[p.correct];
     if (want === undefined || !same(want, cell)) return;
     p.correct++;
+    p.lastCorrect = { cell, ts: e.timeStamp };
     if (p.correct === sequence.length) {
       finish();
       return;

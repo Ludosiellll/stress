@@ -57,9 +57,26 @@ fn backup_plugin<R: Runtime>() -> TauriPlugin<R> {
         .build()
 }
 
+/// Label of the window from tauri.conf.json (the default label of the first window).
+const MAIN_WINDOW: &str = "main";
+
+/// A second launch brings the running window forward instead of opening another app on the same
+/// database (M7). Registered first: in the second process the plugin exits during its setup, before
+/// the backup plugin or plugin-sql run.
+fn focus_existing_window<R: Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            focus_existing_window(app);
+        }))
         .plugin(backup_plugin())
         .plugin(
             tauri_plugin_sql::Builder::default()

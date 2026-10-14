@@ -19,6 +19,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-sql = { version = "2", features = ["sqlite"] }
+# 2.5.3 is the first 2.x line built against tauri ^2.12.
+tauri-plugin-single-instance = "2.5.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Same sqlx as tauri-plugin-sql 2.5.0, for db_batch on the plugin's own pool.
