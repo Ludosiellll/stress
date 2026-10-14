@@ -1,16 +1,19 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { R0, targetDifficulty } from '../../engine/elo';
+import { BASE_ITEM_LIMIT_MS } from '../../engine/itemLimit';
 import { createRng, deriveSeed } from '../../engine/rng';
 import { fitPredictions, isUnique } from './check';
 import { BASE_DIFFICULTY, FAMILIES, SHOWN_LENGTH, generateTerms, type FamilyId } from './families';
 import {
   ITEM_TIME_LIMIT_MS,
+  STRUCT_D_MAX,
   attemptItem,
   candidateItem,
   difficultyOf,
   generateBlockItems,
   generateItem,
+  generateTrainingItem,
   selectCandidate,
 } from './generate';
 
@@ -239,7 +242,7 @@ describe('generateBlockItems', () => {
     const items = generateBlockItems(others(1000, { geom: 1600 }), 60, createRng(3));
     for (const item of items) {
       const target = targetDifficulty(item.family === 'geom' ? 1600 : 1000);
-      expect(item).toEqual(generateItem(item.family, target, item.seed));
+      expect(item).toEqual(generateTrainingItem(item.family, target, item.seed));
     }
   });
 
@@ -247,7 +250,7 @@ describe('generateBlockItems', () => {
     const items = generateBlockItems(new Map(), 40, createRng(11));
     expect(new Set(items.map((it) => it.family)).size).toBeGreaterThan(5);
     for (const item of items) {
-      expect(item).toEqual(generateItem(item.family, targetDifficulty(R0), item.seed));
+      expect(item).toEqual(generateTrainingItem(item.family, targetDifficulty(R0), item.seed));
       expect(item.seed).toBeGreaterThanOrEqual(0);
       expect(item.seed).toBeLessThanOrEqual(0x7fffffff);
     }
@@ -263,10 +266,77 @@ describe('generateBlockItems', () => {
     expect(() => generateBlockItems(new Map(), -1, createRng(1))).toThrow(RangeError);
     expect(() => generateBlockItems(new Map(), 2.5, createRng(1))).toThrow(RangeError);
   });
+
+  it('keeps 40 s on every item while all ratings are 1000', () => {
+    const items = generateBlockItems(others(1000, {}), 60, createRng(13));
+    for (const item of items) expect(item.timeLimitMs, item.id).toBe(40000);
+  });
+
+  it('shortens the limit of every arith item for an arith rating of 1700', () => {
+    const items = generateBlockItems(others(1000, { arith: 1700 }), 300, createRng(17));
+    const arith = items.filter((it) => it.family === 'arith');
+    expect(arith.length).toBeGreaterThan(0);
+    for (const item of arith) expect(item.timeLimitMs, item.id).toBeLessThan(40000);
+  }, 60_000);
+});
+
+describe('STRUCT_D_MAX', () => {
+  it('bounds every generated candidate', () => {
+    fc.assert(
+      fc.property(
+        family,
+        fc.integer({ min: 0, max: 2 ** 31 - 1 }),
+        fc.integer({ min: 0, max: 199 }),
+        (f, seed, attempt) => {
+          expect(attemptItem(f, seed, attempt)?.difficulty ?? 0).toBeLessThanOrEqual(STRUCT_D_MAX[f]);
+        },
+      ),
+      { numRuns: 2000 },
+    );
+  });
+
+  it('is reached', () => {
+    for (const f of FAMILIES) {
+      const reached = Array.from({ length: 50 }, (_, seed) => seed).some(
+        (seed) => generateItem(f, 5000, seed).difficulty === STRUCT_D_MAX[f],
+      );
+      expect(reached, f).toBe(true);
+    }
+  }, 60_000);
+});
+
+describe('generateTrainingItem', () => {
+  it('training items keep 40 s up to the family maximum', () => {
+    for (let seed = 0; seed <= 20; seed++) expect(generateTrainingItem('arith', 900, seed).timeLimitMs).toBe(40000);
+  });
+
+  it('training items shorten the limit above it', () => {
+    const item = generateTrainingItem('arith', 1300, 7);
+    expect(item.difficulty).toBe(950);
+    expect(item.timeLimitMs).toBe(11900);
+  });
+
+  it('the lever leaves the item itself unchanged', () => {
+    fc.assert(
+      fc.property(
+        family,
+        fc.double({ min: 700, max: 2600, noNaN: true }),
+        fc.integer({ min: 0, max: 2 ** 31 - 1 }),
+        (f, targetD, seed) => {
+          const { timeLimitMs, ...item } = generateTrainingItem(f, targetD, seed);
+          expect(item).toEqual(generateItem(f, targetD, seed));
+          expect(isUnique(item.shown, item.answer)).toBe(true);
+          expect(timeLimitMs).not.toBeNull();
+        },
+      ),
+      { numRuns: 1000 },
+    );
+  }, 60_000);
 });
 
 describe('ITEM_TIME_LIMIT_MS', () => {
-  it('is 40 s', () => {
+  it('is 40 s, the engine base limit', () => {
     expect(ITEM_TIME_LIMIT_MS).toBe(40000);
+    expect(ITEM_TIME_LIMIT_MS).toBe(BASE_ITEM_LIMIT_MS);
   });
 });

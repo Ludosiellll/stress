@@ -1,9 +1,25 @@
 import { R0, familyWeights, pickWeighted, targetDifficulty } from '../../engine/elo';
+import { BASE_ITEM_LIMIT_MS, itemTimeLimit } from '../../engine/itemLimit';
 import { createRng, deriveSeed, type Rng } from '../../engine/rng';
 import { isUnique } from './check';
 import { BASE_DIFFICULTY, FAMILIES, fitFamily, generateTerms, type FamilyId } from './families';
 
-export const ITEM_TIME_LIMIT_MS = 40000;
+export const ITEM_TIME_LIMIT_MS = BASE_ITEM_LIMIT_MS;
+
+/**
+ * Highest difficulty a candidate of each family reaches under its generation ranges (R36).
+ * Above it, only a shorter time limit makes items harder.
+ */
+export const STRUCT_D_MAX: Readonly<Record<FamilyId, number>> = {
+  arith: 950,
+  geom: 1300,
+  second: 1300,
+  alt: 1200,
+  fib: 1350,
+  linrec: 1650,
+  powers: 1500,
+  opcycle: 1700,
+};
 
 const MAX_ABS_TERM = 100000;
 /** Constant and 2-cycle series are unique but trivial (R13). */
@@ -21,6 +37,11 @@ export interface SeriesItem {
   shown: number[];
   answer: number;
   difficulty: number;
+}
+
+/** An item with its own time limit; null for diagnostic items, where the block's total limit applies (R19). */
+export interface TimedSeriesItem extends SeriesItem {
+  timeLimitMs: number | null;
 }
 
 /** D = base + 100·[max|t| > 100] + 200·[max|t| > 1000] + 50·[any t < 0] over the shown terms and the answer. */
@@ -96,18 +117,27 @@ export function generateItem(family: FamilyId, targetD: number, seed: number): S
   return selectCandidate((i) => attemptItem(family, seed, i), targetD);
 }
 
-/** `count` items; weaker families come up more often, each aimed at P ≈ 0.75 for its rating. */
-export function generateBlockItems(ratings: ReadonlyMap<FamilyId, number>, count: number, rng: Rng): SeriesItem[] {
+/**
+ * generateItem plus its time limit: 40 s up to STRUCT_D_MAX of the family, shorter above it so that
+ * the effective difficulty reaches `targetD` (R36). The series itself is exactly generateItem's.
+ */
+export function generateTrainingItem(family: FamilyId, targetD: number, seed: number): TimedSeriesItem {
+  const item = generateItem(family, targetD, seed);
+  return { ...item, timeLimitMs: itemTimeLimit(targetD, item.difficulty, STRUCT_D_MAX[family]) };
+}
+
+/** `count` training items; weaker families come up more often, each aimed at P ≈ 0.75 for its rating. */
+export function generateBlockItems(ratings: ReadonlyMap<FamilyId, number>, count: number, rng: Rng): TimedSeriesItem[] {
   if (!Number.isInteger(count) || count < 0) {
     throw new RangeError(`count must be a non-negative integer, got ${String(count)}`);
   }
   const weights = familyWeights(FAMILIES.map((f) => ratings.get(f) ?? R0));
-  const items: SeriesItem[] = [];
+  const items: TimedSeriesItem[] = [];
   for (let i = 0; i < count; i++) {
     const family = pickWeighted(FAMILIES, weights, rng);
     const targetD = targetDifficulty(ratings.get(family) ?? R0);
     const seed = rng.int(0, 0x7fffffff);
-    items.push(generateItem(family, targetD, seed));
+    items.push(generateTrainingItem(family, targetD, seed));
   }
   return items;
 }
