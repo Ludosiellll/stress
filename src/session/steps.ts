@@ -4,6 +4,8 @@ import { condCost, type ConditionStats } from '../engine/reaction/conditions';
 import type { Outcome, ReactionSummary, TrialCond, TrialSpec } from '../engine/reaction/types';
 import type { BlockFlag, InputKey, LayoutId, ModuleId, ReactionModuleId, TableModuleId } from '../engine/types';
 import type { ParamChange } from '../modules/describe';
+import type { MemoryTrial } from '../modules/memory/generate';
+import type { MemoryMode, MemoryParams } from '../modules/memory/params';
 import type { BlockStressors } from '../modules/reaction/common';
 import type { TimedSeriesItem } from '../modules/numseries/generate';
 import type { TableCell, TableParams, TableTaskId } from '../modules/tables/gorbov';
@@ -38,6 +40,8 @@ export type Step =
     }
   /** Every item carries its own limit (training, R36); diagnostic items have none and `totalLimitMs` applies. */
   | { kind: 'numseries_block'; items: TimedSeriesItem[]; totalLimitMs: number | null }
+  /** «Память»: each trial is shown, then reproduced; answered with submitMemory (one answer per trial). */
+  | { kind: 'memory_block'; L: number; mode: MemoryMode; params: MemoryParams; trials: MemoryTrial[]; protocol: 'fixed' }
   | { kind: 'summary'; view: BlockSummaryView }
   /** Diagnostics: the reaction block just played was timingUnreliable and is replayed once (I1); ackNotice() starts it. */
   | { kind: 'notice'; module: ReactionModuleId; text: string }
@@ -203,6 +207,16 @@ export function stabilityLine(cvRt: number, cvMax: number): string {
 export function tableLines(r: TableRunResult): string[] {
   const time = r.timeMs === null ? 'Не закончено за лимит' : `Время: ${decimal(r.timeMs / 1000, 1)} с`;
   return [time, `Ошибки: ${String(r.errors)}`];
+}
+
+/** «Верно воспроизведено: 4 из 6», «Позиции на своих местах: 85 %» (of all items of the block), «Длина ряда: 6». */
+export function memoryLines(exact: number, trials: number, positionsCorrect: number, length: number): string[] {
+  const share = trials * length > 0 ? positionsCorrect / (trials * length) : 0;
+  return [
+    `Верно воспроизведено: ${String(exact)} из ${String(trials)}`,
+    `Позиции на своих местах: ${String(whole(100 * share))} %`,
+    `Длина ряда: ${String(length)}`,
+  ];
 }
 
 /** «12 с», or «11,9 с» for a limit that is not whole seconds (limits are multiples of 100 ms). */

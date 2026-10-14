@@ -130,6 +130,31 @@ test('free training of Помехоустойчивость reaches 100 %', asyn
   await expect(page.getByRole('list', { name: 'Итог по модулям' })).toContainText('Помехоустойчивость: блоков');
 });
 
+test('free training of Память reaches 100 %', async ({ page }) => {
+  // Scale 0.3: a 90 s budget, enough for the four modes (digits, positions, card, letters) at 3 trials each.
+  await openApp(page, '/?e2e=1&scale=0.3');
+  await page.getByRole('button', { name: 'Свободная тренировка' }).click();
+  await page.getByRole('button', { name: 'Память' }).click();
+  const titles: string[] = [];
+  const instructions: string[] = [];
+  const summaries = checkSummaries(page, titles);
+  const screens = await playSession(page, {
+    timeoutMs: 200_000,
+    onScreen: async (kind) => {
+      if (kind === 'instruction') instructions.push(await page.locator('.instruction').innerText());
+      await summaries(kind);
+    },
+  });
+  expect(screens).toContain('memory');
+  expect(new Set(titles)).toEqual(new Set(['Память']));
+  // Every block starts with its instruction and ends in a 100 % summary: each mode was reproduced exactly.
+  expect(titles.length).toBeGreaterThanOrEqual(4);
+  for (const mode of ['Запомни цифры', 'Клетки загораются', 'На карточке', 'Запомни буквы']) {
+    expect(instructions.some((t) => t.includes(mode)), mode).toBe(true);
+  }
+  await expect(page.getByRole('list', { name: 'Итог по модулям' })).toContainText('Память: блоков');
+});
+
 test('settings layout pult changes key hints to arrows', async ({ page }) => {
   await openApp(page, E2E_URL);
   await page.getByRole('button', { name: 'Настройки' }).click();

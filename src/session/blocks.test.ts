@@ -6,6 +6,8 @@ import type { Segment } from '../engine/planner';
 import type { Outcome, ReactionSummary } from '../engine/reaction/types';
 import type { FamilyId } from '../engine/types';
 import { createRng, deriveSeed } from '../engine/rng';
+import { generateMemoryTrials } from '../modules/memory/generate';
+import { memoryParams } from '../modules/memory/params';
 import { generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
 import { NO_STRESSORS } from '../modules/reaction/common';
 import { pomeh } from '../modules/reaction/pomeh';
@@ -13,6 +15,7 @@ import { pzmr } from '../modules/reaction/pzmr';
 import { gorbovMetrics } from '../modules/tables/gorbov';
 import { perfectPlayer, playTimeline } from '../testing/sessionPlayers';
 import {
+  blockInstruction,
   buildBlock,
   diagnosticBlockSeed,
   diagnosticResults,
@@ -82,6 +85,29 @@ describe('planBlock', () => {
       count: 10,
       totalLimitMs: null,
     });
+  });
+
+  it('memory: mode by block index, level params, 6 trials (3 under the e2e scale); keys and text per mode', () => {
+    const segment: Segment = { module: 'memory', budgetMs: 300_000, purpose: 'free' };
+    const ctx = { layout: 'pult' as const, scale: 1, diagnostic: false };
+    const plan = planBlock(segment, 9, 2, ctx);
+    expect(plan).toEqual({ kind: 'memory', L: 9, mode: 'card', params: memoryParams(9), count: 6 });
+    expect(planBlock(segment, 9, 0, { ...ctx, scale: 0.02 })).toMatchObject({ mode: 'digits', count: 3 });
+    expect(blockInstruction(plan, 'pult')).toEqual({
+      text: 'На карточке 7 цифр. Запомни их по строкам, слева направо. Потом набери и нажми Enter.',
+      keysHint: 'Цифры, Backspace, Enter',
+    });
+    expect(blockInstruction(planBlock(segment, 9, 1, ctx), 'pult').keysHint).toBe('Мышь, Enter');
+    const { step, paramsJson } = buildBlock(plan, 42, 'pult', new Map());
+    expect(step).toEqual({
+      kind: 'memory_block',
+      L: 9,
+      mode: 'card',
+      params: memoryParams(9),
+      trials: generateMemoryTrials(memoryParams(9), 'card', 6, createRng(42)),
+      protocol: 'fixed',
+    });
+    expect(JSON.parse(paramsJson)).toEqual({ mode: 'card', length: 7, itemMs: 630, gapMs: 158, trials: 6 });
   });
 });
 

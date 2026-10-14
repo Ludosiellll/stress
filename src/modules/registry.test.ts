@@ -17,13 +17,14 @@ describe('registry', () => {
       stroop: 'Струп',
       taskswitch: 'Переключение правил',
       pomeh: 'Помехоустойчивость',
+      memory: 'Память',
       numseries: 'Числовые ряды',
     });
   });
 
   it('lNorm re-exports L_NORM (R1)', () => {
     expect(lNorm).toBe(L_NORM);
-    expect(lNorm).toEqual({ pzmr: 14, szmr: 12, gonogo: 10, rdo: 10, gorbov: 12, schulte: 6, stroop: 10, taskswitch: 10, pomeh: 14, numseries: 0 });
+    expect(lNorm).toEqual({ pzmr: 14, szmr: 12, gonogo: 10, rdo: 10, gorbov: 12, schulte: 6, stroop: 10, taskswitch: 10, pomeh: 14, memory: 9, numseries: 0 });
   });
 
   it('MODULE_IDS lists every module once and every module has a title and L_norm', () => {
@@ -33,6 +34,11 @@ describe('registry', () => {
     expect(Object.keys(moduleTitles).sort()).toEqual(sorted);
     expect(Object.keys(L_NORM).sort()).toEqual(sorted);
     for (const m of MODULE_IDS) expect(moduleTitles[m].length).toBeGreaterThan(0);
+  });
+
+  it('memory sits before numseries in the catalogue and is not a reaction module (W2-R7)', () => {
+    expect(MODULE_IDS.slice(-2)).toEqual(['memory', 'numseries']);
+    expect(isReactionModule('memory')).toBe(false);
   });
 
   it('REACTION_MODULE_IDS are the reaction modules of the catalogue, and isReactionModule tells them apart', () => {

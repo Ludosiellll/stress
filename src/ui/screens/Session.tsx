@@ -13,6 +13,7 @@ import { useKeyDown } from '../keys';
 import BlockSummary from '../views/BlockSummary';
 import Done from '../views/Done';
 import Instruction from '../views/Instruction';
+import MemoryView from '../views/MemoryView';
 import NumSeriesView from '../views/NumSeriesView';
 import { FatiguePrompt, Notice, PauseMenu, SaveError } from '../views/Prompts';
 import ReactionView from '../views/ReactionView';
@@ -28,6 +29,7 @@ export type SessionDriver = Pick<
   | 'submitReaction'
   | 'submitTable'
   | 'submitNumSeries'
+  | 'submitMemory'
   | 'discardBlock'
   | 'continueAfterSummary'
   | 'answerFatigue'
@@ -202,7 +204,7 @@ function SessionFlow({
       // The block after the notice has not started yet: nothing to discard.
       setNotice(null);
       setPause({ blockDiscarded: false });
-    } else if (step.kind === 'table_block' || step.kind === 'numseries_block') pauseBlock();
+    } else if (step.kind === 'table_block' || step.kind === 'numseries_block' || step.kind === 'memory_block') pauseBlock();
     else setPause({ blockDiscarded: false });
   }, escapePauses);
 
@@ -319,6 +321,28 @@ function SessionFlow({
           busy={busy}
           onSubmit={(answers) => {
             run((c) => c.submitNumSeries(answers));
+          }}
+        />
+      );
+    case 'memory_block':
+      return (
+        <MemoryView
+          key={stepId(step)}
+          step={step}
+          exposeAnswer={hooks.enabled}
+          busy={busy}
+          onSubmit={(answers) => {
+            run((c) => c.submitMemory(answers));
+          }}
+          onAbort={(reason) => {
+            if (reason === 'user') {
+              pauseBlock();
+              return;
+            }
+            setNotice(FOCUS_LOST);
+            run((c) => {
+              c.discardBlock('focus_lost');
+            });
           }}
         />
       );

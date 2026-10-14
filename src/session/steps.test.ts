@@ -3,6 +3,7 @@ import type { Outcome, ReactionSummary } from '../engine/reaction/types';
 import {
   AUDIO_NOT_PLAYED,
   conditionLines,
+  memoryLines,
   plural,
   reactionLines,
   seriesDiagnosticInstruction,
@@ -166,6 +167,13 @@ describe('Помехоустойчивость', () => {
 
   it('the line for a block whose sound did not play', () => {
     expect(AUDIO_NOT_PLAYED).toBe('Звук не воспроизводился: проверь устройство вывода и громкость помех в настройках.');
+  });
+});
+
+describe('memoryLines', () => {
+  it('exact trials, share of items in place, row length', () => {
+    expect(memoryLines(4, 6, 31, 6)).toEqual(['Верно воспроизведено: 4 из 6', 'Позиции на своих местах: 86 %', 'Длина ряда: 6']);
+    expect(memoryLines(0, 0, 0, 4)[1]).toBe('Позиции на своих местах: 0 %');
   });
 });
 

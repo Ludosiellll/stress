@@ -1,4 +1,5 @@
 import { isReactionModule, type ModuleId } from '../engine/types';
+import { describeMemoryParams, memoryParams } from './memory/params';
 import { reactionModules } from './registry';
 import { gorbovParams, type TableTaskId } from './tables/gorbov';
 import { schulteParams } from './tables/schulte';
@@ -25,7 +26,7 @@ function changed(before: Described, after: Described): ParamChange[] {
 /**
  * What changed in the module's parameters between two levels, for the block summary.
  * Reaction modules (any id of the catalogue) describe their own parameters. Gorbov needs the run task
- * (alternate gets 1.6× time); numseries has no level, so nothing changes.
+ * (alternate gets 1.6× time); memory parameters do not depend on the mode; numseries has no level, so nothing changes.
  */
 export function describeChanges(module: ModuleId, lBefore: number, lAfter: number, task?: TableTaskId): ParamChange[] {
   if (isReactionModule(module)) {
@@ -39,6 +40,8 @@ export function describeChanges(module: ModuleId, lBefore: number, lAfter: numbe
     }
     case 'schulte':
       return changed(describeTableParams(schulteParams(lBefore)), describeTableParams(schulteParams(lAfter)));
+    case 'memory':
+      return changed(describeMemoryParams(memoryParams(lBefore)), describeMemoryParams(memoryParams(lAfter)));
     case 'numseries':
       return [];
   }

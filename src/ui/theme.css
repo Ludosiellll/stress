@@ -272,6 +272,73 @@ legend {
   border: none;
 }
 
+.memory {
+  position: fixed;
+  inset: 0;
+  background: #2b2b2b;
+}
+
+/* §5: no cursor while the row is shown, nor on a typed answer; only the grid answer is clicked. */
+.memory-no-cursor,
+.memory-no-cursor * {
+  cursor: none;
+}
+
+.memory canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.memory-response {
+  text-align: center;
+}
+
+.memory-response .actions {
+  justify-content: center;
+}
+
+.memory-typed {
+  display: flex;
+  gap: 0.4em;
+  justify-content: center;
+  margin: 24px 0;
+  font-size: 2.6rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.memory-typed span {
+  min-width: 1ch;
+}
+
+.memory-grid {
+  --cell: max(48px, min(60vh, 80vw) / var(--size));
+  display: grid;
+  grid-template-columns: repeat(var(--size), var(--cell));
+  grid-auto-rows: var(--cell);
+  gap: 4px;
+  justify-content: center;
+  margin: 16px 0;
+}
+
+.memory-cell {
+  min-width: 48px;
+  min-height: 48px;
+  padding: 0;
+  border: 2px solid #5a5a5a;
+  border-radius: 0;
+  background: transparent;
+  color: #1f1f1f;
+  font-size: calc(var(--cell) * 0.4);
+  font-weight: 700;
+  user-select: none;
+}
+
+.memory-cell.chosen {
+  background: #e8e8e8;
+}
+
 .series-text {
   margin: 24px 0;
   font-size: 2.6rem;

@@ -31,5 +31,6 @@ export const moduleTitles: Record<ModuleId, string> = {
   stroop: stroop.title,
   taskswitch: taskswitch.title,
   pomeh: pomeh.title,
+  memory: 'Память',
   numseries: 'Числовые ряды',
 };

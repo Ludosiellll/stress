@@ -10,6 +10,7 @@ const domTests = [
   'src/testing/**/*.test.{ts,tsx}',
   'src/runtime/input.test.ts',
   'src/runtime/focusGuard.test.ts',
+  'src/runtime/memoryRenderer.test.ts',
 ];
 
 export default defineConfig({

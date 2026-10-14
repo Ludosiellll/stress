@@ -67,6 +67,15 @@ describe('describeChanges', () => {
     expect(describeChanges('stroop', 11, 12)).toContainEqual({ label: 'Подсказка клавиш', from: 'да', to: 'нет' });
   });
 
+  it('memory: row length, display time and pause', () => {
+    expect(describeChanges('memory', 8, 9)).toEqual([
+      { label: 'Длина ряда', from: '6', to: '7' },
+      { label: 'Показ элемента', from: '663 мс', to: '630 мс' },
+      { label: 'Пауза', from: '166 мс', to: '158 мс' },
+    ]);
+    expect(describeChanges('memory', 30, 31)).toEqual([]);
+  });
+
   it('numseries has no level parameters', () => {
     expect(describeChanges('numseries', 0, 0)).toEqual([]);
   });

@@ -17,6 +17,16 @@ import {
   type ReactionModuleId,
   type TableModuleId,
 } from '../engine/types';
+import { generateMemoryTrials } from '../modules/memory/generate';
+import {
+  MEMORY_TRIALS,
+  memoryInstruction,
+  memoryKeysHint,
+  memoryModeForBlock,
+  memoryParams,
+  type MemoryMode,
+  type MemoryParams,
+} from '../modules/memory/params';
 import { generateBlockItems, generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
 import { stressorsOf } from '../modules/reaction/common';
 import { reactionModules } from '../modules/registry';
@@ -69,10 +79,12 @@ export type BlockPlan =
       practice: number;
     }
   | { kind: 'table'; module: TableModuleId; L: number; task: TableTaskId; params: TableParams }
+  /** Memory blocks cycle their mode by block index; `count` trials. */
+  | { kind: 'memory'; L: number; mode: MemoryMode; params: MemoryParams; count: number }
   /** Training items carry their own limits (R36); `totalLimitMs` is the diagnostic's block limit. */
   | { kind: 'numseries'; diagnostic: boolean; count: number; totalLimitMs: number | null };
 
-export type BlockStep = StepOf<'reaction_block'> | StepOf<'table_block'> | StepOf<'numseries_block'>;
+export type BlockStep = StepOf<'reaction_block'> | StepOf<'table_block'> | StepOf<'numseries_block'> | StepOf<'memory_block'>;
 
 export interface PlanContext {
   /** The user's layout. */
@@ -81,7 +93,7 @@ export interface PlanContext {
   diagnostic: boolean;
 }
 
-/** Block `blockIndex` of the segment at level L (Gorbov runs cycle their tasks by index). */
+/** Block `blockIndex` of the segment at level L (Gorbov runs cycle their tasks, memory blocks their mode, by index). */
 export function planBlock(segment: Segment, L: number, blockIndex: number, ctx: PlanContext): BlockPlan {
   const { module } = segment;
   if (isReactionModule(module)) {
@@ -104,6 +116,9 @@ export function planBlock(segment: Segment, L: number, blockIndex: number, ctx: 
     return { kind: 'table', module, L, task, params: gorbovParams(L, task) };
   }
   if (module === 'schulte') return { kind: 'table', module, L, task: 'schulte', params: schulteParams(L) };
+  if (module === 'memory') {
+    return { kind: 'memory', L, mode: memoryModeForBlock(blockIndex), params: memoryParams(L), count: scaledCount(MEMORY_TRIALS, ctx.scale) };
+  }
   if (ctx.diagnostic) {
     const scheduled = diagnosticSeriesSchedule().length;
     const total = segment.totalTimeLimitMs;
@@ -126,6 +141,8 @@ export function blockInstruction(plan: BlockPlan, layout: LayoutId): { text: str
       };
     case 'table':
       return { text: tableInstruction(plan.task, plan.params.size), keysHint: TABLE_KEYS_HINT };
+    case 'memory':
+      return { text: memoryInstruction(plan.mode, plan.params), keysHint: memoryKeysHint(plan.mode) };
     case 'numseries':
       return {
         text: plan.diagnostic ? seriesDiagnosticInstruction(plan.count, plan.totalLimitMs) : SERIES_INSTRUCTION_TRAINING,
@@ -186,6 +203,14 @@ export function buildBlock(
       return {
         step: { kind: 'table_block', module: plan.module, L: plan.L, task: plan.task, cells, params: plan.params, seed },
         paramsJson: JSON.stringify({ task: plan.task, ...plan.params }),
+      };
+    }
+    case 'memory': {
+      const { L, mode, params, count } = plan;
+      const trials = generateMemoryTrials(params, mode, count, createRng(seed));
+      return {
+        step: { kind: 'memory_block', L, mode, params, trials, protocol: 'fixed' },
+        paramsJson: JSON.stringify({ mode, ...params, trials: count }),
       };
     }
     case 'numseries': {

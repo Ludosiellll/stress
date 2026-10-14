@@ -10,6 +10,7 @@ import type { ModuleState, Segment, SessionPlan } from '../engine/planner';
 import type { BlockTimeline } from '../engine/reaction/types';
 import { isReactionModule, type BlockFlag, type FamilyId, type LayoutId, type ModuleId } from '../engine/types';
 import { describeChanges } from '../modules/describe';
+import { scoreMemoryTrial, type MemoryAnswer } from '../modules/memory/score';
 import { moduleTitles, reactionModules } from '../modules/registry';
 import type { TableTaskId } from '../modules/tables/gorbov';
 import { scoreTableRun, type TableRun } from '../modules/tables/score';
@@ -32,6 +33,7 @@ import { SaveQueue, type SaveOutcome, type Write } from './saveQueue';
 import {
   AUDIO_NOT_PLAYED,
   conditionLines,
+  memoryLines,
   reactionLines,
   saveErrorMessage,
   seriesLines,
@@ -338,6 +340,33 @@ export class SessionController {
     });
   }
 
+  /**
+   * One answer per trial, in order. s = exact trials / trials (W2-R9); the level moves by nextLevel with no
+   * stability rule (no RTs). The summary keeps every answer.
+   */
+  async submitMemory(answers: readonly MemoryAnswer[]): Promise<void> {
+    const step = this.take('memory_block');
+    const { trials, params, mode } = step;
+    if (answers.length !== trials.length) {
+      throw new RangeError(`submitMemory: ${String(answers.length)} answers for ${String(trials.length)} trials`);
+    }
+    await this.exclusive(async () => {
+      const scored = trials.map((t, i) => scoreMemoryTrial(t, answers[i] as MemoryAnswer));
+      const exact = scored.filter((r) => r.exact).length;
+      const positionsCorrect = scored.reduce((sum, r) => sum + r.positionsCorrect, 0);
+      await this.completeBlock({
+        module: 'memory',
+        L: step.L,
+        score: exact / trials.length,
+        level: { cvRt: null, cvMax: null, timingUnreliable: false },
+        hitRts: [],
+        summaryJson: JSON.stringify({ mode, length: params.length, exact, positionsCorrect, answers }),
+        lines: memoryLines(exact, trials.length, positionsCorrect, params.length),
+        rows: () => ({ trials: [], items: [] }),
+      });
+    });
+  }
+
   /** Starts the replay announced by the `notice` step. */
   ackNotice(): void {
     this.take('notice');
@@ -348,10 +377,20 @@ export class SessionController {
   discardBlock(reason: DiscardReason): void {
     if (this.busy) throw new Error('SessionController: another action is in progress');
     const s = this.current;
-    if (s.kind !== 'reaction_block' && s.kind !== 'table_block' && s.kind !== 'numseries_block') {
-      throw new Error(`SessionController: expected a block step, current step is ${s.kind}`);
+    switch (s.kind) {
+      case 'reaction_block':
+      case 'table_block':
+        this.restartBlock(s.module, reason);
+        return;
+      case 'numseries_block':
+        this.restartBlock('numseries', reason);
+        return;
+      case 'memory_block':
+        this.restartBlock('memory', reason);
+        return;
+      default:
+        throw new Error(`SessionController: expected a block step, current step is ${s.kind}`);
     }
-    this.restartBlock(s.kind === 'numseries_block' ? 'numseries' : s.module, reason);
   }
 
   async continueAfterSummary(): Promise<void> {

@@ -15,13 +15,14 @@ export const MODULE_IDS = [
   'stroop',
   'taskswitch',
   'pomeh',
+  'memory',
   'numseries',
 ] as const;
 export type ModuleId = (typeof MODULE_IDS)[number];
 
 const REACTION_SET: ReadonlySet<ModuleId> = new Set<ModuleId>(REACTION_MODULE_IDS);
 
-/** Modules played by ReactionModule + ReactionBlockRunner. */
+/** Modules played by ReactionModule + ReactionBlockRunner ('memory' is not one: it has its own presentation and answers). */
 export function isReactionModule(m: ModuleId): m is ReactionModuleId {
   return REACTION_SET.has(m);
 }

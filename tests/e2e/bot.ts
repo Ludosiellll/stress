@@ -8,7 +8,7 @@ import type { StimulusEvent } from '../../src/testing/e2eHooks';
  *   expected key (or mouse button) 280 ms after the onset, at onset + targetOffsetMs for timed (RDO) trials,
  *   and nothing on no-go trials. The runner stamps presses with `event.timeStamp`, so the synthetic events
  *   are timed like real ones.
- * - Tables are clicked in task order with real mouse clicks, number series are answered from
+ * - Tables are clicked in task order with real mouse clicks, number series and memory rows are answered from
  *   `data-e2e-answer`, and every other screen is driven through its visible buttons, like a user.
  */
 
@@ -103,6 +103,8 @@ export type Screen =
   | 'reaction'
   | 'table'
   | 'series'
+  /** A memory block (presentation and answers, every trial of the block). */
+  | 'memory'
   | 'summary'
   | 'fatigue'
   | 'notice'
@@ -115,7 +117,18 @@ export type Screen =
   | 'unknown';
 
 /** Screens the driver acts on; the others it waits through. */
-const ACTIONABLE: readonly Screen[] = ['warn', 'instruction', 'table', 'series', 'summary', 'fatigue', 'replay', 'wellbeing', 'done'];
+const ACTIONABLE: readonly Screen[] = [
+  'warn',
+  'instruction',
+  'table',
+  'series',
+  'memory',
+  'summary',
+  'fatigue',
+  'replay',
+  'wellbeing',
+  'done',
+];
 
 /**
  * The current session screen. A screen that needs an action is returned once (`fresh`): the call marks
@@ -133,6 +146,7 @@ async function claimScreen(page: Page, stopAt: Screen): Promise<{ kind: Screen; 
     if (has('reaction')) kind = 'reaction';
     else if (has('table-screen')) kind = 'table';
     else if (has('series')) kind = 'series';
+    else if (has('memory')) kind = 'memory';
     else if (has('instruction')) kind = 'instruction';
     else if (has('summary')) kind = 'summary';
     else if (has('wellbeing')) kind = 'wellbeing';
@@ -212,6 +226,76 @@ export async function playSeries(page: Page): Promise<void> {
   }
 }
 
+/**
+ * The physical keys of the memory letters on a ЙЦУКЕН keyboard, with what an English layout prints on them:
+ * the bot types like a user who never switched the layout (Review focus 1).
+ */
+const LETTER_KEYS: Readonly<Record<string, { code: string; key: string }>> = {
+  Б: { code: 'Comma', key: ',' },
+  В: { code: 'KeyD', key: 'd' },
+  Г: { code: 'KeyU', key: 'u' },
+  Д: { code: 'KeyL', key: 'l' },
+  Ж: { code: 'Semicolon', key: ';' },
+  З: { code: 'KeyP', key: 'p' },
+  К: { code: 'KeyR', key: 'r' },
+  Л: { code: 'KeyK', key: 'k' },
+  М: { code: 'KeyV', key: 'v' },
+  Н: { code: 'KeyY', key: 'y' },
+  П: { code: 'KeyG', key: 'g' },
+  Р: { code: 'KeyH', key: 'h' },
+  С: { code: 'KeyC', key: 'c' },
+  Т: { code: 'KeyN', key: 'n' },
+};
+
+/**
+ * Plays the memory block on screen: waits for each response screen, reproduces the exposed row (digits typed,
+ * letters as key events of their ЙЦУКЕН keys — `keyboard.type` sends no keydown for Cyrillic — cells clicked),
+ * sends it with Enter, and returns when the block's screen is gone.
+ */
+export async function playMemory(page: Page): Promise<void> {
+  for (;;) {
+    const next = await page.waitForFunction(() => {
+      const root = document.querySelector('.session')?.firstElementChild ?? null;
+      if (root === null || !root.classList.contains('memory')) return { done: true, answer: '', mode: '', counter: '' };
+      const r = root.querySelector('.memory-response[data-e2e-answer]');
+      if (r === null) return null;
+      return {
+        done: false,
+        answer: r.getAttribute('data-e2e-answer') ?? '',
+        mode: r.getAttribute('data-mode') ?? '',
+        counter: r.querySelector('.muted')?.textContent ?? '',
+      };
+    });
+    const trial = await next.jsonValue();
+    // waitForFunction resolves on a truthy value only.
+    if (trial === null || trial.done) return;
+    const items = trial.answer.split(',');
+    // Keys are listened to from the task after the response screen mounts.
+    await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => { requestAnimationFrame(() => { r(); }); })));
+    if (trial.mode === 'positions') {
+      for (const cell of items) await page.locator(`.memory-cell[data-cell="${cell}"]`).click();
+    } else if (trial.mode === 'letters') {
+      const keys = items.flatMap((x) => LETTER_KEYS[x] ?? []);
+      expect(keys, `letters ${trial.answer} are in the set`).toHaveLength(items.length);
+      await page.evaluate((events) => {
+        for (const init of events) {
+          const target = document.activeElement ?? document.body;
+          target.dispatchEvent(new KeyboardEvent('keydown', { ...init, bubbles: true, cancelable: true }));
+          target.dispatchEvent(new KeyboardEvent('keyup', { ...init, bubbles: true, cancelable: true }));
+        }
+      }, keys);
+    } else {
+      await page.keyboard.type(items.join(''));
+    }
+    await page.keyboard.press('Enter');
+    // This response leaves the screen: the next trial is shown, or (after the last one, once it is saved) the summary.
+    await page.waitForFunction(
+      (counter) => document.querySelector('.memory-response .muted')?.textContent !== counter,
+      trial.counter,
+    );
+  }
+}
+
 export async function fillWellbeing(page: Page): Promise<void> {
   await page.getByRole('spinbutton', { name: 'Сон прошлой ночью, часов' }).fill('7.5');
   await page.getByRole('radio', { name: 'Нет', exact: true }).check();
@@ -270,6 +354,9 @@ export async function playSession(page: Page, o: PlayOptions = {}): Promise<Scre
         break;
       case 'series':
         await playSeries(page);
+        break;
+      case 'memory':
+        await playMemory(page);
         break;
       case 'summary':
         await page.getByRole('button', { name: 'Дальше' }).click();

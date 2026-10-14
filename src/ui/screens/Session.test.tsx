@@ -63,6 +63,15 @@ const TABLE: StepOf<'table_block'> = {
   seed: 1,
 };
 
+const MEMORY: StepOf<'memory_block'> = {
+  kind: 'memory_block',
+  L: 0,
+  mode: 'digits',
+  params: { length: 2, itemMs: 100, gapMs: 100 },
+  trials: [{ mode: 'digits', items: ['4', '7'], gridSide: 0, itemMs: 100, gapMs: 100, cardMs: 200 }],
+  protocol: 'fixed',
+};
+
 const SERIES: StepOf<'numseries_block'> = {
   kind: 'numseries_block',
   items: [{ id: 'arith:1', family: 'arith', seed: 1, shown: [1, 3, 5, 7, 9], answer: 11, difficulty: 800, timeLimitMs: 40_000 }],
@@ -79,6 +88,7 @@ function fakeDriver(first: Step): FakeDriver {
     submitReaction: vi.fn(() => Promise.resolve()),
     submitTable: vi.fn(() => Promise.resolve()),
     submitNumSeries: vi.fn(() => Promise.resolve()),
+    submitMemory: vi.fn(() => Promise.resolve()),
     discardBlock: vi.fn(),
     continueAfterSummary: vi.fn(() => Promise.resolve()),
     answerFatigue: vi.fn(() => Promise.resolve()),
@@ -618,6 +628,56 @@ describe('Session reaction blocks', () => {
     await click('Завершить сессию');
     expect(onExit).toHaveBeenCalledTimes(1);
     expect(platform.fullscreen.at(-1)).toBe(false);
+  });
+
+  it('memory_block renders MemoryView and Escape pauses with a discard', async () => {
+    const c = fakeDriver(MEMORY);
+    c.discardBlock.mockImplementation(() => {
+      c.step = { ...MEMORY };
+    });
+    await renderSession(c);
+    expect(document.querySelector('.memory canvas')).toBeTruthy();
+    frames.run(1000);
+    await press('Escape');
+    expect(c.discardBlock).toHaveBeenCalledWith('user');
+    expect(screen.getByRole('heading', { name: 'Пауза' })).toBeTruthy();
+    expect(screen.getByText('Блок начнётся заново. Уже сохранённые блоки не пропадут.')).toBeTruthy();
+    expect(document.querySelector('.memory')).toBeNull();
+    await click('Продолжить блок заново');
+    expect(document.querySelector('.memory canvas')).toBeTruthy();
+  });
+
+  it('memory answers go to submitMemory; focus loss discards the memory block', async () => {
+    const c = fakeDriver(MEMORY);
+    await renderSession(c);
+    for (let ts = 0; ts <= 1200; ts += 50) {
+      frames.run(ts);
+      await act(async () => {
+        await Promise.resolve();
+      });
+    }
+    expect(document.querySelector('.memory-response')).toBeTruthy();
+    // Not in e2e mode: the answer is not exposed.
+    expect(document.querySelector('.memory-response')?.hasAttribute('data-e2e-answer')).toBe(false);
+    await nextTask();
+    await press('4');
+    await press('7');
+    await press('Enter');
+    await waitFor(() => {
+      expect(c.submitMemory).toHaveBeenCalledTimes(1);
+    });
+    expect(c.submitMemory.mock.calls[0]?.[0].map((a) => a.given)).toEqual([['4', '7']]);
+
+    cleanup();
+    const lost = fakeDriver(MEMORY);
+    await renderSession(lost);
+    frames.run(0);
+    await act(async () => {
+      window.dispatchEvent(new Event('blur'));
+      await Promise.resolve();
+    });
+    expect(lost.discardBlock).toHaveBeenCalledWith('focus_lost');
+    expect(screen.getByText('Окно потеряло фокус. Блок будет повторён.')).toBeTruthy();
   });
 
   it('Escape on a table discards it too; on other steps it only pauses', async () => {

@@ -1,5 +1,7 @@
 import type { BlockTimeline, Press, TrialSpec } from '../engine/reaction/types';
 import type { InputKey } from '../engine/types';
+import type { MemoryTrial } from '../modules/memory/generate';
+import type { MemoryAnswer } from '../modules/memory/score';
 import type { TimedSeriesItem } from '../modules/numseries/generate';
 import { taskSequence, type TableParams, type TableTaskId } from '../modules/tables/gorbov';
 import type { TableRun } from '../modules/tables/score';
@@ -64,4 +66,9 @@ export function perfectTableRun(
 /** Right answer to every item, `timeMs` each (the default 5 s is inside every per-item limit, ≥ 8 s). */
 export function perfectSeriesAnswers(items: readonly TimedSeriesItem[], timeMs = 5000): SeriesAnswer[] {
   return items.map((it) => ({ itemId: it.id, given: it.answer, timeMs }));
+}
+
+/** Every row reproduced exactly, `timeMs` each. */
+export function perfectMemoryAnswers(trials: readonly MemoryTrial[], timeMs = 3000): MemoryAnswer[] {
+  return trials.map((t) => ({ given: [...t.items], timeMs }));
 }

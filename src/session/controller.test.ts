@@ -7,11 +7,22 @@ import { diagnosticSegmentSeed, diagnosticSeriesSchedule, planDiagnostic, type D
 import { planFree, planTraining, type ModuleState, type Segment, type SessionPlan } from '../engine/planner';
 import { createRng, deriveSeed } from '../engine/rng';
 import type { LayoutId, ModuleId } from '../engine/types';
+import { describeChanges } from '../modules/describe';
+import { generateMemoryTrials } from '../modules/memory/generate';
+import { memoryInstruction, memoryParams } from '../modules/memory/params';
+import type { MemoryAnswer } from '../modules/memory/score';
 import { FAMILIES } from '../modules/numseries/families';
 import { pzmr } from '../modules/reaction/pzmr';
 import { szmr } from '../modules/reaction/szmr';
 import { gorbovMetrics } from '../modules/tables/gorbov';
-import { perfectPlayer, perfectSeriesAnswers, perfectTableRun, playTimeline, type Respond } from '../testing/sessionPlayers';
+import {
+  perfectMemoryAnswers,
+  perfectPlayer,
+  perfectSeriesAnswers,
+  perfectTableRun,
+  playTimeline,
+  type Respond,
+} from '../testing/sessionPlayers';
 import { SessionController, type SessionStartOptions } from './controller';
 import { AUDIO_NOT_PLAYED, type Step, type StepOf } from './steps';
 
@@ -111,6 +122,10 @@ async function drive(h: Harness, o: DriveOptions = {}): Promise<string[]> {
       case 'numseries_block':
         h.clock.advance(blockMs);
         await h.c.submitNumSeries(perfectSeriesAnswers(s.items));
+        break;
+      case 'memory_block':
+        h.clock.advance(blockMs);
+        await h.c.submitMemory(perfectMemoryAnswers(s.trials));
         break;
       case 'summary':
         await h.c.continueAfterSummary();
@@ -1135,6 +1150,119 @@ describe('SessionController — tables', () => {
     await expect(h.c.submitTable({ ...perfectTableRun(step), task: 'red_down', total: 25 })).rejects.toThrow(/task/);
     await expect(h.c.submitTable({ ...perfectTableRun(step), timeLimitMs: 1 })).rejects.toThrow(/time limit/);
     expectStep(h.c, 'table_block');
+  });
+});
+
+describe('SessionController — memory', () => {
+  /** Acks the instruction (if any) and returns the memory block on screen. */
+  function memoryBlock(h: Harness): StepOf<'memory_block'> {
+    if (h.c.step.kind === 'instruction') h.c.ackInstruction();
+    return expectStep(h.c, 'memory_block');
+  }
+
+  it('memory block in free training raises the level for a perfect player', async () => {
+    const h = await begin(planFree('memory', 3));
+    expect(expectStep(h.c, 'instruction')).toMatchObject({
+      module: 'memory',
+      text: memoryInstruction('digits', memoryParams(0)),
+      keysHint: 'Цифры, Backspace, Enter',
+    });
+    const block = memoryBlock(h);
+    expect(block).toMatchObject({ kind: 'memory_block', L: 0, mode: 'digits', params: memoryParams(0), protocol: 'fixed' });
+    expect(block.trials).toEqual(generateMemoryTrials(memoryParams(0), 'digits', 6, createRng(deriveSeed(3, '0:0:0'))));
+    await h.c.submitMemory(perfectMemoryAnswers(block.trials));
+    const { view } = expectStep(h.c, 'summary');
+    expect(view).toMatchObject({
+      module: 'memory',
+      title: 'Память',
+      lBefore: 0,
+      score: 1,
+      lines: ['Верно воспроизведено: 6 из 6', 'Позиции на своих местах: 100 %', 'Длина ряда: 4'],
+      flags: ['calibration'],
+      showLevel: true,
+    });
+    expect(view.lAfter).toBeGreaterThan(0);
+    expect(view.changes).toEqual(describeChanges('memory', 0, view.lAfter));
+    expect(view.changes.length).toBeGreaterThan(0);
+    const [row] = await h.repo.listBlocks();
+    expect(row).toMatchObject({ module: 'memory', lBefore: 0, lAfter: view.lAfter, score: 1 });
+    expect(JSON.parse(row?.summaryJson ?? '')).toEqual({
+      mode: 'digits',
+      length: 4,
+      exact: 6,
+      positionsCorrect: 24,
+      answers: perfectMemoryAnswers(block.trials),
+    });
+    expect(JSON.parse(row?.paramsJson ?? '')).toEqual({ mode: 'digits', ...memoryParams(0), trials: 6 });
+    expect((await h.repo.getModuleStates()).memory.lifetimeBlocks).toBe(1);
+  });
+
+  it('s = exact / trials; the positions line counts items in place over all trials', async () => {
+    const h = await begin(planFree('memory', 3));
+    const block = memoryBlock(h);
+    const answers: MemoryAnswer[] = perfectMemoryAnswers(block.trials).map((a, i) => {
+      if (i >= 2) return a;
+      // Trials 1 and 2: the first two items swapped (two positions lost each).
+      const [x = '', y = '', ...rest] = a.given;
+      return { ...a, given: [y, x, ...rest] };
+    });
+    await h.c.submitMemory(answers);
+    const { view } = expectStep(h.c, 'summary');
+    expect(view.score).toBeCloseTo(4 / 6, 12);
+    expect(view.lines).toEqual(['Верно воспроизведено: 4 из 6', 'Позиции на своих местах: 83 %', 'Длина ряда: 4']);
+  });
+
+  it('modes cycle by block, each with its instruction; the level carries on', async () => {
+    const h = await begin(planFree('memory', 5));
+    const modes: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      expectStep(h.c, 'instruction');
+      const block = memoryBlock(h);
+      modes.push(block.mode);
+      h.clock.advance(10_000);
+      await h.c.submitMemory(perfectMemoryAnswers(block.trials));
+      const { view } = expectStep(h.c, 'summary');
+      expect(view.lBefore).toBe(block.L);
+      await h.c.continueAfterSummary();
+    }
+    expect(modes).toEqual(['digits', 'positions', 'card', 'letters']);
+  });
+
+  it('discardBlock keeps the memory level', async () => {
+    const h = await begin(planFree('memory', 5));
+    await h.c.submitMemory(perfectMemoryAnswers(memoryBlock(h).trials));
+    const lAfter = expectStep(h.c, 'summary').view.lAfter;
+    await h.c.continueAfterSummary();
+    const before = memoryBlock(h);
+    expect(before.L).toBe(lAfter);
+    const blocksBefore = await h.repo.listBlocks();
+    h.c.discardBlock('user');
+    const after = expectStep(h.c, 'memory_block');
+    expect(after.L).toBe(lAfter);
+    expect(after.mode).toBe(before.mode);
+    expect(after.trials).not.toEqual(before.trials);
+    expect(h.c.discards).toEqual([{ module: 'memory', reason: 'user' }]);
+    expect(await h.repo.listBlocks()).toEqual(blocksBefore);
+  });
+
+  it('wrong answer count is rejected', async () => {
+    const h = await begin(planFree('memory', 3));
+    const block = memoryBlock(h);
+    const answers = perfectMemoryAnswers(block.trials);
+    await expect(h.c.submitMemory(answers.slice(1))).rejects.toThrow(RangeError);
+    await expect(h.c.submitMemory([...answers, answers[0] as MemoryAnswer])).rejects.toThrow(/7 answers for 6 trials/);
+    expectStep(h.c, 'memory_block');
+    expect(await h.repo.listBlocks()).toEqual([]);
+  });
+
+  it('under the e2e scale a block has 3 trials and s is out of those (W2-R9)', async () => {
+    const h = await begin(planFree('memory', 3), { scale: 0.02 });
+    const block = memoryBlock(h);
+    expect(block.trials).toHaveLength(3);
+    await h.c.submitMemory(perfectMemoryAnswers(block.trials));
+    const { view } = expectStep(h.c, 'summary');
+    expect(view.score).toBe(1);
+    expect(view.lines[0]).toBe('Верно воспроизведено: 3 из 3');
   });
 });
 
