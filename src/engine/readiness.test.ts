@@ -140,6 +140,17 @@ describe('readiness', () => {
     expect(readiness(full({ gorbov: null }), base).abilities.switching).toBeNull();
   });
 
+  it('scores gonogo as percent against its baseline: 80 -> 85 gives 70', () => {
+    const r = readiness(full({ gorbov: null, gonogoScore: 85 }), full({ gorbov: null, gonogoScore: 80 }));
+    expect(r.abilities.attention).toBeCloseTo(70, 10);
+  });
+
+  it('scores Gorbov from bands even when the baseline has no Gorbov result', () => {
+    const r = readiness(full(), full({ gorbov: null }));
+    expect(r.abilities.switching).toBe(bandScore(24, BAND_GORBOV_PI));
+    expect(r.abilities.attention).toBe((bandScore(33, BAND_GORBOV_V) + 60) / 2);
+  });
+
   it('uses max(v0, 1) so a zero baseline does not divide by zero', () => {
     const r = readiness(full({ numseriesCorrect: 1 }), full({ numseriesCorrect: 0 }));
     expect(r.abilities.logic).toBe(60);

@@ -6,6 +6,7 @@ import type { Segment, SessionPlan } from './planner';
 export interface DiagnosticResults {
   pzmrMedianRt: number | null;
   szmrMedianRt: number | null;
+  /** Percent of successful trials, 0–100 (the controller fills it as summary.score · 100). */
   gonogoScore: number | null;
   rdoMeanAbsErrorMs: number | null;
   gorbov: { V: number; P: number; Pi: number } | null;

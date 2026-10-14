@@ -46,11 +46,12 @@ export function readiness(
 ): { abilities: Record<Ability, number | null>; overall: number | null } {
   const rel = (v: number | null, v0: number | null, lowerIsBetter: boolean): number[] =>
     v === null || v0 === null ? [] : [baselineScore(v, Math.max(v0, 1), lowerIsBetter)];
+  // Absolute published bands: scored from the latest result alone, no baseline needed (R18a).
   const band = (
     pick: (g: { V: number; P: number; Pi: number }) => number,
     points: Points,
   ): number[] =>
-    latest.gorbov === null || baseline.gorbov === null ? [] : [bandScore(pick(latest.gorbov), points)];
+    latest.gorbov === null ? [] : [bandScore(pick(latest.gorbov), points)];
 
   const abilities: Record<Ability, number | null> = {
     reaction: avg([
