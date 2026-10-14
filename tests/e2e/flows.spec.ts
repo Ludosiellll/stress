@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { cancelPendingPresses, openApp, playSession, type Screen } from './bot';
+import { cancelPendingPresses, openApp, pageDate, playSession, type Screen } from './bot';
 import { E2E_URL, expect, test } from './fixtures';
 
 // Whole sessions at scale 0.02 still take tens of seconds each.
@@ -57,16 +57,6 @@ test('full training session at scale 0.02 reaches done and wellbeing', async ({ 
   await page.getByRole('button', { name: 'На главную' }).click();
   await expect(page.getByText('Серия: 1 дн.')).toBeVisible();
 });
-
-/** The page's local date `days` from today, YYYY-MM-DD (the app counts days in the page's time zone). */
-async function pageDate(page: Page, days: number): Promise<string> {
-  return page.evaluate((n) => {
-    const d = new Date();
-    d.setDate(d.getDate() + n);
-    const two = (x: number): string => String(x).padStart(2, '0');
-    return `${String(d.getFullYear())}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
-  }, days);
-}
 
 test('a test date in 20 days shows the overload phase on Home', async ({ page }) => {
   await openApp(page, E2E_URL);

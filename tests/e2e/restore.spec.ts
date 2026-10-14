@@ -1,7 +1,6 @@
-import { readFileSync } from 'node:fs';
-import type { Browser, Page } from '@playwright/test';
-import { openApp, playSession } from './bot';
-import { E2E_URL, expect, test } from './fixtures';
+import type { Page } from '@playwright/test';
+import { chooseExportFile, exportedFile, openApp, playSession } from './bot';
+import { E2E_URL, expect, freshPage, test } from './fixtures';
 
 /**
  * Restore from an export file in the web build (Task 14): the file a page saved with «Экспорт данных» is loaded
@@ -37,47 +36,15 @@ async function sessionLines(page: Page): Promise<string[][]> {
   return lines;
 }
 
-/** «Экспорт данных» in Settings; returns the text of the trainer-export-*.json download. */
-async function exportedFile(page: Page): Promise<string> {
-  await page.getByRole('button', { name: 'Настройки' }).click();
-  const download = page.waitForEvent('download', { predicate: (d) => /^trainer-export-.*\.json$/.test(d.suggestedFilename()) });
-  await page.getByRole('button', { name: 'Экспорт данных (JSON и CSV)' }).click();
-  const path = await (await download).path();
-  await page.getByRole('button', { name: 'Назад' }).click();
-  return readFileSync(path, 'utf8');
-}
-
-/** Picks `text` as the export file through the button's file dialog. */
-async function chooseFile(page: Page, text: string): Promise<void> {
-  const chooser = page.waitForEvent('filechooser');
-  await page.getByRole('button', { name: 'Восстановить из файла экспорта' }).click();
-  await (await chooser).setFiles({ name: 'trainer-export.json', mimeType: 'application/json', buffer: Buffer.from(text, 'utf8') });
-}
-
 /** Settings → file → preview → «Восстановить» → the result; back on Home afterwards. */
 async function restore(page: Page, text: string, preview: RegExp, result: RegExp): Promise<void> {
   await page.getByRole('button', { name: 'Настройки' }).click();
-  await chooseFile(page, text);
+  await chooseExportFile(page, text);
   await expect(page.getByText(/^В файле:/)).toHaveText(preview);
   await page.getByRole('button', { name: 'Восстановить', exact: true }).click();
   await expect(page.getByText(/^Готово\./)).toHaveText(result);
   await page.getByRole('button', { name: 'Назад' }).click();
   await expect(home(page)).toBeVisible();
-}
-
-/** A page in its own browser context (its own empty memory), with the same console guard as `page`. */
-async function freshPage(browser: Browser): Promise<{ page: Page; errors: string[]; close: () => Promise<void> }> {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-  const page = await context.newPage();
-  const errors: string[] = [];
-  page.on('console', (m) => {
-    if (m.type() === 'error') errors.push(`console: ${m.text()}`);
-  });
-  page.on('pageerror', (e) => {
-    errors.push(`pageerror: ${e.message}`);
-  });
-  await openApp(page, E2E_URL);
-  return { page, errors, close: () => context.close() };
 }
 
 test('export in one page, restore in a fresh page, Progress shows the same sessions', async ({ page, browser }) => {
@@ -118,7 +85,7 @@ test('restoring the same file twice adds nothing', async ({ page, browser }) => 
 test('a damaged file shows the error and changes nothing', async ({ page }) => {
   await openApp(page, E2E_URL);
   await page.getByRole('button', { name: 'Настройки' }).click();
-  await chooseFile(page, '{"appVersion": "0.2.0", "sessions": [');
+  await chooseExportFile(page, '{"appVersion": "0.2.0", "sessions": [');
   await expect(page.getByRole('alert')).toHaveText('Файл не читается как JSON.');
   await expect(page.getByRole('button', { name: 'Восстановить', exact: true })).toHaveCount(0);
 
@@ -133,7 +100,7 @@ test('a damaged file shows the error and changes nothing', async ({ page }) => {
     wellbeing: [],
     settings: {},
   };
-  await chooseFile(page, JSON.stringify(badRow));
+  await chooseExportFile(page, JSON.stringify(badRow));
   await expect(page.getByRole('alert')).toHaveText(
     'Запись sessions[0]: поле startedAt должно быть датой и временем ISO, например 2026-10-14T09:00:00.000Z.',
   );

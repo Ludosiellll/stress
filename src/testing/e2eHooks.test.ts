@@ -133,6 +133,22 @@ describe('instrumentBlock', () => {
     expect(b.cancel).toHaveBeenCalledWith(7);
   });
 
+  it('carries the trial condition when the spec has one, and no cond key otherwise', () => {
+    const b = base();
+    const h = host('?e2e=1');
+    const hooks = installE2eHooks(h);
+    const seen: unknown[] = [];
+    h.__trainer?.onStimulus((e) => seen.push(e));
+    const specs: TrialSpec[] = [{ ...spec('Space'), cond: 'quiet' }, { ...spec('Space'), cond: 'noisy' }, spec('Space')];
+    const out = instrumentBlock(hooks, 'pomeh', specs, b);
+    for (const s of specs) out.renderer.show(s.stimulus);
+    expect(seen).toStrictEqual([
+      { module: 'pomeh', expected: { kind: 'press', key: 'Space' }, onset: 0, cond: 'quiet' },
+      { module: 'pomeh', expected: { kind: 'press', key: 'Space' }, onset: 0, cond: 'noisy' },
+      { module: 'pomeh', expected: { kind: 'press', key: 'Space' }, onset: 0 },
+    ]);
+  });
+
   it('instrumentBlock forwards cue without emitting a stimulus event', () => {
     const b = base();
     const cue = vi.fn<NonNullable<StimulusRenderer['cue']>>();

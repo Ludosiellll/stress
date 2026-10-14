@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { expect, type Page } from '@playwright/test';
 import type { StimulusEvent } from '../../src/testing/e2eHooks';
 
@@ -14,8 +15,11 @@ import type { StimulusEvent } from '../../src/testing/e2eHooks';
 
 interface BotState {
   delayMs: number;
-  /** Every stimulus seen; `answerAt` is when the bot's press is due (null: no press, a no-go trial). */
-  stimuli: { module: string; kind: string; onset: number; answerAt: number | null }[];
+  /**
+   * Every stimulus seen; `answerAt` is when the bot's press is due (null: no press, a no-go trial), `cond` the
+   * trial's condition (null: the module has none).
+   */
+  stimuli: { module: string; kind: string; onset: number; answerAt: number | null; cond: string | null }[];
   /** Presses scheduled but not yet sent. */
   pending: Set<number>;
 }
@@ -68,7 +72,7 @@ export async function installReactionBot(page: Page, delayMs = 280): Promise<voi
       const x = e.expected;
       const now = performance.now();
       const answerAt = x.kind === 'press' ? now + bot.delayMs : x.kind === 'timed' ? e.onset + x.targetOffsetMs : null;
-      bot.stimuli.push({ module: e.module, kind: x.kind, onset: e.onset, answerAt });
+      bot.stimuli.push({ module: e.module, kind: x.kind, onset: e.onset, answerAt, cond: e.cond ?? null });
       if (x.kind !== 'withhold' && answerAt !== null) later(x.key, Math.max(0, answerAt - now));
     });
   }, delayMs);
@@ -294,6 +298,33 @@ export async function playMemory(page: Page): Promise<void> {
       trial.counter,
     );
   }
+}
+
+/** «Экспорт данных» in Settings; returns the text of the trainer-export-*.json download (back on Home after). */
+export async function exportedFile(page: Page): Promise<string> {
+  await page.getByRole('button', { name: 'Настройки' }).click();
+  const download = page.waitForEvent('download', { predicate: (d) => /^trainer-export-.*\.json$/.test(d.suggestedFilename()) });
+  await page.getByRole('button', { name: 'Экспорт данных (JSON и CSV)' }).click();
+  const path = await (await download).path();
+  await page.getByRole('button', { name: 'Назад' }).click();
+  return readFileSync(path, 'utf8');
+}
+
+/** On Settings: picks `text` as the export file through the restore button's file dialog. */
+export async function chooseExportFile(page: Page, text: string): Promise<void> {
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: 'Восстановить из файла экспорта' }).click();
+  await (await chooser).setFiles({ name: 'trainer-export.json', mimeType: 'application/json', buffer: Buffer.from(text, 'utf8') });
+}
+
+/** The page's local date `days` from today, YYYY-MM-DD (the app counts days in the page's time zone). */
+export async function pageDate(page: Page, days: number): Promise<string> {
+  return page.evaluate((n) => {
+    const d = new Date();
+    d.setDate(d.getDate() + n);
+    const two = (x: number): string => String(x).padStart(2, '0');
+    return `${String(d.getFullYear())}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
+  }, days);
 }
 
 export async function fillWellbeing(page: Page): Promise<void> {
