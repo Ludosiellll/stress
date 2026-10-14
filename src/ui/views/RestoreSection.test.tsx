@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { exportBundle } from '../../data/export';
 import { MemoryRepository } from '../../data/memoryRepository';
@@ -183,6 +183,41 @@ describe('RestoreSection', () => {
     );
     expect(onBusy.mock.calls).toEqual([[true], [false]]);
     expect(await history(repo)).toEqual({ sessions: [], blocks: [], trials: [], log: [] });
+  });
+
+  it('a failing read of the database is a comparison failure, not an unreadable file', async () => {
+    const memory = new MemoryRepository();
+    const repo = new Proxy(memory, {
+      get(target, prop, receiver) {
+        if (prop === 'listIds') return () => Promise.reject(new Error('disk I/O error'));
+        const value = Reflect.get(target, prop, receiver) as unknown;
+        return typeof value === 'function' ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+    renderSection({ repo });
+    await chooseFile(await exportFile());
+    expect(screen.getByRole('alert').textContent).toBe('Не удалось сравнить файл с базой: disk I/O error.');
+    expect(button('Восстановить')).toBeNull();
+    expect(button(CHOOSE)?.disabled).toBe(false);
+  });
+
+  it('a double click on «Восстановить» starts exactly one restore', async () => {
+    const repo = new MemoryRepository();
+    const platform = createFakePlatform({ repo });
+    const backupNow = vi.spyOn(platform, 'backupNow');
+    const { onBusy } = renderSection({ repo, platform });
+    await chooseFile(await exportFile());
+    const restore = screen.getByRole('button', { name: 'Восстановить' });
+    // Both clicks land before React re-renders the screen (one act, one batch).
+    act(() => {
+      restore.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      restore.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await settleUntil(() => screen.queryByText(/^Готово\./) !== null, 'the result');
+    expect(backupNow).toHaveBeenCalledTimes(1);
+    expect(onBusy.mock.calls).toEqual([[true], [false]]);
+    expect(screen.getByRole('status').textContent).toContain('Готово. Добавлено сессий: 2, блоков: 2,');
+    expect(await repo.listIds('blocks')).toHaveProperty('size', 2);
   });
 
   it('a stop shows its reason and what was added before it', async () => {

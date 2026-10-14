@@ -1,5 +1,5 @@
 import type { ExportBundle, RestoredSetting } from '../data/bundleSchema';
-import { importBundle, type ImportCounts, type ImportPreview, type ImportReport } from '../data/importBundle';
+import { importBundle, reasonText, type ImportCounts, type ImportPreview, type ImportReport } from '../data/importBundle';
 import type { Repository } from '../data/repository';
 import type { Platform } from '../platform';
 import { plural } from '../session/steps';
@@ -24,12 +24,6 @@ export interface RestoreResult {
   report: ImportReport;
   /** Where the copy went; null where there is no database file (web). */
   backupPath: string | null;
-}
-
-/** The text of a rejection (an Error, or the plain string a Tauri command rejects with), without a trailing period. */
-export function reasonText(e: unknown): string {
-  const text = (e instanceof Error ? e.message : String(e)).trim().replace(/\.+$/, '');
-  return text === '' ? 'причина неизвестна' : text;
 }
 
 const counts = (c: ImportCounts): string => thousands(c.imported);

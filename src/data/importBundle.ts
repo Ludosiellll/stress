@@ -76,8 +76,11 @@ const nextTask = (): Promise<void> =>
     setTimeout(resolve, 0);
   });
 
-/** The message of a failed write, without a trailing period (the templates add their own). */
-function reason(e: unknown): string {
+/**
+ * The text of a rejection (an Error, or the plain string a Tauri command rejects with), trimmed and without a
+ * trailing period (the templates add their own); «причина неизвестна» when it is empty.
+ */
+export function reasonText(e: unknown): string {
   const text = (e instanceof Error ? e.message : String(e)).trim().replace(/\.+$/, '');
   return text === '' ? 'причина неизвестна' : text;
 }
@@ -155,7 +158,7 @@ async function rebuildInto(repo: Repository, report: ImportReport): Promise<void
   try {
     await rebuildCaches(repo);
   } catch (e) {
-    const failure = `Уровни и рейтинги не пересчитаны: ${reason(e)}. Записанное сохранено, они пересчитаются при следующем запуске.`;
+    const failure = `Уровни и рейтинги не пересчитаны: ${reasonText(e)}. Записанное сохранено, они пересчитаются при следующем запуске.`;
     report.error = report.error === null ? failure : `${report.error} ${failure}`;
   }
 }
@@ -173,7 +176,7 @@ async function writeBatches<T>(
     try {
       await write(batch);
     } catch (e) {
-      report.error = `${failure}: ${reason(e)}.`;
+      report.error = `${failure}: ${reasonText(e)}.`;
       return false;
     }
     counts.imported += batch.length;
@@ -203,7 +206,7 @@ async function writeHistory(
     } catch (e) {
       report.blocks.failed = 1;
       report.error =
-        `Блок ${String(k + 1)} из ${String(total)} не записан: ${reason(e)}. ` +
+        `Блок ${String(k + 1)} из ${String(total)} не записан: ${reasonText(e)}. ` +
         'Записанное раньше сохранено; запусти восстановление ещё раз — добавленное пропустится.';
       return;
     }
@@ -237,6 +240,6 @@ async function fillSettings(repo: Repository, file: ExportBundle['settings'], re
     await repo.saveSettings(patch);
   } catch (e) {
     report.settingsFilled = [];
-    report.error = `Не удалось записать настройки: ${reason(e)}.`;
+    report.error = `Не удалось записать настройки: ${reasonText(e)}.`;
   }
 }

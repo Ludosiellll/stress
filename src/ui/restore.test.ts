@@ -51,7 +51,7 @@ function recording(repo: Repository, calls: string[]): Repository {
   return new Proxy(repo, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver) as unknown;
-      if (typeof prop !== 'string' || typeof value !== 'function' || !/^(add|save|create|append|end)/.test(prop)) {
+      if (typeof prop !== 'string' || typeof value !== 'function' || !/^(add|save|create|append|finish)/.test(prop)) {
         return typeof value === 'function' ? (value as (...a: unknown[]) => unknown).bind(target) : value;
       }
       return (...args: unknown[]) => {

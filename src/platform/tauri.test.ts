@@ -91,15 +91,29 @@ describe('tauri platform', () => {
     expect(invoke).toHaveBeenCalledWith('backup_now');
   });
 
-  it('backupNow rejects with the command error', async () => {
+  it('backupNow rejects with the command error; an unknown reason passes through unchanged', async () => {
     // invoke rejects with the command's Err string itself, not an Error.
-    invoke.mockRejectedValue('нет файла базы данных C:\\app\\trainer.db');
+    invoke.mockRejectedValue('Отказано в доступе. (os error 5)');
     const failed = createTauriPlatform().backupNow();
     await expect(failed).rejects.toBeInstanceOf(Error);
-    await expect(failed).rejects.toThrow('нет файла базы данных C:\\app\\trainer.db');
+    await expect(failed).rejects.toThrow(/^Отказано в доступе\. \(os error 5\)$/);
     const bridge = new Error('IPC unavailable');
     invoke.mockRejectedValue(bridge);
     await expect(createTauriPlatform().backupNow()).rejects.toBe(bridge);
+  });
+
+  it.each([
+    ['error returned from database: (code: 5) database is locked', 'база занята, попробуй ещё раз через минуту'],
+    ['checkpoint: error returned from database: (code: 5) database is busy', 'база занята, попробуй ещё раз через минуту'],
+    ['database sqlite:trainer.db is not loaded', 'база не открыта — перезапусти приложение'],
+    ['нет файла базы данных C:\\app\\trainer.db', 'файл базы не найден'],
+    ['The system cannot find the file specified. (os error 2)', 'файл базы не найден'],
+    ['No such file or directory (os error 2)', 'файл базы не найден'],
+  ])('backupNow says a known reason in Russian: %s', async (raw, text) => {
+    invoke.mockRejectedValue(raw);
+    await expect(createTauriPlatform().backupNow()).rejects.toThrow(new RegExp(`^${text}$`));
+    invoke.mockRejectedValue(new Error(raw));
+    await expect(createTauriPlatform().backupNow()).rejects.toThrow(new RegExp(`^${text}$`));
   });
 
   it('returns the startup backup status', async () => {

@@ -4,7 +4,7 @@ import { recordHistory } from '../testing/history';
 import { applyMigrations, openSqlJs, sqlJsExecutor } from '../testing/sqlJsExecutor';
 import { parseExportBundle, type ExportBundle } from './bundleSchema';
 import { exportBundle, rebuildCaches } from './export';
-import { IMPORT_CHUNK, importBundle, previewImport, YIELD_EVERY_BLOCKS, type ImportReport } from './importBundle';
+import { IMPORT_CHUNK, importBundle, previewImport, reasonText, YIELD_EVERY_BLOCKS, type ImportReport } from './importBundle';
 import { MemoryRepository } from './memoryRepository';
 import type { Repository } from './repository';
 import { block, item, session, trial } from './repository.contract';
@@ -497,5 +497,18 @@ describe('importBundle', () => {
     await importBundle(new MemoryRepository(), bundleOf({}), { pause, onProgress: (d, t) => progress.push([d, t]) });
     expect(progress).toEqual([[0, 0]]);
     expect(pause).not.toHaveBeenCalled();
+  });
+});
+
+describe('reasonText', () => {
+  it('is the message of an Error or the text of a plain rejection, trimmed, without trailing periods', () => {
+    expect(reasonText(new Error(' disk full. '))).toBe('disk full');
+    expect(reasonText('statement 0: boom...')).toBe('statement 0: boom');
+    expect(reasonText(42)).toBe('42');
+  });
+
+  it('names an empty reason «причина неизвестна»', () => {
+    expect(reasonText(new Error(''))).toBe('причина неизвестна');
+    expect(reasonText(' . ')).toBe('причина неизвестна');
   });
 });

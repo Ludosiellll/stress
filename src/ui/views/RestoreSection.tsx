@@ -1,8 +1,8 @@
 import { useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 import { parseExportBundle, type ExportBundle } from '../../data/bundleSchema';
-import { previewImport, type ImportPreview, type ImportReport } from '../../data/importBundle';
+import { previewImport, reasonText, type ImportPreview, type ImportReport } from '../../data/importBundle';
 import { useApp } from '../AppContext';
-import { previewText, progressText, reasonText, reportLines, RestoreBackupError, runRestore } from '../restore';
+import { previewText, progressText, reportLines, RestoreBackupError, runRestore } from '../restore';
 
 export interface RestoreSectionProps {
   /** Another action of the settings screen runs: choosing a file and «Восстановить» wait. */
@@ -31,6 +31,8 @@ export default function RestoreSection({ busy, onBusy }: RestoreSectionProps) {
   const { repo, platform } = useApp();
   const [state, setState] = useState<State>({ kind: 'idle' });
   const fileInput = useRef<HTMLInputElement>(null);
+  /** A restore is writing (set before the re-render that hides «Восстановить»). */
+  const running = useRef(false);
 
   const readFile = async (e: ChangeEvent<HTMLInputElement>): Promise<void> => {
     const input = e.currentTarget;
@@ -39,19 +41,30 @@ export default function RestoreSection({ busy, onBusy }: RestoreSectionProps) {
     input.value = '';
     if (file === undefined) return;
     setState({ kind: 'reading' });
+    let bundle: ExportBundle;
     try {
       const parsed = parseExportBundle(await file.text());
       if (!parsed.ok) {
         setState({ kind: 'invalid', message: parsed.error });
         return;
       }
-      setState({ kind: 'preview', bundle: parsed.bundle, preview: await previewImport(repo, parsed.bundle) });
+      bundle = parsed.bundle;
     } catch (err) {
       setState({ kind: 'invalid', message: `Не удалось прочитать файл: ${reasonText(err)}.` });
+      return;
+    }
+    // The file is fine here: a failure now is the database's (reading what is already stored).
+    try {
+      setState({ kind: 'preview', bundle, preview: await previewImport(repo, bundle) });
+    } catch (err) {
+      setState({ kind: 'failed', message: `Не удалось сравнить файл с базой: ${reasonText(err)}.` });
     }
   };
 
   const restore = async (bundle: ExportBundle): Promise<void> => {
+    // Two clicks before the screen re-renders (a double click) start one restore.
+    if (running.current) return;
+    running.current = true;
     onBusy(true);
     setState({ kind: 'running', done: 0, total: null });
     try {
@@ -68,6 +81,7 @@ export default function RestoreSection({ busy, onBusy }: RestoreSectionProps) {
       const message = err instanceof RestoreBackupError ? err.message : `Восстановление прервано: ${reasonText(err)}. ${INTERRUPTED_TAIL}`;
       setState({ kind: 'failed', message });
     } finally {
+      running.current = false;
       onBusy(false);
     }
   };

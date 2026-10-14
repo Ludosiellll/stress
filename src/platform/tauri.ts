@@ -33,11 +33,28 @@ export function backupStatus(): Promise<BackupStatus | null> {
   return invoke<BackupStatus>('backup_status');
 }
 
-/** The backup_now command; its Err arrives as a plain string, which becomes the message of an Error. */
+/** Known reasons a backup_now fails for, said in Russian (the command's own text is often sqlx's or the OS's English). */
+const BACKUP_REASONS: readonly (readonly [RegExp, string])[] = [
+  [/is not loaded/, 'база не открыта — перезапусти приложение'],
+  [/database is locked|database table is locked|\bbusy\b/i, 'база занята, попробуй ещё раз через минуту'],
+  [/нет файла базы данных|\(os error 2\)|NotFound|No such file or directory|cannot find the (file|path) specified/i, 'файл базы не найден'],
+];
+
+/** The Russian text of a known backup failure; null for any other reason (shown as it is). */
+export function backupReason(text: string): string | null {
+  return BACKUP_REASONS.find(([pattern]) => pattern.test(text))?.[1] ?? null;
+}
+
+/**
+ * The backup_now command; its Err arrives as a plain string, which becomes the message of an Error — in Russian
+ * for a known reason (backupReason), unchanged otherwise.
+ */
 export async function backupNow(): Promise<string> {
   try {
     return await invoke<string>('backup_now');
   } catch (e) {
+    const known = backupReason(e instanceof Error ? e.message : String(e));
+    if (known !== null) throw new Error(known, { cause: e });
     throw e instanceof Error ? e : new Error(String(e));
   }
 }
