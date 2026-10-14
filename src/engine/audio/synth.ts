@@ -10,7 +10,7 @@ import {
   type StressorLayer,
 } from './stressors';
 
-/** The loop seam: the 50 ms rendered past the end are crossfaded into the first 50 ms. */
+/** The loop seam: the noise rendered 50 ms past the end is crossfaded into its first 50 ms. */
 const SEAM_S = 0.05;
 /** Candidate start points for the noise layers: the one with the smallest step across the seam is used. */
 const LOOP_POINT_SEARCH = 256;
@@ -184,10 +184,11 @@ const RENDER: Record<StressorLayer, (seed: number, sampleRate: number, length: n
 
 /**
  * One mono loop of the given layers, deterministic per seed (`p.gain` is applied at playback).
- * The layers are rendered 50 ms past the loop end and that tail is crossfaded (equal power) into
- * the first 50 ms, so the last sample runs straight on into the first. The noise layers start at
- * the point (within 256 samples) where their own step across that seam is smallest, so the loop
- * closes without a click; beeps and clicks keep their schedule. Peak ≤ 0.9.
+ * The noise layers are rendered 50 ms past the loop end and that tail is crossfaded (equal power) into
+ * their first 50 ms, so the last sample runs straight on into the first. They start at the point
+ * (within 256 samples) where their own step across that seam is smallest, so the loop closes without
+ * a click. Beeps and clicks keep their schedule and are left whole: each ends inside the loop and
+ * starts from zero. Peak ≤ 0.9.
  */
 export function renderStressor(
   p: AudioStressorParams,
@@ -197,7 +198,7 @@ export function renderStressor(
 ): Float32Array<ArrayBuffer> {
   const n = Math.round(sampleRate * seconds);
   const seam = Math.min(n, Math.round(SEAM_S * sampleRate));
-  const mix = new Float64Array(n + seam);
+  const mix = new Float64Array(n);
   const noise = new Float64Array(n + seam + LOOP_POINT_SEARCH);
   for (const layer of STRESSOR_LAYERS) {
     if (!p.layers.includes(layer)) continue;
@@ -211,11 +212,12 @@ export function renderStressor(
     const d = Math.abs((noise[o + n] as number) - (noise[o + n - 1] as number));
     if (d < step) [start, step] = [o, d];
   }
-  for (let i = 0; i < mix.length; i++) mix[i] = (mix[i] as number) + (noise[start + i] as number);
+  // Only the noise is crossfaded: beeps and clicks end inside the loop, and a fade-in would mute a tick at 0.
   for (let i = 0; i < seam; i++) {
     const phase = (Math.PI / 2) * (i / seam);
-    mix[i] = (mix[i] as number) * Math.sin(phase) + (mix[n + i] as number) * Math.cos(phase);
+    noise[start + i] = (noise[start + i] as number) * Math.sin(phase) + (noise[start + n + i] as number) * Math.cos(phase);
   }
+  for (let i = 0; i < n; i++) mix[i] = (mix[i] as number) + (noise[start + i] as number);
   const out = new Float32Array(n);
   let peak = 0;
   for (let i = 0; i < n; i++) peak = Math.max(peak, Math.abs(mix[i] as number));

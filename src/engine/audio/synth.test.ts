@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { STRESSOR_LAYERS, STRESSOR_LOOP_S, STRESSOR_SAMPLE_RATE, beepSchedule, metronomeSchedule, type StressorLayer } from './stressors';
+import { CLICK_MS, STRESSOR_LAYERS, STRESSOR_LOOP_S, STRESSOR_SAMPLE_RATE, beepSchedule, metronomeSchedule, type StressorLayer } from './stressors';
 import { renderStressor } from './synth';
 
 const N = STRESSOR_SAMPLE_RATE * STRESSOR_LOOP_S;
@@ -100,6 +100,17 @@ describe('renderStressor', SLOW, () => {
     }
     expect(total).toBeGreaterThan(0);
     expect(near / total).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it('the metronome tick at 0 is as loud as the others: the seam crossfade leaves it whole (B4)', () => {
+    const seeds = [1, 2, 3, 4, 5, 6, 7, 8].filter((seed) => metronomeSchedule(seed, LOOP_MS).ticks[0] === 0);
+    expect(seeds.length).toBeGreaterThan(0);
+    for (const seed of seeds) {
+      const x = only('metronome', seed);
+      let peak = 0;
+      for (let i = 0; i < sampleOf(CLICK_MS); i++) peak = Math.max(peak, Math.abs(x[i] ?? 0));
+      expect(peak, `seed ${String(seed)}`).toBeCloseTo(0.3, 2);
+    }
   });
 
   it('babble has RMS in [0.04, 0.12] and is modulated: CV of 50 ms window RMS ≥ 0.2', () => {
