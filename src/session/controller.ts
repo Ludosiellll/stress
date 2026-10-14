@@ -4,10 +4,11 @@ import type { LogicItemRow, TrialRow, WellbeingRow } from '../data/rows';
 import { detectFatigue, nextLevel, startLevel } from '../engine/adaptive';
 import { daysBetween } from '../engine/dates';
 import { deriveModuleStates, isCleanBlock } from '../engine/derive';
-import type { DiagnosticResults } from '../engine/diagnostic';
+import { parseResults, type DiagnosticMetrics, type DiagnosticResults } from '../engine/diagnostic';
 import type { Rating } from '../engine/elo';
 import { OVERLOAD_LEVEL_STEP, type ModuleState, type Segment, type SessionPlan } from '../engine/planner';
 import type { BlockTimeline } from '../engine/reaction/types';
+import { readinessOfLatest } from '../engine/readiness';
 import { isReactionModule, type BlockFlag, type FamilyId, type LayoutId, type ModuleId } from '../engine/types';
 import { describeChanges } from '../modules/describe';
 import type { MemoryTrial } from '../modules/memory/generate';
@@ -188,12 +189,15 @@ export class SessionController {
 
   /** What the stored diagnostic blocks add to DiagnosticResults. */
   private readonly diagParts: DiagnosticPart[] = [];
+  /** A diagnostic: the stored ones before it, in order (the readiness note of the done step, W2-R31). */
+  private readonly earlierDiagnostics: DiagnosticMetrics[];
 
   private constructor(
     o: SessionStartOptions,
     scale: number,
     states: Record<ModuleId, ModuleState>,
     ratings: Map<FamilyId, Rating>,
+    earlierDiagnostics: DiagnosticMetrics[],
   ) {
     this.repo = o.repo;
     this.plan = o.plan;
@@ -204,6 +208,7 @@ export class SessionController {
     this.counted = o.plan.kind !== 'diagnostic';
     this.states = states;
     this.ratings = ratings;
+    this.earlierDiagnostics = earlierDiagnostics;
   }
 
   /** Creates the session row and shows the first instruction (or `save_error` if the row cannot be written). */
@@ -213,8 +218,12 @@ export class SessionController {
     if (o.plan.kind === 'diagnostic' && o.plan.diagnosticNumber === undefined) {
       throw new RangeError('a diagnostic plan needs diagnosticNumber');
     }
-    const [states, ratings] = await Promise.all([o.repo.getModuleStates(), o.repo.getRatings()]);
-    const c = new SessionController(o, scale, states, ratings);
+    const [states, ratings, diagnostics] = await Promise.all([
+      o.repo.getModuleStates(),
+      o.repo.getRatings(),
+      o.plan.kind === 'diagnostic' ? o.repo.listDiagnostics() : [],
+    ]);
+    const c = new SessionController(o, scale, states, ratings, diagnostics.flatMap((d) => parseResults(d) ?? []));
     const row = sessionRow(c.sessionId, o.now().toISOString(), o.plan.kind, o.appVersion, o.plan.phase ?? 'none');
     await c.save(
       { what: 'session start', stage: () => 'session_start', onSaved: () => c.enterSegment(0), onAbandon: null },
@@ -583,7 +592,8 @@ export class SessionController {
   private done(diagnostic: DiagnosticResults | null): void {
     let seriesTotal: number | null = null;
     for (const p of this.diagParts) if (p.module === 'numseries') seriesTotal = p.total;
-    this.current = { kind: 'done', sessionId: this.sessionId, diagnostic, seriesTotal };
+    const indexDeferred = diagnostic !== null && readinessOfLatest(this.earlierDiagnostics, diagnostic).deferred;
+    this.current = { kind: 'done', sessionId: this.sessionId, diagnostic, seriesTotal, indexDeferred };
   }
 
   // ---------- blocks ----------

@@ -52,8 +52,12 @@ export type Step =
   /** canAbandon: abandonPending() may drop the unsaved writes (not for the session row itself). */
   | { kind: 'save_error'; message: string; canAbandon: boolean; what: SaveErrorWhat }
   | { kind: 'wellbeing' }
-  /** seriesTotal: number-series items of a diagnostic (for «14 из 20»); null otherwise or if that block was not stored. */
-  | { kind: 'done'; sessionId: string; diagnostic: DiagnosticResults | null; seriesTotal: number | null };
+  /**
+   * seriesTotal: number-series items of a diagnostic (for «14 из 20»); null otherwise or if that block was not stored.
+   * indexDeferred: parts of this diagnostic are their own baseline and count in the readiness index from the next one
+   * (W2-R31); false for training and free sessions.
+   */
+  | { kind: 'done'; sessionId: string; diagnostic: DiagnosticResults | null; seriesTotal: number | null; indexDeferred: boolean };
 
 /**
  * Which writes failed (Ruling R32): `block` — the block itself (skipping drops it as if it was never played);

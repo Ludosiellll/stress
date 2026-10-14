@@ -226,7 +226,7 @@ describe('SessionController — flow', () => {
       'numseries',
       'numseries',
     ]);
-    expect(expectStep(h.c, 'done')).toEqual({ kind: 'done', sessionId: h.c.sessionId, diagnostic: null, seriesTotal: null });
+    expect(expectStep(h.c, 'done')).toEqual({ kind: 'done', sessionId: h.c.sessionId, diagnostic: null, seriesTotal: null, indexDeferred: false });
   });
 
   it('the session row stores the plan phase', async () => {
@@ -1617,6 +1617,28 @@ describe('SessionController — diagnostics', () => {
     expect(pzmrTrials.map((t) => (JSON.parse(t.responseJson) as { practice: boolean }).practice).filter(Boolean)).toHaveLength(5);
     expect((await repo.listSessions())[0]).toMatchObject({ kind: 'diagnostic' });
     expect((await repo.listSessions())[0]?.endedAt).not.toBeNull();
+  });
+
+  it('the done step says when new parts count in the index: first 0.2.0 diagnostic after a 0.1.0 one, not the first ever (W2-R31)', async () => {
+    const play = async (h: Harness): Promise<StepOf<'done'>> => {
+      await drive(h);
+      return expectStep(h.c, 'done');
+    };
+    const first = await play(await begin(planDiagnostic(1), { scale: 0.02 }));
+    expect(first.diagnostic?.memorySpan).not.toBeNull();
+    expect(first.indexDeferred).toBe(false);
+
+    const repo = new MemoryRepository();
+    await repo.createSession(session('w1', '2026-10-01T10:00:00.000Z', { kind: 'diagnostic' }));
+    const w1: DiagnosticResults = { ...EMPTY_METRICS, pzmrMedianRt: 300, szmrMedianRt: 450, gonogoScore: 90, numseriesCorrect: 14, unreliable: [] };
+    await repo.addDiagnostic({ id: 'd1', sessionId: 'w1', number: 1, at: '2026-10-01T10:30:00.000Z', resultsJson: JSON.stringify(w1) });
+    const clock = new Clock();
+    const upgrade = await play(await begin(planDiagnostic(2), { repo, clock, scale: 0.02 }));
+    expect(upgrade.diagnostic?.memorySpan).not.toBeNull();
+    expect(upgrade.indexDeferred).toBe(true);
+    clock.advance(DAY);
+    const second = await play(await begin(planDiagnostic(3), { repo, clock, scale: 0.02 }));
+    expect(second.indexDeferred).toBe(false);
   });
 
   it('gorbov metrics need all three runs completed; series count only inside the total limit', async () => {

@@ -3,6 +3,7 @@ import type { ModuleId, ReactionModuleId } from '../../engine/types';
 import { moduleTitles } from '../../modules/registry';
 import { signedMs, type BlockSummaryView } from '../../session/steps';
 import { decimal } from '../format';
+import { DEFERRED_NOTE } from './ReadinessBlock';
 
 export interface DoneProps {
   /** Results of a diagnostic session; null for training and free sessions. */
@@ -11,6 +12,8 @@ export interface DoneProps {
   seriesTotal: number | null;
   /** Every block summary shown in this session, in order. */
   summaries: readonly BlockSummaryView[];
+  /** Parts of this diagnostic count in the readiness index from the next one (W2-R31). */
+  indexDeferred?: boolean;
   onHome: () => void;
 }
 
@@ -64,7 +67,7 @@ function moduleLines(summaries: readonly BlockSummaryView[]): string[] {
   });
 }
 
-export default function Done({ diagnostic, seriesTotal, summaries, onHome }: DoneProps) {
+export default function Done({ diagnostic, seriesTotal, summaries, indexDeferred = false, onHome }: DoneProps) {
   const lines = moduleLines(summaries);
   return (
     <div className="screen-center done">
@@ -87,6 +90,7 @@ export default function Done({ diagnostic, seriesTotal, summaries, onHome }: Don
           </tbody>
         </table>
       )}
+      {diagnostic !== null && indexDeferred && <p className="muted">{DEFERRED_NOTE}</p>}
       {diagnostic !== null && diagnostic.unreliable.length > 0 && (
         <p className="muted">
           Замер ненадёжен: в блоке были пропуски кадров и после повтора. Значение сохранено и учтено в индексе готовности.

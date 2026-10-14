@@ -98,6 +98,13 @@ describe('Done', () => {
     expect(screen.queryByText(/замер ненадёжен/i)).toBeNull();
   });
 
+  it('says when the new parts of this diagnostic count in the readiness index (W2-R31)', () => {
+    const { rerender } = render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} indexDeferred onHome={vi.fn()} />);
+    expect(screen.getByText('Новые показатели войдут в индекс со следующей диагностики.')).toBeTruthy();
+    rerender(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} onHome={vi.fn()} />);
+    expect(screen.queryByText(/войдут в индекс/)).toBeNull();
+  });
+
   it('diagnostic blocks list no levels (M5); training blocks do', () => {
     const { rerender } = render(
       <Done
