@@ -78,6 +78,10 @@ export class MemoryRepository implements Repository {
     });
   }
 
+  hasBlock(id: string): Promise<boolean> {
+    return Promise.resolve(this.blocks.some((b) => b.id === id));
+  }
+
   addDiagnostic(d: DiagnosticRow): Promise<void> {
     return this.run(() => {
       if (!this.sessions.some((s) => s.id === d.sessionId)) throw new Error(`session ${d.sessionId} not found`);
@@ -106,7 +110,7 @@ export class MemoryRepository implements Repository {
       sortedCopies(
         this.blocks.filter((b) => b.module === module),
         (b) => b.startedAt,
-      ).map((b) => ({ sessionId: b.sessionId, module: b.module, lAfter: b.lAfter, flags: b.flags, startedAt: b.startedAt })),
+      ).map((b) => ({ id: b.id, sessionId: b.sessionId, module: b.module, lAfter: b.lAfter, flags: b.flags, startedAt: b.startedAt })),
     );
   }
 

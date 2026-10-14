@@ -124,11 +124,11 @@ describe('deriveModuleStates', () => {
   it('keeps modules independent and skips sessions without the module', () => {
     const states = deriveModuleStates(
       [ses('s1', day(1)), ses('s2', day(2)), ses('s3', day(3))],
-      [blk('s1', 'schulte', 1, day(1, 9)), blk('s2', 'numseries', 0, day(2, 9)), blk('s3', 'schulte', 2, day(3, 9))],
+      [blk('s1', 'schulte', 1, day(1, 9)), blk('s2', 'gorbov', 3, day(2, 9)), blk('s3', 'schulte', 2, day(3, 9))],
     );
     expect(states.schulte.sessionEndLevels).toEqual([1, 2]);
-    expect(states.numseries.sessionEndLevels).toEqual([0]);
-    expect(states.numseries.lifetimeBlocks).toBe(1);
+    expect(states.gorbov.sessionEndLevels).toEqual([3]);
+    expect(states.gorbov.lifetimeBlocks).toBe(1);
   });
 
   it('orders by instant, not by text, when offsets differ', () => {
@@ -162,6 +162,16 @@ describe('deriveModuleStates', () => {
     const blocks = sessions.map((s) => blk(s.id, 'gorbov', 5, s.startedAt));
     expect(deriveModuleStates(sessions.slice(0, 5), blocks.slice(0, 5)).gorbov.plateau).toBe(false);
     expect(deriveModuleStates(sessions, blocks).gorbov.plateau).toBe(true);
+  });
+
+  it('number series have no level: no end levels and never a plateau, but blocks and dates still count (M9)', () => {
+    const sessions = [1, 2, 3, 4, 5, 6, 7].map((d) => ses(`s${String(d)}`, day(d)));
+    const blocks = sessions.map((s) => blk(s.id, 'numseries', 0, s.startedAt));
+    expect(deriveModuleStates(sessions, blocks).numseries).toEqual({
+      ...defaultModuleState('numseries'),
+      lifetimeBlocks: 7,
+      lastTrainedAt: day(7),
+    });
   });
 
   it('savedHistory, lSaved and plateau agree with savedLevel and isPlateau', () => {

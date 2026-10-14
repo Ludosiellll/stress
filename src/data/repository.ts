@@ -27,6 +27,8 @@ export interface Repository {
    * Rejects when the session is unknown, an id already exists, or a trial/item belongs to another block.
    */
   addBlock(b: BlockRow, trials: readonly TrialRow[], items: readonly LogicItemRow[]): Promise<void>;
+  /** Whether a block with this id is stored (an addBlock retry after a lost reply checks it first, M8). */
+  hasBlock(id: string): Promise<boolean>;
   /** Rejects when the session is unknown. */
   addDiagnostic(d: DiagnosticRow): Promise<void>;
   addWellbeing(w: WellbeingRow): Promise<void>;

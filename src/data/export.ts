@@ -2,12 +2,18 @@ import { deriveModuleStates, deriveRatings, isCountedSession, MODULE_IDS } from 
 import type { Repository } from './repository';
 
 /**
- * Recomputes the caches (module_state, ratings) from history and saves them.
+ * Recomputes the caches (module_state, ratings) from history and saves them. Reads the light block rows of
+ * each module (listBlockLevels), never the full block history (M6).
  * Only counted sessions (isCountedSession: training, free) feed the caches: deriveModuleStates
  * skips other blocks, and logic items are passed on only when their block belongs to a counted session (R19).
  */
 export async function rebuildCaches(repo: Repository): Promise<void> {
-  const [sessions, blocks, items] = await Promise.all([repo.listSessions(), repo.listBlocks(), repo.listLogicItems()]);
+  const [sessions, perModule, items] = await Promise.all([
+    repo.listSessions(),
+    Promise.all(MODULE_IDS.map((m) => repo.listBlockLevels(m))),
+    repo.listLogicItems(),
+  ]);
+  const blocks = perModule.flat();
   const kindBySession = new Map(sessions.map((s) => [s.id, s.kind]));
   const countedBlocks = new Set(
     blocks.filter((b) => {

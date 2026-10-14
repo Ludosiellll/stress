@@ -579,8 +579,17 @@ export class SessionController {
     };
 
     let committed = false;
+    let addTried = false;
     const writes: Write[] = [
-      { label: 'addBlock', run: () => this.repo.addBlock(row, trials, items) },
+      {
+        label: 'addBlock',
+        run: async () => {
+          // A failed reply may come after the commit: a retry first checks whether the block is already there (M8).
+          if (addTried && (await this.repo.hasBlock(id))) return;
+          addTried = true;
+          await this.repo.addBlock(row, trials, items);
+        },
+      },
       {
         label: 'commit',
         run: () => {

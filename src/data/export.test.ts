@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { deriveModuleStates, deriveRatings, MODULE_IDS } from '../engine/derive';
 import { ITEM_TIME_LIMIT_MS } from '../modules/numseries/generate';
 import { NUMSERIES_ITEM_LIMIT_MS } from '../engine/derive';
@@ -95,7 +95,10 @@ describe('rebuildCaches', () => {
     await repo.saveRatings(new Map([['fib', { rating: 5, n: 99 }], ['powers', { rating: 5, n: 99 }]]));
     await repo.saveModuleState({ ...(await repo.getModuleStates()).pzmr, lSaved: 77, lifetimeBlocks: 99 });
 
+    const listBlocks = vi.spyOn(repo, 'listBlocks');
     await rebuildCaches(repo);
+    // M6: the light rows per module are enough; the full history (params, summaries) is never read.
+    expect(listBlocks).not.toHaveBeenCalled();
 
     const sessions = await repo.listSessions();
     const blocks = await repo.listBlocks();
@@ -104,7 +107,8 @@ describe('rebuildCaches', () => {
     const states = await repo.getModuleStates();
     for (const m of MODULE_IDS) expect(states[m]).toEqual(expectedStates[m]);
     expect(states.pzmr.lSaved).toBe(4);
-    expect(states.numseries.sessionEndLevels).toEqual([1, 2]);
+    // M9: number series have no level, so no end levels and never a plateau; their blocks still count.
+    expect(states.numseries).toMatchObject({ sessionEndLevels: [], plateau: false, lifetimeBlocks: 2 });
 
     const nonDiagnostic = items.filter((i) => i.blockId !== 'b3');
     expect(await repo.getRatings()).toEqual(deriveRatings(nonDiagnostic));

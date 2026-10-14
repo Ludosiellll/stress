@@ -1,5 +1,6 @@
 import type { Repository } from '../data/repository';
 import type { DiagnosticRow } from '../data/rows';
+import { MODULE_IDS } from '../engine/derive';
 import { planDiagnostic, type DiagnosticMetrics, type DiagnosticResults } from '../engine/diagnostic';
 import { isDiagnosticDue, planTraining, type SessionPlan } from '../engine/planner';
 import { readiness, type Ability } from '../engine/readiness';
@@ -47,30 +48,53 @@ export function parseResults(row: DiagnosticRow): DiagnosticResults | null {
   }
 }
 
+/** Baseline per metric (M2): the first non-null value across the diagnostics, in order. */
+export function mergedBaseline(results: readonly DiagnosticResults[]): DiagnosticMetrics {
+  const first = <K extends keyof DiagnosticMetrics>(k: K): DiagnosticMetrics[K] => {
+    for (const r of results) {
+      const v = r[k];
+      if (v !== null) return v;
+    }
+    return null;
+  };
+  return {
+    pzmrMedianRt: first('pzmrMedianRt'),
+    szmrMedianRt: first('szmrMedianRt'),
+    gonogoScore: first('gonogoScore'),
+    rdoMeanAbsErrorMs: first('rdoMeanAbsErrorMs'),
+    gorbov: first('gorbov'),
+    numseriesCorrect: first('numseriesCorrect'),
+  };
+}
+
 /**
- * Readiness from the stored diagnostics (first = baseline, last = latest); null until the first one exists.
- * Values marked unreliable still count (they are marked on screen).
+ * Readiness of the latest diagnostic against the merged baseline (each metric from the first diagnostic that
+ * has it); null until the first diagnostic exists. Values marked unreliable still count (they are marked on screen).
  */
 export function readinessOf(diagnostics: readonly DiagnosticRow[]): HomeModel['readiness'] {
   const last = diagnostics[diagnostics.length - 1];
   if (last === undefined) return null;
   const latest = parseResults(last);
   if (latest === null) return { abilities: NO_ABILITIES, overall: null, unreliable: [] };
-  const baseline = parseResults(diagnostics[0] as DiagnosticRow);
-  if (baseline === null) return { abilities: NO_ABILITIES, overall: null, unreliable: [] };
-  return { ...readiness(latest, baseline), unreliable: latest.unreliable };
+  const all = diagnostics.flatMap((d) => parseResults(d) ?? []);
+  return { ...readiness(latest, mergedBaseline(all)), unreliable: latest.unreliable };
 }
 
 /** Everything Home shows, computed from the repository at the given local date (YYYY-MM-DD). */
 export async function loadHomeModel(repo: Repository, today: string): Promise<HomeModel> {
-  const [states, sessions, diagnostics, settings] = await Promise.all([
+  const [states, sessions, diagnostics, settings, blockLevels] = await Promise.all([
     repo.getModuleStates(),
     repo.listSessions(),
     repo.listDiagnostics(),
     repo.getSettings(),
+    Promise.all(MODULE_IDS.map((m) => repo.listBlockLevels(m))),
   ]);
   const last = diagnostics[diagnostics.length - 1];
-  const trainingDays = sessions.flatMap((s) => (s.kind === 'training' && s.endedAt !== null ? [s.endedAt] : []));
+  // A training day counts when its session ended or stored at least one block (M1: an unwritten end loses nothing).
+  const withBlocks = new Set(blockLevels.flat().map((b) => b.sessionId));
+  const trainingDays = sessions.flatMap((s) =>
+    s.kind === 'training' && (s.endedAt !== null || withBlocks.has(s.id)) ? [s.endedAt ?? s.startedAt] : [],
+  );
   // Seeds count every diagnostic ever started, so an abandoned one is not replayed with the same tables (I5).
   const diagnosticsStarted = sessions.filter((s) => s.kind === 'diagnostic').length;
   return {

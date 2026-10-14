@@ -47,10 +47,14 @@ export interface DeriveBlock {
   startedAt: string;
 }
 
+/** Modules without a level (number series are rated by Elo): no end levels, lSaved 0, never a plateau (M9). */
+const LEVELLESS: ReadonlySet<ModuleId> = new Set<ModuleId>(['numseries']);
+
 /**
  * Module states from training and free sessions only (diagnostics never count).
  * A session's end level is lAfter of its last block of the module (by startedAt) without
  * fatigued / timing_unreliable; sessions without such a block add nothing. Ties keep input order.
+ * Number series keep the default state except lifetimeBlocks and lastTrainedAt.
  */
 export function deriveModuleStates(
   sessions: readonly DeriveSession[],
@@ -66,7 +70,7 @@ export function deriveModuleStates(
     const st = states[b.module];
     st.lifetimeBlocks++;
     st.lastTrainedAt = b.startedAt;
-    if (b.flags.some((f) => UNCLEAN_FLAGS.includes(f))) continue;
+    if (LEVELLESS.has(b.module) || b.flags.some((f) => UNCLEAN_FLAGS.includes(f))) continue;
     let perModule = endLevels.get(b.sessionId);
     if (!perModule) {
       perModule = new Map();

@@ -23,8 +23,10 @@ export interface BlockRow {
   summaryJson: string;
 }
 
-/** The columns of a block that level derivation needs (listBlockLevels, R26). */
+/** The columns of a block that level derivation and cache rebuilds need (listBlockLevels, R26). */
 export interface BlockLevelRow {
+  /** The block id (rebuildCaches maps logic items to their session through it, M6). */
+  id: string;
   sessionId: string;
   module: ModuleId;
   lAfter: number;

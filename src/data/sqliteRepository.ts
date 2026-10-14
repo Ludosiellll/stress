@@ -186,6 +186,11 @@ export class SqliteRepository implements Repository {
     });
   }
 
+  async hasBlock(id: string): Promise<boolean> {
+    const rows = await this.db.select<{ one: number }>('SELECT 1 AS one FROM blocks WHERE id = ? LIMIT 1', [id]);
+    return rows.length > 0;
+  }
+
   async addDiagnostic(d: DiagnosticRow): Promise<void> {
     await this.db.execute('INSERT INTO diagnostics (id, session_id, number, at, results_json) VALUES (?, ?, ?, ?, ?)', [
       d.id,
@@ -235,11 +240,12 @@ export class SqliteRepository implements Repository {
   }
 
   async listBlockLevels(module: ModuleId): Promise<BlockLevelRow[]> {
-    const rows = await this.db.select<Pick<BlockDb, 'session_id' | 'module' | 'l_after' | 'flags_json' | 'started_at'>>(
-      'SELECT session_id, module, l_after, flags_json, started_at FROM blocks WHERE module = ? ORDER BY started_at, rowid',
+    const rows = await this.db.select<Pick<BlockDb, 'id' | 'session_id' | 'module' | 'l_after' | 'flags_json' | 'started_at'>>(
+      'SELECT id, session_id, module, l_after, flags_json, started_at FROM blocks WHERE module = ? ORDER BY started_at, rowid',
       [module],
     );
     return rows.map((r) => ({
+      id: r.id,
       sessionId: r.session_id,
       module: r.module as ModuleId,
       lAfter: r.l_after,

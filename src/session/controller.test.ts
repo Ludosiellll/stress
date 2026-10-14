@@ -872,6 +872,31 @@ describe('SessionController — save errors', () => {
     expect((await repo.getModuleStates()).pzmr.lifetimeBlocks).toBe(1);
   });
 
+  it('an addBlock that committed but reported a failure is not written twice on retry (M8)', async () => {
+    class CommitThenThrow extends MemoryRepository {
+      addCalls = 0;
+      hasCalls = 0;
+      override async addBlock(...a: Parameters<MemoryRepository['addBlock']>): Promise<void> {
+        this.addCalls++;
+        await super.addBlock(...a);
+        if (this.addCalls === 1) throw new Error('connection reset after commit');
+      }
+      override async hasBlock(id: string): Promise<boolean> {
+        this.hasCalls++;
+        return super.hasBlock(id);
+      }
+    }
+    const repo = new CommitThenThrow();
+    const h = await begin(planFree('pzmr', 1), { repo });
+    h.c.ackInstruction();
+    await h.c.submitReaction(playTimeline(expectStep(h.c, 'reaction_block').specs, perfectPlayer));
+    expectStep(h.c, 'summary');
+    expect(repo.addCalls).toBe(1);
+    expect(repo.hasCalls).toBe(1);
+    expect(await repo.listBlocks()).toHaveLength(1);
+    expect((await repo.getModuleStates()).pzmr.lifetimeBlocks).toBe(1);
+  });
+
   it('one failure is retried silently', async () => {
     const repo = new FlakyRepo();
     const h = await begin(planFree('pzmr', 1), { repo });

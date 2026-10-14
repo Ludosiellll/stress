@@ -177,6 +177,17 @@ export function repositoryContract(make: () => Promise<Repository>): void {
       expect((await repo.listTrials('b1')).map((x) => x.id)).toEqual(['t1']);
     });
 
+    it('hasBlock tells whether a block id is stored (M8)', async () => {
+      const repo = await make();
+      await repo.createSession(session('s1', T1));
+      expect(await repo.hasBlock('b1')).toBe(false);
+      await repo.addBlock(block('b1', 's1', T1), [trial('t1', 'b1', 0)], []);
+      expect(await repo.hasBlock('b1')).toBe(true);
+      expect(await repo.hasBlock('b2')).toBe(false);
+      await expect(repo.addBlock(block('b2', 's1', T1), [trial('t1', 'b2', 0)], [])).rejects.toThrow();
+      expect(await repo.hasBlock('b2')).toBe(false);
+    });
+
     it('rejects a block of an unknown session', async () => {
       const repo = await make();
       await expect(repo.addBlock(block('b1', 'ghost', T1), [], [])).rejects.toThrow();
@@ -226,9 +237,9 @@ export function repositoryContract(make: () => Promise<Repository>): void {
       await repo.addBlock(block('b2', 's1', T3, { lAfter: 5 }), [], []);
       const rows = await repo.listBlockLevels('pzmr');
       expect(rows).toEqual([
-        { sessionId: 's1', module: 'pzmr', lAfter: 4, flags: ['calibration'], startedAt: T1 },
-        { sessionId: 's2', module: 'pzmr', lAfter: 9, flags: ['timing_unreliable'], startedAt: T3 },
-        { sessionId: 's1', module: 'pzmr', lAfter: 5, flags: [], startedAt: T3 },
+        { id: 'b1', sessionId: 's1', module: 'pzmr', lAfter: 4, flags: ['calibration'], startedAt: T1 },
+        { id: 'b3', sessionId: 's2', module: 'pzmr', lAfter: 9, flags: ['timing_unreliable'], startedAt: T3 },
+        { id: 'b2', sessionId: 's1', module: 'pzmr', lAfter: 5, flags: [], startedAt: T3 },
       ]);
       rows[0]?.flags.push('fatigued');
       expect((await repo.listBlockLevels('pzmr'))[0]?.flags).toEqual(['calibration']);
