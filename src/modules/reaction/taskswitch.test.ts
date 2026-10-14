@@ -126,10 +126,27 @@ describe('taskswitch.generateBlock', () => {
 
   it('switch positions are shuffled and the first rule is random', () => {
     const p = taskswitch.params(0);
-    const block = taskswitch.generateBlock(p, createRng(2), 'keyboard', 40);
-    const flags = block.slice(1).map((t) => t.cond === 'switch');
-    expect(flags.filter(Boolean)).toHaveLength(8);
-    expect(flags.slice(0, 8).every(Boolean)).toBe(false);
+    const seeds = 400;
+    // Trials 1…39 of 40: round(0.2 · 39) = 8 switches each.
+    const patterns = Array.from({ length: seeds }, (_, seed) =>
+      taskswitch
+        .generateBlock(p, createRng(seed), 'keyboard', 40)
+        .slice(1)
+        .map((t) => t.cond === 'switch'),
+    );
+    for (const flags of patterns) {
+      expect(flags.filter(Boolean)).toHaveLength(8);
+      expect(flags.slice(0, 8).every(Boolean)).toBe(false);
+      expect(flags.slice(-8).every(Boolean)).toBe(false);
+    }
+    // A rotation or another fixed layout gives few distinct patterns; a shuffle almost never repeats one.
+    expect(new Set(patterns.map((f) => f.map(Number).join(''))).size).toBeGreaterThanOrEqual(seeds - 2);
+    // Each of the 39 positions is a switch in 8/39 of the blocks: 82 ± 5σ (σ ≈ 8).
+    for (let i = 0; i < 39; i++) {
+      const count = patterns.filter((f) => f[i]).length;
+      expect(count, `position ${String(i + 1)}`).toBeGreaterThanOrEqual(42);
+      expect(count, `position ${String(i + 1)}`).toBeLessThanOrEqual(122);
+    }
     const firstRule = (seed: number): SwitchRule => sw(taskswitch.generateBlock(p, createRng(seed), 'keyboard')[0] as TrialSpec).rule;
     const firstRules = new Set(Array.from({ length: 40 }, (_, seed) => firstRule(seed)));
     expect([...firstRules].sort()).toEqual(['color', 'shape']);

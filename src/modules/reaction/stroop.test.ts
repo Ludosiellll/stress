@@ -108,11 +108,26 @@ describe('stroop.generateBlock', () => {
     expect([...wordsOnRed].sort()).toEqual(['blue', 'green', 'yellow']);
   });
 
-  it('incongruent positions are shuffled', () => {
-    const block = stroop.generateBlock(stroop.params(0), createRng(2), 'keyboard', 40);
-    const flags = block.map((t) => t.cond === 'incongruent');
-    expect(flags.slice(0, 20).every(Boolean)).toBe(false);
-    expect(flags.filter(Boolean)).toHaveLength(20);
+  it('incongruent positions are shuffled: they vary with the seed, never a run at either end, every position equally often', () => {
+    const n = 40;
+    const seeds = 400;
+    const patterns = Array.from({ length: seeds }, (_, seed) =>
+      stroop.generateBlock(stroop.params(0), createRng(seed), 'keyboard', n).map((t) => t.cond === 'incongruent'),
+    );
+    const k = 20; // ratio 0.5 at L 0
+    for (const flags of patterns) {
+      expect(flags.filter(Boolean)).toHaveLength(k);
+      expect(flags.slice(0, k).every(Boolean)).toBe(false);
+      expect(flags.slice(n - k).every(Boolean)).toBe(false);
+    }
+    // A rotation or another fixed layout gives few distinct patterns; a shuffle almost never repeats one.
+    expect(new Set(patterns.map((f) => f.map(Number).join(''))).size).toBeGreaterThanOrEqual(seeds - 2);
+    // Each position is incongruent in about half of the blocks: 200 ± 5σ (σ = 10).
+    for (let i = 0; i < n; i++) {
+      const count = patterns.filter((f) => f[i]).length;
+      expect(count, `position ${String(i)}`).toBeGreaterThanOrEqual(150);
+      expect(count, `position ${String(i)}`).toBeLessThanOrEqual(250);
+    }
   });
 
   it('minCondTrials: the smaller of the congruent and incongruent counts, whatever the seed', () => {
