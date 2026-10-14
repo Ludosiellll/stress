@@ -206,7 +206,9 @@ function drawRdo(
 export interface CanvasRenderer extends StimulusRenderer {
   /** Visual noise on or off from the next draw; a renderer made without noise stays plain. */
   setNoiseActive(on: boolean): void;
-  /** Once per frame: noise time moves on (counted from the first call); redraws only when the noise looks different. */
+  /** Before a frame's transitions: noise time moves on (counted from the first call); draws nothing. */
+  beginFrame(ts: number): void;
+  /** Once per frame, after its transitions: noise time moves on; redraws only when the noise looks different. */
   frame(ts: number): void;
 }
 
@@ -245,6 +247,11 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement, o: CanvasRendere
   let noiseMs = 0;
   /** The noise as the last draw painted it. */
   let drawnLook: NoiseLook | null = null;
+
+  const setNoiseTime = (ts: number): void => {
+    noiseStart ??= ts;
+    noiseMs = ts - noiseStart;
+  };
 
   const noiseLook = (): NoiseLook | null =>
     noise === null || !noiseOn ? null : { flicker: flickerOn(noise.params, noiseMs), slots: noiseSlots(noise.params, noiseMs) };
@@ -314,9 +321,9 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement, o: CanvasRendere
     setNoiseActive(on) {
       noiseOn = on;
     },
+    beginFrame: setNoiseTime,
     frame(ts) {
-      noiseStart ??= ts;
-      noiseMs = ts - noiseStart;
+      setNoiseTime(ts);
       if (!sameLook(noiseLook(), drawnLook)) draw();
     },
   };

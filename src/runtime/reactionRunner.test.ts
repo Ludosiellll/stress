@@ -683,14 +683,19 @@ describe('ReactionBlockRunner: per-trial and per-frame callbacks', () => {
     expect(hide1).toBe(clock.firstFrameAtOrAfter((end.timeline.onsets[1] as number) + 300));
   });
 
-  it('calls renderer.frame on every frame, after that frame’s transitions', async () => {
+  it('calls renderer.beginFrame before and renderer.frame after every frame’s transitions', async () => {
     const clock = new FakeClock();
     const log: string[] = [];
+    const begun: number[] = [];
     const frames: number[] = [];
     const renderer: StimulusRenderer = {
       show: () => log.push('show'),
       hide: () => log.push('hide'),
       tick: () => undefined,
+      beginFrame: (ts) => {
+        begun.push(ts);
+        log.push('begin');
+      },
       frame: (ts) => {
         frames.push(ts);
         log.push('frame');
@@ -700,10 +705,11 @@ describe('ReactionBlockRunner: per-trial and per-frame callbacks', () => {
     const done = runner.start();
     clock.runOut();
     expect((await done).kind).toBe('done');
+    expect(begun).toEqual(clock.frames);
     expect(frames).toEqual(clock.frames);
-    // ISI 0: the first frame shows the stimulus, then draws the frame.
-    expect(log.slice(0, 2)).toEqual(['show', 'frame']);
-    expect(log.filter((op) => op !== 'frame')).toEqual(['show', 'hide', 'show', 'hide']);
+    // ISI 0: the first frame moves the background time on, shows the stimulus, then draws the frame.
+    expect(log.slice(0, 3)).toEqual(['begin', 'show', 'frame']);
+    expect(log.filter((op) => op !== 'frame' && op !== 'begin')).toEqual(['show', 'hide', 'show', 'hide']);
   });
 
   it('an abort from inside onTrial stays aborted', async () => {

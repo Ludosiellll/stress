@@ -165,14 +165,21 @@ describe('instrumentBlock', () => {
     expect(() => instrumentBlock(hooks, 'pzmr', [spec('Space')], b).renderer.cue?.(stimulus)).not.toThrow();
   });
 
-  it('instrumentBlock forwards frame', () => {
+  it('instrumentBlock forwards beginFrame and frame', () => {
     const b = base();
+    const beginFrame = vi.fn<NonNullable<StimulusRenderer['beginFrame']>>();
     const frame = vi.fn<NonNullable<StimulusRenderer['frame']>>();
     const hooks = installE2eHooks(host('?e2e=1'));
-    const out = instrumentBlock(hooks, 'pomeh', [spec('Space')], { clock: b.clock, renderer: { ...b.renderer, frame } });
+    const out = instrumentBlock(hooks, 'pomeh', [spec('Space')], { clock: b.clock, renderer: { ...b.renderer, beginFrame, frame } });
+    out.renderer.beginFrame?.(1200);
     out.renderer.frame?.(1234);
+    expect(beginFrame).toHaveBeenCalledWith(1200);
     expect(frame).toHaveBeenCalledWith(1234);
-    // A renderer without frame: forwarding is a no-op.
-    expect(() => instrumentBlock(hooks, 'pzmr', [spec('Space')], b).renderer.frame?.(1)).not.toThrow();
+    // A renderer without them: forwarding is a no-op.
+    const plain = instrumentBlock(hooks, 'pzmr', [spec('Space')], b).renderer;
+    expect(() => {
+      plain.beginFrame?.(1);
+      plain.frame?.(1);
+    }).not.toThrow();
   });
 });

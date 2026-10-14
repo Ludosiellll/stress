@@ -17,6 +17,12 @@ export interface StimulusRenderer {
    * be seen (frame ts − onset + presentation lead; the lead alone on the onset frame).
    */
   tick(elapsedMs: number): void;
+  /**
+   * Called once per frame of the block, before that frame's transitions, with its timestamp: the background
+   * (visual noise) moves to this frame's time, so a stimulus shown in it is drawn once, over the right background.
+   * Draws nothing.
+   */
+  beginFrame?(ts: number): void;
   /** Called once per frame of the block, after that frame's transitions (background animation: visual noise). */
   frame?(ts: number): void;
 }
@@ -119,8 +125,8 @@ function validate(o: RunnerOptions): void {
  *   onset frame is judged against it: dropped if its own delta is longer than 1.5 × frameMs. An onset in the first
  *   frame has no delta and is never dropped.
  * - RDO frames are drawn ahead by the presentation lead (see RunnerOptions); nothing else uses the lead.
- * - Background layers (visual noise): `onTrial(i)` when the wait for trial i begins, `renderer.frame(ts)` in every
- *   frame after its transitions. Neither changes an onset or a press time.
+ * - Background layers (visual noise): `onTrial(i)` when the wait for trial i begins, `renderer.beginFrame(ts)` in
+ *   every frame before its transitions and `renderer.frame(ts)` after them. None changes an onset or a press time.
  * - `abort()` stops the loop and hides the stimulus; if the renderer throws, `start()` rejects with that error.
  * - No I/O: the timeline lives in memory until `start()` resolves.
  */
@@ -198,6 +204,7 @@ export class ReactionBlockRunner {
     if (before.kind === 'finished') return;
     this.measureFrame(ts);
     try {
+      this.renderer.beginFrame?.(ts);
       this.advance(ts);
       this.renderer.frame?.(ts);
     } catch (err) {

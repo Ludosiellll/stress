@@ -3,7 +3,10 @@ import { NOISE_EXCLUSION_RADIUS, noiseFrame, type VisualNoiseParams } from '../e
 import type { ColorId, ShapeId, Stimulus } from '../engine/reaction/types';
 import { stressorsOf } from '../modules/reaction/common';
 import { STROOP_COLORS, stroop } from '../modules/reaction/stroop';
+import { pomeh } from '../modules/reaction/pomeh';
+import { FakeClock, FRAME } from '../testing/fakeClock';
 import { BACKGROUND, COLORS, FLICKER_BACKGROUND, createCanvasRenderer, polarPoint, rdoAngleAt } from './canvasRenderer';
+import { ReactionBlockRunner } from './reactionRunner';
 
 interface Call {
   name: string;
@@ -398,6 +401,44 @@ describe('createCanvasRenderer', () => {
         });
       }
       expect([...seen].sort()).toEqual(['circle', 'diamond', 'hexagon', 'square', 'star', 'triangle']);
+    });
+
+    it('driven by the runner, an onset frame is drawn once, with that frame\'s noise (high L: figures change every frame)', async () => {
+      const params = pomeh.params(36).noise;
+      expect(params.lifetimeMs / params.distractors).toBeLessThan(FRAME);
+      const { renderer, calls } = setup({ noise: { params, seed: SEED } });
+      renderer.setNoiseActive(true);
+      const specs = [500, 700, 300, 900].map((isiMs) => ({
+        isiMs,
+        windowMs: 200,
+        stimulus: RED_CIRCLE,
+        expected: { kind: 'press' as const, key: 'Space' as const },
+      }));
+      const clock = new FakeClock();
+      const runner = new ReactionBlockRunner({ specs, clock, renderer, nominalFrameMs: FRAME });
+      const done = runner.start();
+      const draws = new Map<number, Call[][]>();
+      while (clock.hasPending) {
+        const from = calls.length;
+        clock.step();
+        // One draw = one background fill and what follows it.
+        const frame: Call[][] = [];
+        for (const c of calls.slice(from)) {
+          if (c.name === 'fillRect') frame.push([]);
+          else frame.at(-1)?.push(c);
+        }
+        draws.set(clock.now, frame);
+      }
+      const end = await done;
+      if (end.kind !== 'done') throw new Error('expected done');
+      const t0 = clock.frames[0] as number;
+      expect(end.timeline.onsets).toHaveLength(4);
+      for (const onset of end.timeline.onsets) {
+        const frame = draws.get(onset) ?? [];
+        expect(frame, `onset ${String(onset)}`).toHaveLength(1);
+        const figures = noiseFrame(params, SEED, onset - t0, BOX).map((d) => COLORS[d.color]);
+        expect(named(frame[0] ?? [], 'fill').map((c) => c.fillStyle)).toEqual([...figures, COLORS.red]);
+      }
     });
 
     it('a canvas of zero size draws no noise; without noise options nothing changes', () => {
