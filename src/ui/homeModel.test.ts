@@ -125,18 +125,26 @@ describe('loadHomeModel', () => {
     // No module has 3 blocks yet: the plan has no finisher, and the reason does not promise one.
     expect(m.plan.segments.some((s) => s.purpose === 'finisher')).toBe(false);
     expect(m.phaseWhy).toBe('До теста 20 дн.: модули реакции по 6 мин.');
-    expect(m.daysToTest).toBe(20);
+    // The reason already counts the days: no second countdown under the plan.
+    expect(m.testLine).toBeNull();
 
-    // A date in the past is ignored by the phase; the line under the plan keeps W1's «0 дн.».
+    // A date far off: the reason does not mention it, the line under the plan does.
+    await repo.saveSettings({ testDate: '2026-11-23' });
+    m = await loadHomeModel(repo, TODAY);
+    expect(m.phase).toMatchObject({ phase: 'base', reason: 'calibration', daysToTest: 40 });
+    expect(m.testLine).toBe('До теста: 40 дн.');
+
+    // A date in the past is ignored by the phase, and the line under the plan asks to update it.
     await repo.saveSettings({ testDate: '2026-10-13' });
     m = await loadHomeModel(repo, TODAY);
     expect(m.phase).toMatchObject({ phase: 'base', reason: 'calibration', daysToTest: null });
-    expect(m.daysToTest).toBe(0);
+    expect(m.testLine).toBe('Дата теста прошла — обнови её в настройках.');
 
     await repo.saveSettings({ testDate: '2026-10-19' });
     m = await loadHomeModel(repo, TODAY);
     expect(m.phase).toMatchObject({ phase: 'taper', daysToTest: 5 });
     expect(m.plan.phase).toBe('taper');
+    expect(m.testLine).toBeNull();
     expect(m.hints).toHaveLength(2);
     expect(m.rehearsalDue).toBe(true);
 

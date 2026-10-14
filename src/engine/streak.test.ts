@@ -1,6 +1,6 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { computeStreak, daysUntil } from './streak';
+import { computeStreak } from './streak';
 
 describe('computeStreak', () => {
   it('counts consecutive days ending yesterday when today is absent', () => {
@@ -50,21 +50,5 @@ describe('computeStreak', () => {
       }),
       { numRuns: 1000 },
     );
-  });
-});
-
-describe('daysUntil', () => {
-  it('is null for no test date', () => {
-    expect(daysUntil(null, '2026-10-14')).toBeNull();
-  });
-  it('counts days to the test', () => {
-    expect(daysUntil('2026-11-14', '2026-10-14')).toBe(31);
-    expect(daysUntil('2026-10-14', '2026-10-14')).toBe(0);
-  });
-  it('a past date clamps to 0', () => {
-    expect(daysUntil('2026-10-01', '2026-10-14')).toBe(0);
-  });
-  it('works across the spring DST change', () => {
-    expect(daysUntil('2026-03-30', '2026-03-28')).toBe(2);
   });
 });

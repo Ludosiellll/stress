@@ -1,4 +1,4 @@
-import { localDayNumber, signedDaysBetween } from './dates';
+import { localDayNumber } from './dates';
 
 /**
  * Consecutive training days ending today (if trained today) or yesterday (if not); 0 otherwise.
@@ -14,10 +14,4 @@ export function computeStreak(trainingDatesIso: readonly string[], todayIso: str
     cursor--;
   }
   return streak;
-}
-
-/** Days left until the selection test; null without a date, 0 once it has passed. */
-export function daysUntil(testDateIso: string | null, todayIso: string): number | null {
-  if (testDateIso === null) return null;
-  return Math.max(0, signedDaysBetween(todayIso, testDateIso));
 }

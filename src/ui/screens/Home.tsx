@@ -144,7 +144,7 @@ export default function Home({ onStart, onFree, onProgress, onSettings }: HomePr
       <ReadinessBlock readiness={model.readiness} />
       <section aria-label="Серия и дата теста">
         <p>Серия: {model.streak} дн.</p>
-        {model.daysToTest !== null && <p>До теста: {model.daysToTest} дн.</p>}
+        {model.testLine !== null && <p>{model.testLine}</p>}
       </section>
     </div>
   );

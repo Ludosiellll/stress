@@ -73,9 +73,16 @@ describe('Home without history', () => {
 
   it('shows days to the test when a date is set', async () => {
     const repo = new MemoryRepository();
+    await repo.saveSettings({ testDate: localDate(daysFromNow(40)) });
+    await renderHome(repo);
+    expect(screen.getByText('До теста: 40 дн.')).toBeTruthy();
+  });
+
+  it('counts the days once when the phase reason already does', async () => {
+    const repo = new MemoryRepository();
     await repo.saveSettings({ testDate: localDate(daysFromNow(10)) });
     await renderHome(repo);
-    expect(screen.getByText('До теста: 10 дн.')).toBeTruthy();
+    expect(screen.getAllByText(/До теста/)).toHaveLength(1);
     expect(screen.getByText('Фаза: перегрузка')).toBeTruthy();
     // Nothing is calibrated yet: no finisher in the plan, none in the reason.
     expect(screen.getByText('До теста 10 дн.: модули реакции по 6 мин.')).toBeTruthy();
@@ -107,7 +114,16 @@ describe('Home without history', () => {
     await renderHome(repo);
     expect(screen.getByText('Фаза: подводка')).toBeTruthy();
     expect(screen.getByText('Сегодня тест: объём меньше на 40 %, без финишера и новых модулей.')).toBeTruthy();
-    expect(screen.queryByText(/До теста 0 дн\./)).toBeNull();
+    expect(screen.queryByText(/До теста/)).toBeNull();
+  });
+
+  it('a past test date asks to update it instead of counting 0 days', async () => {
+    const repo = new MemoryRepository();
+    await repo.saveSettings({ testDate: localDate(daysFromNow(-3)) });
+    await renderHome(repo);
+    expect(screen.getByText('Дата теста прошла — обнови её в настройках.')).toBeTruthy();
+    expect(screen.queryByText(/До теста/)).toBeNull();
+    expect(screen.getByText('Фаза: база')).toBeTruthy();
   });
 });
 
@@ -359,12 +375,12 @@ describe('Home day change', () => {
   it('recomputes the date when the window gets focus after midnight', async () => {
     vi.useFakeTimers({ toFake: ['Date'], now: new Date(2026, 9, 14, 23, 50) });
     const repo = new MemoryRepository();
-    await repo.saveSettings({ testDate: '2026-10-24' });
+    await repo.saveSettings({ testDate: '2026-11-23' });
     await renderHome(repo);
-    expect(screen.getByText('До теста: 10 дн.')).toBeTruthy();
+    expect(screen.getByText('До теста: 40 дн.')).toBeTruthy();
     vi.setSystemTime(new Date(2026, 9, 15, 0, 10));
     fireEvent.focus(window);
-    await screen.findByText('До теста: 9 дн.');
+    await screen.findByText('До теста: 39 дн.');
   });
 });
 

@@ -68,7 +68,8 @@ test('a test date in 20 days shows the overload phase on Home', async ({ page })
   await page.getByRole('button', { name: 'Назад' }).click();
   await expect(page.getByText('Фаза: перегрузка')).toBeVisible();
   await expect(page.getByText('До теста 20 дн.: модули реакции по 6 мин.')).toBeVisible();
-  await expect(page.getByText('До теста: 20 дн.')).toBeVisible();
+  // The reason counts the days, so there is no second countdown under the plan.
+  await expect(page.getByText(/До теста/)).toHaveCount(1);
   // No module has 3 blocks yet, so there is no finisher; the reaction segments are 6 minutes long.
   await expect(page.getByRole('list', { name: 'План на сегодня' }).getByRole('listitem')).toHaveText([
     'ПЗМР — 2 мин',

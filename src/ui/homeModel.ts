@@ -1,5 +1,6 @@
 import type { Repository } from '../data/repository';
 import type { DiagnosticRow } from '../data/rows';
+import { signedDaysBetween } from '../engine/dates';
 import { MODULE_IDS } from '../engine/derive';
 import { parseResults, planDiagnostic } from '../engine/diagnostic';
 import { BASE_DAYS, CALIBRATION_BLOCKS, currentPhase, firstSessionAt, type PhaseId, type PhaseInfo } from '../engine/phases';
@@ -14,7 +15,7 @@ import {
 } from '../engine/planner';
 import { readinessOfLatest, type Ability, type Readiness } from '../engine/readiness';
 import { hashString } from '../engine/rng';
-import { computeStreak, daysUntil } from '../engine/streak';
+import { computeStreak } from '../engine/streak';
 import type { ReactionModuleId } from '../engine/types';
 import { moduleTitles } from '../modules/registry';
 import { budgetMinutes } from './format';
@@ -29,8 +30,8 @@ export interface HomeModel {
    */
   readiness: (Readiness & { unreliable: ReactionModuleId[] }) | null;
   streak: number;
-  /** As in W1: 0 once the date has passed (the phase ignores a past date). */
-  daysToTest: number | null;
+  /** The line about the test date under the plan; null without a date or when the phase reason counts the days. */
+  testLine: string | null;
   phase: PhaseInfo;
   phaseTitle: string;
   phaseWhy: string;
@@ -104,6 +105,20 @@ export function phaseTexts(p: PhaseInfo, plan: Pick<SessionPlan, 'segments'>): {
   return { title: PHASE_TITLES[p.phase], why, hints: p.phase === 'taper' ? [...TAPER_HINTS] : [] };
 }
 
+const PAST_TEST_DATE = 'Дата теста прошла — обнови её в настройках.';
+
+/**
+ * The countdown under the plan. The phase ignores a past date, so instead of «0 дн.» it asks to update the date;
+ * in the phases whose reason already says how many days are left the line is left out.
+ */
+export function testLine(testDate: string | null, today: string, p: PhaseInfo): string | null {
+  if (testDate === null) return null;
+  const days = signedDaysBetween(today, testDate);
+  if (days < 0) return PAST_TEST_DATE;
+  if (p.reason === 'taper' || p.reason === 'test_soon') return null;
+  return `До теста: ${String(days)} дн.`;
+}
+
 const OVERLOAD_SUFFIX: Record<NonNullable<Segment['overload']>, string> = {
   finisher: ' — финишер с перегрузкой',
   mix: ' — с блоками перегрузки (плато)',
@@ -141,7 +156,7 @@ export async function loadHomeModel(repo: Repository, today: string): Promise<Ho
     diagnosticPlan: planDiagnostic(diagnostics.length + 1, diagnosticsStarted + 1),
     readiness: readinessOf(diagnostics),
     streak: computeStreak(trainingDays, today),
-    daysToTest: daysUntil(settings.testDate, today),
+    testLine: testLine(settings.testDate, today, phase),
     phase,
     phaseTitle: texts.title,
     phaseWhy: texts.why,
