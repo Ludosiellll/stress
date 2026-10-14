@@ -1,0 +1,3 @@
+# sqlx stores a checksum of each applied migration and refuses a changed file;
+# keep migration bytes identical on every checkout (Windows CI included).
+src-tauri/migrations/*.sql text eol=lf

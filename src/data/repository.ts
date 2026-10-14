@@ -1,0 +1,75 @@
+import type { Rating } from '../engine/elo';
+import type { ModuleState } from '../engine/planner';
+import type { FamilyId, ModuleId } from '../engine/types';
+import type {
+  BlockRow,
+  DiagnosticRow,
+  LogicItemRow,
+  LogRow,
+  SessionRow,
+  Settings,
+  TrialRow,
+  WellbeingRow,
+} from './rows';
+
+/**
+ * Local store (§8.1). History rows are append-only: inserting an existing id rejects.
+ * Lists are ordered by the documented key, ties in insertion order. Returned values are
+ * copies: mutating them never changes what is stored.
+ */
+export interface Repository {
+  createSession(s: SessionRow): Promise<void>;
+  /** Sets endedAt; an unknown id is a no-op. */
+  finishSession(id: string, endedAt: string): Promise<void>;
+  /**
+   * One transaction: the block, its trials and logic items are all stored or none is.
+   * Rejects when the session is unknown, an id already exists, or a trial/item belongs to another block.
+   */
+  addBlock(b: BlockRow, trials: readonly TrialRow[], items: readonly LogicItemRow[]): Promise<void>;
+  /** Rejects when the session is unknown. */
+  addDiagnostic(d: DiagnosticRow): Promise<void>;
+  addWellbeing(w: WellbeingRow): Promise<void>;
+  /** By startedAt. */
+  listSessions(): Promise<SessionRow[]>;
+  /** By startedAt. */
+  listBlocks(): Promise<BlockRow[]>;
+  /** Trials of one block by idx. */
+  listTrials(blockId: string): Promise<TrialRow[]>;
+  /** By at. */
+  listLogicItems(): Promise<LogicItemRow[]>;
+  /** By number. */
+  listDiagnostics(): Promise<DiagnosticRow[]>;
+  /** By date. */
+  listWellbeing(): Promise<WellbeingRow[]>;
+  /** Cache (rebuildable from history): every module, defaults where nothing was saved. */
+  getModuleStates(): Promise<Record<ModuleId, ModuleState>>;
+  saveModuleState(s: ModuleState): Promise<void>;
+  /** Cache (rebuildable from history): only families that have a saved rating. */
+  getRatings(): Promise<Map<FamilyId, Rating>>;
+  /** Replaces the whole ratings cache with the given map (families not in it are dropped). */
+  saveRatings(r: ReadonlyMap<FamilyId, Rating>): Promise<void>;
+  /** Defaults: keyboard, null, null. */
+  getSettings(): Promise<Settings>;
+  /** Writes only the given keys. */
+  saveSettings(p: Partial<Settings>): Promise<void>;
+  /** Keeps the newest LOG_LIMIT entries (by insertion). */
+  appendLog(e: LogRow): Promise<void>;
+  /** Newest first, at most `limit` entries. */
+  listLog(limit: number): Promise<LogRow[]>;
+}
+
+export const LOG_LIMIT = 500;
+
+export const DEFAULT_SETTINGS: Readonly<Settings> = { layout: 'keyboard', testDate: null, lastSelfCheckJson: null };
+
+export const SETTINGS_KEYS: readonly (keyof Settings)[] = ['layout', 'testDate', 'lastSelfCheckJson'];
+
+/** Trials and logic items must belong to the block they are saved with. */
+export function assertBlockPayload(b: BlockRow, trials: readonly TrialRow[], items: readonly LogicItemRow[]): void {
+  for (const t of trials) {
+    if (t.blockId !== b.id) throw new Error(`trial ${t.id} belongs to block ${t.blockId}, not ${b.id}`);
+  }
+  for (const i of items) {
+    if (i.blockId !== b.id) throw new Error(`logic item ${i.id} belongs to block ${i.blockId}, not ${b.id}`);
+  }
+}

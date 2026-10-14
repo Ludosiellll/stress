@@ -1,0 +1,80 @@
+import type { BlockFlag, FamilyId, LayoutId, ModuleId, SessionKind } from '../engine/types';
+
+/** History rows are append-only (§8.1); `finishSession` is the only update. IDs are UUID v4, dates ISO strings. */
+export interface SessionRow {
+  id: string;
+  startedAt: string;
+  endedAt: string | null;
+  kind: SessionKind;
+  phase: string;
+  appVersion: string;
+}
+
+export interface BlockRow {
+  id: string;
+  sessionId: string;
+  module: ModuleId;
+  lBefore: number;
+  lAfter: number;
+  paramsJson: string;
+  score: number;
+  flags: BlockFlag[];
+  startedAt: string;
+  summaryJson: string;
+}
+
+export interface TrialRow {
+  id: string;
+  blockId: string;
+  idx: number;
+  stimulusJson: string;
+  responseJson: string;
+  onsetTs: number | null;
+  responseTs: number | null;
+  rtMs: number | null;
+  outcome: string;
+  frameDropped: boolean;
+}
+
+export interface LogicItemRow {
+  id: string;
+  blockId: string;
+  family: FamilyId;
+  seed: number;
+  difficulty: number;
+  answer: number;
+  given: number | null;
+  correct: boolean;
+  timeMs: number;
+  at: string;
+}
+
+export interface DiagnosticRow {
+  id: string;
+  sessionId: string;
+  number: number;
+  at: string;
+  resultsJson: string;
+}
+
+export interface WellbeingRow {
+  id: string;
+  date: string;
+  sleepH: number;
+  caffeine: boolean;
+  mood: 1 | 2 | 3 | 4 | 5;
+}
+
+export interface LogRow {
+  id: string;
+  at: string;
+  level: 'error' | 'warn' | 'info';
+  message: string;
+  detail: string;
+}
+
+export interface Settings {
+  layout: LayoutId;
+  testDate: string | null;
+  lastSelfCheckJson: string | null;
+}
