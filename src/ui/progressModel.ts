@@ -76,6 +76,36 @@ export function durationText(startedAt: string, endedAt: string | null): string 
   return minutes < 1 ? 'меньше минуты' : `${String(minutes)} мин`;
 }
 
+/** How many times each key occurs. */
+function count<T>(keys: readonly T[]): Map<T, number> {
+  const m = new Map<T, number>();
+  for (const k of keys) m.set(k, (m.get(k) ?? 0) + 1);
+  return m;
+}
+
+/**
+ * x labels of the diagnostics: «№2». A number two diagnostics share (after a restore merge) gets the local date,
+ * «№1 (05.10)», and the time too when they share the day, «№1 (01.10 09:30)», so no label shows twice.
+ */
+function diagnosticLabels(rows: readonly DiagnosticRow[]): string[] {
+  const numbers = count(rows.map((r) => r.number));
+  const day = (iso: string): string => {
+    const d = new Date(iso);
+    return `${two(d.getDate())}.${two(d.getMonth() + 1)}`;
+  };
+  const time = (iso: string): string => {
+    const d = new Date(iso);
+    return `${two(d.getHours())}:${two(d.getMinutes())}`;
+  };
+  const days = count(rows.map((r) => `${String(r.number)} ${day(r.at)}`));
+  return rows.map((r) => {
+    const n = `№${String(r.number)}`;
+    if ((numbers.get(r.number) ?? 0) < 2) return n;
+    const sameDay = (days.get(`${String(r.number)} ${day(r.at)}`) ?? 0) > 1;
+    return `${n} (${day(r.at)}${sameDay ? ` ${time(r.at)}` : ''})`;
+  });
+}
+
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
 function gorbovOf(r: DiagnosticResults | null): { V: number | null; P: number | null; Pi: number | null } {
@@ -95,7 +125,8 @@ type NumericMetric = Exclude<keyof DiagnosticMetrics, 'gorbov'>;
  * it and under the chart. Differences of medians (noise, interference, switch cost) can be negative: no bound.
  */
 export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
-  const parsed = rows.map((row) => ({ x: `№${String(row.number)}`, r: parseResults(row) }));
+  const labels = diagnosticLabels(rows);
+  const parsed = rows.map((row, i) => ({ x: labels[i] as string, r: parseResults(row) }));
   const shaky = (module: ReactionModuleId | null, r: DiagnosticResults | null): boolean =>
     module !== null && r !== null && r.unreliable.includes(module);
   const line = (name: string, pick: (r: DiagnosticResults | null) => number | null, module: ReactionModuleId | null = null): ChartSeries => ({

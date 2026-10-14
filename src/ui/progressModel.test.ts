@@ -23,6 +23,21 @@ describe('diagnosticCharts', () => {
     expect(charts[4]?.series.map((s) => s.points[0]?.y)).toEqual([40, 80, 12]);
   });
 
+  it('numbers shared after a restore merge get the date, so no x label shows twice (B8)', () => {
+    const at = (n: number, iso: string): DiagnosticRow => ({ ...row(n, full), id: `d${iso}`, at: iso });
+    const xs = (rows: DiagnosticRow[]): string[] => diagnosticCharts(rows)[0]?.series[0]?.points.map((p) => p.x) ?? [];
+    expect(xs([at(1, '2026-09-01T10:00:00'), at(1, '2026-10-05T10:00:00'), at(2, '2026-10-19T10:00:00')])).toEqual([
+      '№1 (01.09)',
+      '№1 (05.10)',
+      '№2',
+    ]);
+    // The same number on the same day: the time tells them apart.
+    expect(xs([at(1, '2026-10-01T09:30:00'), at(1, '2026-10-01T18:05:00')])).toEqual(['№1 (01.10 09:30)', '№1 (01.10 18:05)']);
+    // The unreliable list names the point the same way.
+    const shaky = { ...row(1, { ...full, unreliable: ['pzmr'] }), id: 'x', at: '2026-10-05T10:00:00' };
+    expect(diagnosticCharts([at(1, '2026-09-01T10:00:00'), shaky])[0]?.unreliable).toEqual(['№1 (05.10)']);
+  });
+
   it('bounds every axis by what the metric can take; Π of Gorbov and the differences can be negative', () => {
     const domains = Object.fromEntries(diagnosticCharts([]).map((c) => [c.id, c.domain]));
     expect(domains).toEqual({
