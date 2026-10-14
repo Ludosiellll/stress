@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react';
-import { moduleTitles } from '../../modules/registry';
 import type { SessionPlan } from '../../engine/planner';
 import { useApp } from '../AppContext';
 import { logEvent } from '../errorLog';
 import { localDate } from '../format';
-import { loadHomeModel, type HomeModel } from '../homeModel';
+import { loadHomeModel, planLine, type HomeModel } from '../homeModel';
 import ReadinessBlock from '../views/ReadinessBlock';
 
 export interface HomeProps {
@@ -15,6 +14,8 @@ export interface HomeProps {
 }
 
 const INTERACTIVE = 'button, a, input, select, textarea, [role="radio"]';
+const DIAGNOSTIC_DUE = 'Пора пройти контрольную диагностику (раз в 2 недели)';
+const REHEARSAL_DUE = 'Генеральная репетиция: пройди контрольную диагностику (в подводке — 2 раза)';
 
 export default function Home({ onStart, onFree, onProgress, onSettings }: HomeProps) {
   const { repo } = useApp();
@@ -88,23 +89,37 @@ export default function Home({ onStart, onFree, onProgress, onSettings }: HomePr
   }
   if (model === null) return <p>Загрузка…</p>;
 
+  // The regular diagnostic comes first: the rehearsal banner shows only when that one is not due.
+  const banner = model.diagnosticDue ? DIAGNOSTIC_DUE : model.rehearsalDue ? REHEARSAL_DUE : null;
+
   return (
     <div className="home">
       <section aria-labelledby="today-title">
         <h2 id="today-title">Сегодня</h2>
-        {model.diagnosticDue && (
+        {banner !== null && (
           <div className="banner">
-            <p>Пора пройти контрольную диагностику (раз в 2 недели)</p>
+            <p>{banner}</p>
             <button type="button" onClick={() => { onStart(model.diagnosticPlan); }}>
               Пройти диагностику
             </button>
           </div>
         )}
+        <div className="phase">
+          <p>
+            <strong>{model.phaseTitle}</strong>
+          </p>
+          <p className="muted">{model.phaseWhy}</p>
+          {model.hints.length > 0 && (
+            <ul aria-label="Напоминания">
+              {model.hints.map((h) => (
+                <li key={h}>{h}</li>
+              ))}
+            </ul>
+          )}
+        </div>
         <ol aria-label="План на сегодня" className="plan">
           {model.plan.segments.map((s, i) => (
-            <li key={i}>
-              {moduleTitles[s.module]} — {s.budgetMs / 60_000} мин
-            </li>
+            <li key={i}>{planLine(s)}</li>
           ))}
         </ol>
         <div className="actions">

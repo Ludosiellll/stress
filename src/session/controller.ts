@@ -209,7 +209,7 @@ export class SessionController {
     }
     const [states, ratings] = await Promise.all([o.repo.getModuleStates(), o.repo.getRatings()]);
     const c = new SessionController(o, scale, states, ratings);
-    const row = sessionRow(c.sessionId, o.now().toISOString(), o.plan.kind, o.appVersion);
+    const row = sessionRow(c.sessionId, o.now().toISOString(), o.plan.kind, o.appVersion, o.plan.phase ?? 'none');
     await c.save(
       { what: 'session start', stage: () => 'session_start', onSaved: () => c.enterSegment(0), onAbandon: null },
       [{ label: 'createSession', run: () => o.repo.createSession(row) }],

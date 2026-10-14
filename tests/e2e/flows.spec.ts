@@ -43,15 +43,54 @@ test('full training session at scale 0.02 reaches done and wellbeing', async ({ 
   expect(screens).toContain('wellbeing');
   expect(screens.indexOf('wellbeing')).toBeLessThan(screens.lastIndexOf('done'));
   await expect(page.getByRole('heading', { name: 'Сессия завершена' })).toBeVisible();
-  // Planned segments: ПЗМР, two of СЗМР / Go/No-Go / РДО, Горбов, Шульте, ряды.
+  // The first day's plan («База», no history): ПЗМР, СЗМР, Go/No-Go, Горбов, Память, ряды; no finisher.
   const lines = page.getByRole('list', { name: 'Итог по модулям' }).getByRole('listitem');
   await expect(lines).toHaveCount(6);
   await expect(lines.first()).toContainText('ПЗМР: блоков');
-  for (const module of ['ПЗМР', 'Красно-чёрные таблицы Горбова', 'Таблицы Шульте', 'Числовые ряды']) {
+  for (const module of ['ПЗМР', 'Сложная реакция (СЗМР)', 'Go/No-Go', 'Красно-чёрные таблицы Горбова', 'Память', 'Числовые ряды']) {
     expect(titles.some((t) => t.includes(module)), `a ${module} block was played`).toBe(true);
   }
   await page.getByRole('button', { name: 'На главную' }).click();
   await expect(page.getByText('Серия: 1 дн.')).toBeVisible();
+});
+
+/** The page's local date `days` from today, YYYY-MM-DD (the app counts days in the page's time zone). */
+async function pageDate(page: Page, days: number): Promise<string> {
+  return page.evaluate((n) => {
+    const d = new Date();
+    d.setDate(d.getDate() + n);
+    const two = (x: number): string => String(x).padStart(2, '0');
+    return `${String(d.getFullYear())}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
+  }, days);
+}
+
+test('a test date in 20 days shows the overload phase on Home', async ({ page }) => {
+  await openApp(page, E2E_URL);
+  await expect(page.getByText('Фаза: база')).toBeVisible();
+  await expect(page.getByText('День 1 из 14: калибровка уровней и стартовая диагностика.')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Настройки' }).click();
+  await page.getByLabel('Дата теста').fill(await pageDate(page, 20));
+  await page.getByRole('button', { name: 'Назад' }).click();
+  await expect(page.getByText('Фаза: перегрузка')).toBeVisible();
+  await expect(page.getByText('До теста 20 дн.: финишер 5 мин, модули реакции по 6 мин.')).toBeVisible();
+  await expect(page.getByText('До теста: 20 дн.')).toBeVisible();
+  // No module has 3 blocks yet, so there is no finisher; the reaction segments are 6 minutes long.
+  await expect(page.getByRole('list', { name: 'План на сегодня' }).getByRole('listitem')).toHaveText([
+    'ПЗМР — 2 мин',
+    'Сложная реакция (СЗМР) — 6 мин',
+    'Go/No-Go — 6 мин',
+    'Красно-чёрные таблицы Горбова — 5 мин',
+    'Память — 5 мин',
+    'Числовые ряды — 10 мин',
+  ]);
+
+  // Clearing the date brings the first days' phase back at once.
+  await page.getByRole('button', { name: 'Настройки' }).click();
+  await page.getByRole('button', { name: 'Очистить' }).click();
+  await page.getByRole('button', { name: 'Назад' }).click();
+  await expect(page.getByText('Фаза: база')).toBeVisible();
+  await expect(page.getByText(/До теста/)).toHaveCount(0);
 });
 
 test('diagnostic run writes results and home shows readiness', async ({ page }) => {

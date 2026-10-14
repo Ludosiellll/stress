@@ -14,3 +14,9 @@ export function localStamp(d: Date = new Date()): string {
 export function decimal(n: number, digits = 1): string {
   return n.toFixed(digits).replace('.', ',');
 }
+
+/** A budget in minutes: a whole number, or one decimal with a comma («3,5»). */
+export function budgetMinutes(ms: number): string {
+  const tenths = Math.round(ms / 6_000);
+  return tenths % 10 === 0 ? String(tenths / 10) : decimal(tenths / 10);
+}

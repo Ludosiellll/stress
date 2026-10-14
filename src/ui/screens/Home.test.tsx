@@ -3,10 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DiagnosticResults } from '../../engine/diagnostic';
 import { MemoryRepository } from '../../data/memoryRepository';
 import { session } from '../../data/repository.contract';
-import { moduleTitles } from '../../modules/registry';
+import type { SessionPlan } from '../../engine/planner';
 import { settleUntil } from '../../testing/domFakes';
 import { createFakePlatform } from '../../testing/fakePlatform';
 import { localDate } from '../format';
+import { planLine } from '../homeModel';
 import { renderWithApp } from '../testUtils';
 import Home from './Home';
 
@@ -29,6 +30,11 @@ function daysFromNow(n: number): Date {
   return d;
 }
 
+const planLines = (): (string | null)[] =>
+  within(screen.getByRole('list', { name: 'План на сегодня' }))
+    .getAllByRole('listitem')
+    .map((li) => li.textContent);
+
 async function renderHome(repo = new MemoryRepository()) {
   const handlers = { onStart: vi.fn(), onFree: vi.fn(), onProgress: vi.fn(), onSettings: vi.fn() };
   renderWithApp(<Home {...handlers} />, createFakePlatform({ repo }), repo);
@@ -45,15 +51,20 @@ async function seedDiagnostic(repo: MemoryRepository, number: number, at: Date, 
 }
 
 describe('Home without history', () => {
-  it('shows the six plan segments with minutes', async () => {
+  it('shows the six plan segments with minutes and the base phase', async () => {
     await renderHome();
     expect(screen.getByRole('heading', { name: 'Сегодня' })).toBeTruthy();
-    const items = within(screen.getByRole('list', { name: 'План на сегодня' })).getAllByRole('listitem');
-    expect(items).toHaveLength(6);
-    expect(items[0]?.textContent).toBe(`${moduleTitles.pzmr} — 2 мин`);
-    expect(items[3]?.textContent).toBe(`${moduleTitles.gorbov} — 6 мин`);
-    expect(items[4]?.textContent).toBe(`${moduleTitles.schulte} — 4 мин`);
-    expect(items[5]?.textContent).toBe(`${moduleTitles.numseries} — 10 мин`);
+    expect(planLines()).toEqual([
+      'ПЗМР — 2 мин',
+      'Сложная реакция (СЗМР) — 5 мин',
+      'Go/No-Go — 5 мин',
+      'Красно-чёрные таблицы Горбова — 5 мин',
+      'Память — 5 мин',
+      'Числовые ряды — 10 мин',
+    ]);
+    expect(screen.getByText('Фаза: база')).toBeTruthy();
+    expect(screen.getByText('День 1 из 14: калибровка уровней и стартовая диагностика.')).toBeTruthy();
+    expect(screen.queryByRole('list', { name: 'Напоминания' })).toBeNull();
   });
 
   it('asks for the first diagnostic and shows the due banner', async () => {
@@ -71,20 +82,70 @@ describe('Home without history', () => {
     await repo.saveSettings({ testDate: localDate(daysFromNow(10)) });
     await renderHome(repo);
     expect(screen.getByText('До теста: 10 дн.')).toBeTruthy();
+    expect(screen.getByText('Фаза: перегрузка')).toBeTruthy();
+    expect(screen.getByText('До теста 10 дн.: финишер 5 мин, модули реакции по 6 мин.')).toBeTruthy();
+    expect(planLines()[1]).toBe('Сложная реакция (СЗМР) — 6 мин');
+  });
+});
+
+describe('Home in the taper', () => {
+  it('a test date in 5 days: the taper phase, both hints and the rehearsal banner', async () => {
+    const repo = new MemoryRepository();
+    await repo.saveSettings({ testDate: localDate(daysFromNow(5)) });
+    // A diagnostic 3 days ago: the regular one is not due, the rehearsal is (one of two, last one ≥ 2 days ago).
+    await seedDiagnostic(repo, 1, daysFromNow(-3), noResults({}));
+    const { onStart } = await renderHome(repo);
+    expect(screen.getByText('Фаза: подводка')).toBeTruthy();
+    expect(screen.getByText('До теста 5 дн.: объём меньше на 40 %, без финишера и новых модулей.')).toBeTruthy();
+    const hints = within(screen.getByRole('list', { name: 'Напоминания' })).getAllByRole('listitem');
+    expect(hints.map((li) => li.textContent)).toEqual([
+      'Тренируйся утром, в то же время, на которое назначен тест.',
+      'Перед тестом спи не меньше 8 часов.',
+    ]);
+    expect(planLines()).toEqual([
+      'ПЗМР — 1 мин',
+      'Сложная реакция (СЗМР) — 3 мин',
+      'Go/No-Go — 3 мин',
+      'Красно-чёрные таблицы Горбова — 3 мин',
+      'Память — 3 мин',
+      'Числовые ряды — 6 мин',
+    ]);
+    expect(screen.getByText('Генеральная репетиция: пройди контрольную диагностику (в подводке — 2 раза)')).toBeTruthy();
+    expect(screen.queryByText(/Пора пройти/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Пройти диагностику' }));
+    expect(onStart.mock.calls[0]?.[0]).toMatchObject({ kind: 'diagnostic', diagnosticNumber: 2 });
+  });
+
+  it('the regular diagnostic banner is shown instead of the rehearsal one when a diagnostic is due', async () => {
+    const repo = new MemoryRepository();
+    await repo.saveSettings({ testDate: localDate(daysFromNow(5)) });
+    await renderHome(repo);
+    expect(screen.getByText('Фаза: подводка')).toBeTruthy();
+    expect(screen.getByText('Пора пройти контрольную диагностику (раз в 2 недели)')).toBeTruthy();
+    expect(screen.queryByText(/Генеральная репетиция/)).toBeNull();
+    expect(screen.getAllByRole('button', { name: 'Пройти диагностику' })).toHaveLength(1);
+  });
+
+  it('no rehearsal banner after a diagnostic yesterday', async () => {
+    const repo = new MemoryRepository();
+    await repo.saveSettings({ testDate: localDate(daysFromNow(5)) });
+    await seedDiagnostic(repo, 1, daysFromNow(-1), noResults({}));
+    await renderHome(repo);
+    expect(screen.getByText('Фаза: подводка')).toBeTruthy();
+    expect(screen.queryByText(/Генеральная репетиция/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Пройти диагностику' })).toBeNull();
   });
 });
 
 describe('Home actions', () => {
   it('Enter starts the training with the plan that is on screen', async () => {
     const { onStart } = await renderHome();
-    const shown = within(screen.getByRole('list', { name: 'План на сегодня' }))
-      .getAllByRole('listitem')
-      .map((li) => li.textContent);
+    const shown = planLines();
     fireEvent.keyDown(document.body, { key: 'Enter' });
     expect(onStart).toHaveBeenCalledTimes(1);
-    const plan = onStart.mock.calls[0]?.[0] as { kind: string; segments: { module: keyof typeof moduleTitles; budgetMs: number }[] };
+    const plan = onStart.mock.calls[0]?.[0] as SessionPlan;
     expect(plan.kind).toBe('training');
-    expect(plan.segments.map((s) => `${moduleTitles[s.module]} — ${String(s.budgetMs / 60000)} мин`)).toEqual(shown);
+    expect(plan.segments.map(planLine)).toEqual(shown);
   });
 
   it('the start button gives the same plan', async () => {

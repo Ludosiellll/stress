@@ -3,8 +3,10 @@ import { MemoryRepository } from '../data/memoryRepository';
 import { block, session } from '../data/repository.contract';
 import type { DiagnosticRow } from '../data/rows';
 import { diagnosticSegmentSeed, type DiagnosticResults } from '../engine/diagnostic';
+import type { PhaseInfo } from '../engine/phases';
 import { readiness } from '../engine/readiness';
-import { loadHomeModel, mergedBaseline, parseResults, readinessOf } from './homeModel';
+import { MODULE_IDS } from '../engine/types';
+import { loadHomeModel, mergedBaseline, parseResults, phaseTexts, planLine, readinessOf } from './homeModel';
 
 const EMPTY: DiagnosticResults = {
   pzmrMedianRt: null,
@@ -111,5 +113,101 @@ describe('loadHomeModel', () => {
     // A training session with no block and no end (closed on the first instruction) does not count.
     await repo.createSession(session('empty', '2026-10-12T10:00:00'));
     expect((await loadHomeModel(repo, TODAY)).streak).toBe(2);
+  });
+
+  it('loadHomeModel computes the phase from the first session and the test date', async () => {
+    const repo = new MemoryRepository();
+    await repo.createSession(session('t', '2026-10-11T10:00:00'));
+    // The earliest session of any kind starts the count: day 1 was 2026-09-24, today is day 21.
+    await repo.createSession(session('d', '2026-09-24T23:30:00', { kind: 'diagnostic' }));
+    let m = await loadHomeModel(repo, TODAY);
+    expect(m.phase).toEqual({ phase: 'base', reason: 'calibration', dayNumber: 21, daysToTest: null, uncalibrated: [...MODULE_IDS] });
+    expect(m.plan.phase).toBe('base');
+    expect(m.phaseTitle).toBe('Фаза: база');
+    expect(m.phaseWhy).toMatch(/^Нужно откалибровать \(по 3 блока\): ПЗМР, /);
+    expect(m.hints).toEqual([]);
+
+    // Setting a date changes the phase and the plan at once.
+    await repo.saveSettings({ testDate: '2026-11-03' });
+    m = await loadHomeModel(repo, TODAY);
+    expect(m.phase).toMatchObject({ phase: 'overload', reason: 'test_soon', daysToTest: 20 });
+    expect(m.plan.phase).toBe('overload');
+    expect(m.plan.segments.filter((s) => s.purpose === 'reaction').map((s) => s.budgetMs)).toEqual([360000, 360000]);
+    expect(m.phaseWhy).toBe('До теста 20 дн.: финишер 5 мин, модули реакции по 6 мин.');
+    expect(m.daysToTest).toBe(20);
+
+    // A date in the past is ignored by the phase; the line under the plan keeps W1's «0 дн.».
+    await repo.saveSettings({ testDate: '2026-10-13' });
+    m = await loadHomeModel(repo, TODAY);
+    expect(m.phase).toMatchObject({ phase: 'base', reason: 'calibration', daysToTest: null });
+    expect(m.daysToTest).toBe(0);
+
+    await repo.saveSettings({ testDate: '2026-10-19' });
+    m = await loadHomeModel(repo, TODAY);
+    expect(m.phase).toMatchObject({ phase: 'taper', daysToTest: 5 });
+    expect(m.plan.phase).toBe('taper');
+    expect(m.hints).toHaveLength(2);
+    expect(m.rehearsalDue).toBe(true);
+
+    // A diagnostic yesterday: the next rehearsal is not due yet.
+    await repo.addDiagnostic({ id: 'dd', sessionId: 'd', number: 1, at: '2026-10-13T18:00:00', resultsJson: '{}' });
+    expect((await loadHomeModel(repo, TODAY)).rehearsalDue).toBe(false);
+  });
+});
+
+describe('phaseTexts', () => {
+  const info = (over: Partial<PhaseInfo>): PhaseInfo => ({
+    phase: 'base',
+    reason: 'first_days',
+    dayNumber: 1,
+    daysToTest: null,
+    uncalibrated: [],
+    ...over,
+  });
+
+  it('gives the title, the reason and the taper hints', () => {
+    expect(phaseTexts(info({ dayNumber: 3 }))).toEqual({
+      title: 'Фаза: база',
+      why: 'День 3 из 14: калибровка уровней и стартовая диагностика.',
+      hints: [],
+    });
+    expect(phaseTexts(info({ reason: 'calibration', dayNumber: 25, uncalibrated: ['stroop', 'taskswitch', 'pomeh', 'memory'] }))).toEqual({
+      title: 'Фаза: база',
+      why: 'Нужно откалибровать (по 3 блока): Струп, Переключение правил, Помехоустойчивость, Память.',
+      hints: [],
+    });
+    expect(phaseTexts(info({ phase: 'development', reason: 'weak_spots', dayNumber: 30 }))).toEqual({
+      title: 'Фаза: развитие',
+      why: 'Больше времени отстающим модулям и тем, что давно не тренировались.',
+      hints: [],
+    });
+    expect(phaseTexts(info({ phase: 'overload', reason: 'test_soon', daysToTest: 20 }))).toEqual({
+      title: 'Фаза: перегрузка',
+      why: 'До теста 20 дн.: финишер 5 мин, модули реакции по 6 мин.',
+      hints: [],
+    });
+    expect(phaseTexts(info({ phase: 'overload', reason: 'day_60', dayNumber: 64 }))).toEqual({
+      title: 'Фаза: перегрузка',
+      why: '64-й день тренировок, дата теста не задана: финишер 5 мин, модули реакции по 6 мин.',
+      hints: [],
+    });
+    expect(phaseTexts(info({ phase: 'taper', reason: 'taper', daysToTest: 5 }))).toEqual({
+      title: 'Фаза: подводка',
+      why: 'До теста 5 дн.: объём меньше на 40 %, без финишера и новых модулей.',
+      hints: ['Тренируйся утром, в то же время, на которое назначен тест.', 'Перед тестом спи не меньше 8 часов.'],
+    });
+  });
+});
+
+describe('planLine', () => {
+  it('module, minutes and what the overload blocks are', () => {
+    expect(planLine({ module: 'rdo', budgetMs: 180000, purpose: 'finisher', overload: 'finisher' })).toBe(
+      'Реакция на движущийся объект — 3 мин — финишер с перегрузкой',
+    );
+    expect(planLine({ module: 'szmr', budgetMs: 300000, purpose: 'reaction', overload: 'mix' })).toBe(
+      'Сложная реакция (СЗМР) — 5 мин — с блоками перегрузки (плато)',
+    );
+    expect(planLine({ module: 'gorbov', budgetMs: 210000, purpose: 'attention' })).toBe('Красно-чёрные таблицы Горбова — 3,5 мин');
+    expect(planLine({ module: 'pzmr', budgetMs: 60000, purpose: 'warmup' })).toBe('ПЗМР — 1 мин');
   });
 });

@@ -6,16 +6,15 @@ import type { SeriesOutcome } from './blocks';
 
 /** Repository rows of a session, built from what the controller knows. New ids are UUID v4. */
 
-const PHASE = 'w1';
-
 /** Local calendar date YYYY-MM-DD. */
 export function localDate(d: Date): string {
   const pad = (n: number): string => String(n).padStart(2, '0');
   return `${String(d.getFullYear())}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-export function sessionRow(id: string, startedAt: string, kind: SessionKind, appVersion: string): SessionRow {
-  return { id, startedAt, endedAt: null, kind, phase: PHASE, appVersion };
+/** `phase`: the training plan's phase; 'none' for plans without one (free, diagnostic). Rows of 0.1.0 keep 'w1'. */
+export function sessionRow(id: string, startedAt: string, kind: SessionKind, appVersion: string, phase: string): SessionRow {
+  return { id, startedAt, endedAt: null, kind, phase, appVersion };
 }
 
 export function blockRow(

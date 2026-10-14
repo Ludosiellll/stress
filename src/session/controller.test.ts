@@ -6,6 +6,7 @@ import type { BlockRow, WellbeingRow } from '../data/rows';
 import { FINISHER_AUDIO } from '../engine/audio/stressors';
 import { deriveModuleStates, deriveRatings, defaultModuleState } from '../engine/derive';
 import { diagnosticSegmentSeed, diagnosticSeriesSchedule, planDiagnostic, type DiagnosticResults } from '../engine/diagnostic';
+import { currentPhase, type PhaseInfo } from '../engine/phases';
 import { planFree, planTraining, type ModuleState, type Segment, type SessionPlan } from '../engine/planner';
 import { createRng, deriveSeed } from '../engine/rng';
 import type { LayoutId, ModuleId } from '../engine/types';
@@ -166,10 +167,15 @@ const segment = (module: ModuleId, budgetMs: number): SessionPlan['segments'][nu
   purpose: 'free',
 });
 
+/** The training plan Home shows on `todayIso` to a user without history and without a test date. */
+function firstDayPlan(states: Record<ModuleId, ModuleState>, todayIso: string, seed: number): SessionPlan {
+  return planTraining(states, todayIso, seed, currentPhase({ firstSessionAt: null, today: todayIso, testDate: null, states }));
+}
+
 describe('SessionController — flow', () => {
   it('walks a full training plan to done', async () => {
     const repo = new MemoryRepository();
-    const plan = planTraining(await repo.getModuleStates(), T0, 42);
+    const plan = firstDayPlan(await repo.getModuleStates(), T0, 42);
     const h = await begin(plan, { repo });
     const seen = await drive(h, { blockMs: 150_000 });
     const summaries = (n: number): string[] => Array<string>(n).fill('summary');
@@ -187,11 +193,13 @@ describe('SessionController — flow', () => {
       'instruction:gorbov',
       'table_block:gorbov:red_down',
       'summary',
-      'instruction:gorbov',
-      'table_block:gorbov:alternate',
+      // Each memory block plays another mode, so each has its own instruction.
+      'instruction:memory',
+      'memory_block',
       'summary',
-      'instruction:schulte',
-      ...blocks('table_block:schulte:schulte', 2),
+      'instruction:memory',
+      'memory_block',
+      'summary',
       'instruction:numseries',
       ...['numseries_block', summaries(1), 'numseries_block', summaries(1), 'numseries_block', summaries(1)].flat(),
       'numseries_block',
@@ -200,7 +208,7 @@ describe('SessionController — flow', () => {
       'done',
     ]);
     const [session] = await repo.listSessions();
-    expect(session).toMatchObject({ id: h.c.sessionId, kind: 'training', phase: 'w1', appVersion: '0.1.0-test', startedAt: new Date(T0).toISOString() });
+    expect(session).toMatchObject({ id: h.c.sessionId, kind: 'training', phase: 'base', appVersion: '0.1.0-test', startedAt: new Date(T0).toISOString() });
     expect(session?.endedAt).toBe(h.clock.now().toISOString());
     expect((await repo.listBlocks()).map((b) => b.module)).toEqual([
       'pzmr',
@@ -210,15 +218,26 @@ describe('SessionController — flow', () => {
       'gonogo',
       'gorbov',
       'gorbov',
-      'gorbov',
-      'schulte',
-      'schulte',
+      'memory',
+      'memory',
       'numseries',
       'numseries',
       'numseries',
       'numseries',
     ]);
     expect(expectStep(h.c, 'done')).toEqual({ kind: 'done', sessionId: h.c.sessionId, diagnostic: null, seriesTotal: null });
+  });
+
+  it('the session row stores the plan phase', async () => {
+    const states = await new MemoryRepository().getModuleStates();
+    const overload: PhaseInfo = { phase: 'overload', reason: 'test_soon', dayNumber: 30, daysToTest: 20, uncalibrated: [] };
+    const training = await begin(planTraining(states, T0, 1, overload));
+    expect((await training.repo.listSessions())[0]?.phase).toBe('overload');
+    // Plans without a phase (free training, diagnostics) store 'none'.
+    const free = await begin(planFree('rdo', 1));
+    expect((await free.repo.listSessions())[0]?.phase).toBe('none');
+    const diagnostic = await begin(planDiagnostic(1));
+    expect((await diagnostic.repo.listSessions())[0]).toMatchObject({ kind: 'diagnostic', phase: 'none' });
   });
 
   it('free session ends with done, no wellbeing', async () => {
@@ -253,7 +272,7 @@ describe('SessionController — flow', () => {
   });
 
   it('instruction texts and key hints', async () => {
-    const t = await begin(planTraining((await new MemoryRepository().getModuleStates()), T0, 1));
+    const t = await begin(firstDayPlan(await new MemoryRepository().getModuleStates(), T0, 1));
     expect(expectStep(t.c, 'instruction')).toEqual({
       kind: 'instruction',
       module: 'pzmr',
@@ -662,7 +681,7 @@ describe('SessionController — levels and persistence', () => {
     const repo = new SpyRepo();
     const clock = new Clock();
     for (let day = 0; day < 2; day++) {
-      const plan = planTraining(await repo.getModuleStates(), clock.now().toISOString(), 42 + day);
+      const plan = firstDayPlan(await repo.getModuleStates(), clock.now().toISOString(), 42 + day);
       await drive(await begin(plan, { repo, clock }), { blockMs: 150_000 });
       clock.advance(DAY);
     }

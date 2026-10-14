@@ -104,7 +104,7 @@ test('screens: home, settings, free, a diagnostic with every block view, progres
   await shot(page, 'progress-full', true);
 });
 
-test('screens: a training session with pause, schulte, wellbeing and done', async ({ page }) => {
+test('screens: a training session with pause, wellbeing and done; schulte', async ({ page }) => {
   await openApp(page, E2E_URL);
   await page.getByRole('button', { name: 'Начать тренировку' }).click();
   await playSession(page, { stopAt: 'instruction' });
@@ -113,13 +113,19 @@ test('screens: a training session with pause, schulte, wellbeing and done', asyn
   await shot(page, 'pause');
   await page.getByRole('button', { name: 'Продолжить', exact: true }).click();
 
+  await playSession(page, { stopAt: 'wellbeing' });
+  await shot(page, 'wellbeing');
+  await playSession(page, { onScreen: async (kind) => { if (kind === 'done') await shot(page, 'done-training'); } });
+  await expect(page.getByRole('heading', { name: 'Сессия завершена' })).toBeVisible();
+  await page.getByRole('button', { name: 'На главную' }).click();
+
+  // The first days' plan has no Шульте (W2-R11): the table is opened from free training.
+  await page.getByRole('button', { name: 'Свободная тренировка' }).click();
+  await page.getByRole('button', { name: 'Таблицы Шульте' }).click();
   await untilInstruction(page, 'Таблицы Шульте');
   await page.getByRole('button', { name: 'Начать (Enter)' }).click();
   await expect(page.locator('.table-grid')).toHaveAttribute('data-task', 'schulte');
   await shot(page, 'table-schulte');
-
-  await playSession(page, { stopAt: 'wellbeing' });
-  await shot(page, 'wellbeing');
-  await playSession(page, { onScreen: async (kind) => { if (kind === 'done') await shot(page, 'done-training'); } });
+  await playSession(page);
   await expect(page.getByRole('heading', { name: 'Сессия завершена' })).toBeVisible();
 });
