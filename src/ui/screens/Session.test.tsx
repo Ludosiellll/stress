@@ -121,15 +121,18 @@ interface Rendered {
 }
 
 async function renderSession(
-  driver: SessionDriver | (() => SessionDriver),
+  driver: SessionDriver | (() => SessionDriver | Promise<SessionDriver>),
   o: { charging?: boolean | null; repo?: MemoryRepository; plan?: SessionPlan; audio?: AudioOut } = {},
 ): Promise<Rendered> {
   const repo = o.repo ?? new MemoryRepository();
   const platform = createFakePlatform({ repo, charging: o.charging ?? true });
   const onExit = vi.fn<() => void>();
-  const startSession = vi.fn<(o: SessionStartOptions) => Promise<SessionDriver>>(() =>
-    Promise.resolve(typeof driver === 'function' ? driver() : driver),
-  );
+  let started = false;
+  const startSession = vi.fn<(o: SessionStartOptions) => Promise<SessionDriver>>(async () => {
+    const d = await (typeof driver === 'function' ? driver() : driver);
+    started = true;
+    return d;
+  });
   const { unmount } = renderWithApp(
     <Session
       plan={o.plan ?? PLAN}
@@ -145,7 +148,8 @@ async function renderSession(
   if (o.charging === false) {
     await settleUntil(() => screen.queryByRole('button', { name: 'Назад' }) !== null, 'the power warning');
   } else {
-    await settleUntil(() => startSession.mock.calls.length > 0, 'the session start');
+    // The controller has started and its first step (or the error screen of a broken one) replaced «Загрузка…».
+    await settleUntil(() => started && screen.queryByText('Загрузка…') === null, 'the first step on screen');
   }
   return { platform, repo, onExit, startSession, unmount };
 }
@@ -176,6 +180,20 @@ describe('Session start', () => {
     expect(options).toMatchObject({ repo, plan: PLAN, layout: 'pult', appVersion: '9.9.9', scale: 1 });
     expect(options.now()).toBeInstanceOf(Date);
     expect(screen.getByRole('region', { name: 'Сессия' })).toBeTruthy();
+    expect(screen.getByText(INSTRUCTION.text)).toBeTruthy();
+  });
+
+  it('a slow controller start: «Загрузка…» until the first step is on screen', async () => {
+    let loadingSeen = false;
+    await renderSession(async () => {
+      // Plain timers, not nextTask: this runs inside the act() of renderSession's own wait.
+      for (let i = 0; i < 3; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+      loadingSeen = screen.queryByText('Загрузка…') !== null;
+      return fakeDriver(INSTRUCTION);
+    });
+    expect(loadingSeen).toBe(true);
+    // renderSession returns once the first step has replaced «Загрузка…».
+    expect(screen.queryByText('Загрузка…')).toBeNull();
     expect(screen.getByText(INSTRUCTION.text)).toBeTruthy();
   });
 
