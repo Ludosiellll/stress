@@ -6,6 +6,7 @@ import { STROOP_COLORS, stroop } from '../modules/reaction/stroop';
 import { pomeh } from '../modules/reaction/pomeh';
 import { FakeClock, FRAME } from '../testing/fakeClock';
 import { BACKGROUND, COLORS, FLICKER_BACKGROUND, createCanvasRenderer, polarPoint, rdoAngleAt } from './canvasRenderer';
+import { GRID_LINE, LIT_CELL } from './memoryRenderer';
 import { ReactionBlockRunner } from './reactionRunner';
 
 interface Call {
@@ -567,5 +568,10 @@ describe('readability of the word stimuli (WCAG contrast, large text ≥ 3:1)', 
 
   it('the task-switching rule word (white) reads at ≥ 4.5:1 on the background', () => {
     expect(contrast(COLORS.white, BACKGROUND)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('the memory grid lines and the lit cell reach 3:1 on the background (WCAG 1.4.11, B5)', () => {
+    expect(contrast(GRID_LINE, BACKGROUND)).toBeGreaterThanOrEqual(3);
+    expect(contrast(LIT_CELL, BACKGROUND)).toBeGreaterThanOrEqual(3);
   });
 });

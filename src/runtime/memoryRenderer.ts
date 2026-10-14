@@ -16,7 +16,8 @@ export interface MemoryRenderer {
 /** A lit grid cell. */
 export const LIT_CELL = '#e8e8e8';
 const INK = '#e8e8e8';
-const GRID_LINE = '#5a5a5a';
+/** Grid lines: 3.30:1 on the background, above the 3:1 of WCAG 1.4.11. */
+export const GRID_LINE = '#7a7a7a';
 const GRID_LINE_PX = 2;
 /** Digit, letter and cross height as a share of the shorter side. */
 const ITEM_SIZE = 0.3;

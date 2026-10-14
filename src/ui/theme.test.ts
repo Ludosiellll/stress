@@ -62,6 +62,13 @@ describe('theme contrast', () => {
     expect(css).toMatch(/button\.primary:hover:not\(:disabled\)/);
   });
 
+  it('the memory answer cells reach 3:1 on the memory screen: their borders and a chosen cell (WCAG 1.4.11, B5)', () => {
+    const bg = declaration('.memory', 'background');
+    const border = /#[0-9a-fA-F]{6}\b/.exec(declaration('.memory-cell', 'border'))?.[0] ?? '';
+    expect(contrast(border, bg)).toBeGreaterThanOrEqual(3);
+    expect(contrast(declaration('.memory-cell.chosen', 'background'), bg)).toBeGreaterThanOrEqual(3);
+  });
+
   it('the focus ring reaches 3:1 on the background', () => {
     expect(contrast(variable('accent'), variable('bg'))).toBeGreaterThanOrEqual(3);
   });
