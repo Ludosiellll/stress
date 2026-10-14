@@ -190,6 +190,17 @@ describe('niceTicks', () => {
     expect(niceTicks(3, 10, { min: 3 })).toEqual([3, 4, 6, 8, 10]);
   });
 
+  it('data a rounding step outside the domain are clamped into it, not a reason to drop it', () => {
+    // 1 ULP above 7 and 1 ULP below 3: the bounds still close the axis.
+    expect(niceTicks(0, 7 + 2 ** -50, { max: 7 })).toEqual([0, 2, 4, 6, 7]);
+    expect(niceTicks(3 - 2 ** -51, 10, { min: 3 })).toEqual([3, 4, 6, 8, 10]);
+    // −1e-13 from a difference of RTs around 300 ms is noise below a non-negative metric's 0.
+    expect(niceTicks(-1e-13, 300, { min: 0 })).toEqual(niceTicks(0, 300, { min: 0 }));
+    // Data really outside the domain still make it ignored.
+    expect(niceTicks(0, 7.5, { max: 7 })).toEqual(niceTicks(0, 7.5));
+    expect(niceTicks(-0.001, 10, { min: 0 })).toEqual(niceTicks(-0.001, 10));
+  });
+
   it('never inserts an infinite bound when a value sits just below a tick (R39)', () => {
     expect(niceTicks(20 - 1e-12, 119)).toEqual([20, 40, 60, 80, 100, 120]);
     expect(niceTicks(1, 100 + 1e-12)).toEqual([0, 20, 40, 60, 80, 100]);

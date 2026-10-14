@@ -52,6 +52,8 @@ const MAX_GRID_CELLS = 50;
 const MAX_GRID_INDEX = 2 ** 50;
 /** Below this the tick labels could not tell neighbours apart (and toFixed would merge them). */
 const MIN_GRID_STEP = 1e-9;
+/** Data this many ULPs (of their magnitude) outside a domain bound are rounding noise: clamped, not out of range. */
+const ROUNDING_ULPS = 8;
 
 interface Grid {
   step: number;
@@ -102,16 +104,22 @@ function usable(ticks: number[]): boolean {
  * Axis ticks on 1, 2, 5 × 10^k, at least three of them, covering [min, max]. A flat range is padded, the
  * padding never crossing the domain bounds; ticks stay inside the domain. Total: it terminates and returns at
  * least two finite, strictly increasing ticks for any input. Non-finite values are dropped, swapped bounds are
- * reordered, a domain that is zero-width, inverted or does not contain the data is ignored, and a range too fine
- * for its magnitude is replaced by mid ± 1.
+ * reordered, data outside the domain by rounding noise only are clamped onto it, a domain that is zero-width,
+ * inverted or does not contain the data is ignored, and a range too fine for its magnitude is replaced by mid ± 1.
  */
 export function niceTicks(min: number, max: number, domain: ChartDomain = {}): number[] {
   const finite = [min, max].filter(Number.isFinite);
   const clamp = (v: number): number => Math.max(-AXIS_LIMIT, Math.min(AXIS_LIMIT, v));
-  const dataLo = clamp(finite.length === 0 ? 0 : Math.min(...finite));
-  const dataHi = clamp(finite.length === 0 ? 0 : Math.max(...finite));
+  let dataLo = clamp(finite.length === 0 ? 0 : Math.min(...finite));
+  let dataHi = clamp(finite.length === 0 ? 0 : Math.max(...finite));
   let floor = Number.isFinite(domain.min) ? (domain.min as number) : -Infinity;
   let ceiling = Number.isFinite(domain.max) ? (domain.max as number) : Infinity;
+  // Data outside the domain by rounding noise only (a few ULPs of their magnitude) are moved onto its bound.
+  const noise = ROUNDING_ULPS * Number.EPSILON * Math.max(1, Math.abs(dataLo), Math.abs(dataHi));
+  if (floor < ceiling && dataLo >= floor - noise && dataHi <= ceiling + noise) {
+    dataLo = Math.min(Math.max(dataLo, floor), ceiling);
+    dataHi = Math.min(Math.max(dataHi, floor), ceiling);
+  }
   if (!(floor < ceiling) || floor > dataLo || ceiling < dataHi) {
     floor = -Infinity;
     ceiling = Infinity;
