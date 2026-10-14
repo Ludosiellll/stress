@@ -7,6 +7,7 @@ const { version } = JSON.parse(readFileSync(new URL('./package.json', import.met
 const domTests = [
   'src/ui/**/*.test.{ts,tsx}',
   'src/platform/**/*.test.{ts,tsx}',
+  'src/testing/**/*.test.{ts,tsx}',
   'src/runtime/input.test.ts',
   'src/runtime/focusGuard.test.ts',
 ];

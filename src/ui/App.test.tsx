@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { MemoryRepository } from '../data/memoryRepository';
 import { block, item, session } from '../data/repository.contract';
 import { deriveRatings } from '../engine/derive';
+import { moduleTitles } from '../modules/registry';
 import { createFakePlatform, type FakePlatformOptions } from '../testing/fakePlatform';
 import App from './App';
 
@@ -34,24 +35,29 @@ describe('App', () => {
     expect(await screen.findByRole('button', { name: 'Начать тренировку' })).toBeTruthy();
   });
 
-  it('Enter on Home opens the session screen with the plan that was shown', async () => {
+  it('Enter on Home opens the session screen, which starts with the pre-session check', async () => {
     await renderApp();
-    const shown = within(screen.getByRole('list', { name: 'План на сегодня' }))
-      .getAllByRole('listitem')
-      .map((li) => li.textContent);
     fireEvent.keyDown(document.body, { key: 'Enter' });
     const session = await screen.findByRole('region', { name: 'Сессия' });
-    const planned = within(session).getAllByRole('listitem').map((li) => li.textContent);
-    expect(planned).toEqual(shown);
+    expect(within(session).getByText('Проверка экрана и питания…')).toBeTruthy();
   });
 
-  it('opens the progress and free-training stubs and returns home', async () => {
+  it('opens free training and the progress stub and returns home', async () => {
     await renderApp();
     fireEvent.click(screen.getByRole('button', { name: 'Прогресс' }));
     expect(screen.getByRole('region', { name: 'Прогресс' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Назад' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Свободная тренировка' }));
-    expect(screen.getByRole('region', { name: 'Свободная тренировка' })).toBeTruthy();
+    expect(await screen.findByRole('region', { name: 'Свободная тренировка' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Назад' }));
+    expect(await screen.findByRole('button', { name: 'Начать тренировку' })).toBeTruthy();
+  });
+
+  it('a module chosen in free training opens the session screen', async () => {
+    await renderApp();
+    fireEvent.click(screen.getByRole('button', { name: 'Свободная тренировка' }));
+    fireEvent.click(await screen.findByRole('button', { name: moduleTitles.rdo }));
+    expect(await screen.findByRole('region', { name: 'Сессия' })).toBeTruthy();
   });
 
   it('shows why the database did not open', async () => {

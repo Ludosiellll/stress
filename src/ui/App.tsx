@@ -4,11 +4,13 @@ import type { SessionPlan } from '../engine/planner';
 import { getPlatform, type Platform } from '../platform';
 import { AppContext } from './AppContext';
 import { bootstrap } from './bootstrap';
+import Free from './screens/Free';
 import Home from './screens/Home';
 import Placeholder from './screens/Placeholder';
+import Session from './screens/Session';
 import Settings from './screens/Settings';
 
-/** Current screen. Tasks 15-16 replace the placeholders for 'session', 'free' and 'progress'. */
+/** Current screen. Task 16 replaces the placeholder for 'progress'. */
 type Route =
   | { screen: 'home' }
   | { screen: 'session'; plan: SessionPlan }
@@ -36,9 +38,9 @@ function Screens({ route, go }: { route: Route; go: (next: Route) => void }) {
         />
       );
     case 'session':
-      return <Placeholder title="Сессия" plan={route.plan} onBack={home} />;
+      return <Session plan={route.plan} onExit={home} />;
     case 'free':
-      return <Placeholder title="Свободная тренировка" onBack={home} />;
+      return <Free onStart={(plan) => { go({ screen: 'session', plan }); }} onBack={home} />;
     case 'progress':
       return <Placeholder title="Прогресс" onBack={home} />;
     case 'settings':

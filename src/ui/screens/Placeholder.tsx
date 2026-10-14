@@ -9,7 +9,7 @@ export interface PlaceholderProps {
   onBack: () => void;
 }
 
-/** Stands in for the screens of Tasks 15-16 (session, free training, progress). */
+/** Stands in for the progress screen until Task 16. */
 export default function Placeholder({ title, plan, onBack }: PlaceholderProps) {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
