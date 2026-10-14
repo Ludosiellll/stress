@@ -334,11 +334,7 @@ function SessionFlow({
           onSubmit={(answers) => {
             run((c) => c.submitMemory(answers));
           }}
-          onAbort={(reason) => {
-            if (reason === 'user') {
-              pauseBlock();
-              return;
-            }
+          onFocusLost={() => {
             setNotice(FOCUS_LOST);
             run((c) => {
               c.discardBlock('focus_lost');

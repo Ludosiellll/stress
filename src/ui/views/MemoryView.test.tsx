@@ -47,7 +47,7 @@ afterEach(() => {
 });
 
 function renderView(s: StepOf<'memory_block'>, o: { exposeAnswer?: boolean; busy?: boolean } = {}) {
-  const handlers = { onSubmit: vi.fn<(a: MemoryAnswer[]) => void>(), onAbort: vi.fn<(r: 'focus_lost' | 'user') => void>() };
+  const handlers = { onSubmit: vi.fn<(a: MemoryAnswer[]) => void>(), onFocusLost: vi.fn<() => void>() };
   const view = render(<MemoryView step={s} exposeAnswer={o.exposeAnswer ?? false} busy={o.busy ?? false} {...handlers} />);
   return { ...handlers, ...view };
 }
@@ -143,6 +143,57 @@ describe('MemoryView', () => {
     expect(onSubmit.mock.calls[0]?.[0]?.[0]?.given).toEqual(['2']);
   });
 
+  it('Enter on an empty answer sends nothing and says what to do (B3)', async () => {
+    const { onSubmit } = renderView(step([trial()]));
+    await showTrial();
+    key('Enter');
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByText('Набери ответ, потом Enter.')).toBeTruthy();
+    key('7');
+    expect(screen.queryByText('Набери ответ, потом Enter.')).toBeNull();
+    key('Enter');
+    expect(onSubmit.mock.calls[0]?.[0]?.[0]?.given).toEqual(['7']);
+  });
+
+  it('positions: Enter with no cell chosen sends nothing and says what to do (B3)', async () => {
+    const t = trial({ mode: 'positions', items: ['4', '8', '2'], gridSide: 3 });
+    const { onSubmit } = renderView(step([t]));
+    await showTrial();
+    key('Enter');
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByText('Нажми клетки, потом Enter.')).toBeTruthy();
+    fireEvent.mouseDown(cell(4), { button: 0 });
+    expect(screen.queryByText('Нажми клетки, потом Enter.')).toBeNull();
+    key('Enter');
+    expect(onSubmit.mock.calls[0]?.[0]?.[0]?.given).toEqual(['4']);
+  });
+
+  it('keys, Enter and clicks during the presentation are ignored (B3)', async () => {
+    for (const t of [trial(), trial({ mode: 'positions', items: ['4', '8', '2'], gridSide: 3 })]) {
+      const view = renderView(step([t, t]));
+      await showTrial();
+      // Trial 1 answered; trial 2 is being shown.
+      if (t.mode === 'positions') fireEvent.mouseDown(cell(4), { button: 0 });
+      else key('7');
+      key('Enter');
+      frames.run(now);
+      await nextTask();
+      const canvas = view.container.querySelector('.memory canvas');
+      expect(canvas).not.toBeNull();
+      key('5');
+      key('6');
+      key('Enter');
+      if (canvas !== null) fireEvent.mouseDown(canvas, { button: 0 });
+      await showTrial();
+      expect(view.onSubmit).not.toHaveBeenCalled();
+      expect(screen.getByText('Проба 2 из 2')).toBeTruthy();
+      // Nothing typed or chosen during the presentation reached the answer.
+      if (t.mode === 'positions') expect(view.container.querySelectorAll('.memory-cell.chosen')).toHaveLength(0);
+      else expect(screen.getByLabelText('Ответ').textContent).toBe('____');
+      view.unmount();
+    }
+  });
+
   it('plays every trial in turn and submits all answers after the last', async () => {
     const trials = [trial(), trial({ items: ['5', '2', '6', '0'] })];
     const { onSubmit } = renderView(step(trials));
@@ -226,13 +277,13 @@ describe('MemoryView', () => {
     expect(onSubmit.mock.calls[0]?.[0]?.[0]?.given).toEqual(['7', '3', '9', '1']);
   });
 
-  it('blur → onAbort(focus_lost), during the presentation or the answer', async () => {
+  it('blur → onFocusLost, during the presentation or the answer', async () => {
     const first = renderView(step([trial()]));
     frames.run(0);
     act(() => {
       window.dispatchEvent(new Event('blur'));
     });
-    expect(first.onAbort).toHaveBeenCalledWith('focus_lost');
+    expect(first.onFocusLost).toHaveBeenCalledTimes(1);
     expect(frames.pending()).toBe(0);
     first.unmount();
 
@@ -242,25 +293,25 @@ describe('MemoryView', () => {
       window.dispatchEvent(new Event('blur'));
       window.dispatchEvent(new Event('blur'));
     });
-    expect(second.onAbort).toHaveBeenCalledTimes(1);
-    expect(second.onAbort).toHaveBeenCalledWith('focus_lost');
+    expect(second.onFocusLost).toHaveBeenCalledTimes(1);
   });
 
   it('a blur after the answers were sent (while they are saved) is not a lost block', async () => {
-    const { onSubmit, onAbort } = renderView(step([trial()]), { busy: false });
+    const { onSubmit, onFocusLost } = renderView(step([trial()]), { busy: false });
     await showTrial();
+    key('7');
     key('Enter');
     expect(onSubmit).toHaveBeenCalledTimes(1);
     act(() => {
       window.dispatchEvent(new Event('blur'));
     });
-    expect(onAbort).not.toHaveBeenCalled();
+    expect(onFocusLost).not.toHaveBeenCalled();
   });
 
   it('an unfocused window aborts at once', () => {
     vi.spyOn(document, 'hasFocus').mockReturnValue(false);
-    const { onAbort } = renderView(step([trial()]));
-    expect(onAbort).toHaveBeenCalledWith('focus_lost');
+    const { onFocusLost } = renderView(step([trial()]));
+    expect(onFocusLost).toHaveBeenCalledTimes(1);
   });
 
   it('data-e2e-answer only with exposeAnswer', async () => {
@@ -295,11 +346,11 @@ describe('MemoryView', () => {
   });
 
   it('unmounting mid-presentation stops the frames and reports nothing', () => {
-    const { onAbort, onSubmit, unmount } = renderView(step([trial()]));
+    const { onFocusLost, onSubmit, unmount } = renderView(step([trial()]));
     frames.run(0);
     unmount();
     expect(frames.pending()).toBe(0);
-    expect(onAbort).not.toHaveBeenCalled();
+    expect(onFocusLost).not.toHaveBeenCalled();
     expect(onSubmit).not.toHaveBeenCalled();
   });
 });

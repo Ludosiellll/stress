@@ -15,8 +15,8 @@ export interface MemoryViewProps {
   /** The answers are being saved: input is locked. */
   busy: boolean;
   onSubmit: (answers: MemoryAnswer[]) => void;
-  /** The block is void. The view itself reports focus_lost (the window lost focus); Escape is the session screen's. */
-  onAbort: (reason: 'focus_lost' | 'user') => void;
+  /** The window lost focus: the block is void. Escape is the session screen's (it pauses the block). */
+  onFocusLost: () => void;
 }
 
 type Phase = 'present' | 'respond';
@@ -24,16 +24,19 @@ type Phase = 'present' | 'respond';
 /**
  * A memory block, one trial at a time: the row is shown on a full-screen canvas (presentMemoryTrial, frame
  * timing, no cursor), then reproduced on a DOM screen — typed (digits, letters, card: Backspace erases, Enter
- * sends) or clicked (positions: a click on the last chosen cell takes it back; Enter or «Готово» sends).
+ * sends) or clicked (positions: a click on the last chosen cell takes it back; Enter or «Готово» sends). Enter on
+ * an empty answer sends nothing and shows a hint; «Готово» is a deliberate click and sends even an empty one.
  * After the last trial every answer goes to `onSubmit`; the span protocol sends them as soon as it stops
  * (spanProtocolStops). The focus guard covers the whole block; Escape is the session screen's (it pauses and
  * discards the block, as for tables).
  */
-export default function MemoryView({ step, exposeAnswer, busy, onSubmit, onAbort }: MemoryViewProps) {
+export default function MemoryView({ step, exposeAnswer, busy, onSubmit, onFocusLost }: MemoryViewProps) {
   const { trials } = step;
   const [index, setIndex] = useState(0);
   const [phase, setPhase] = useState<Phase>('present');
   const [given, setGiven] = useState<string[]>([]);
+  /** The trial on which Enter came with nothing given: the hint shows until something is. */
+  const [emptyEnter, setEmptyEnter] = useState<number | null>(null);
   /** Answers sent or the block lost: nothing more is taken and nothing more is shown. */
   const [over, setOver] = useState(false);
   const [crash, setCrash] = useState<Error | null>(null);
@@ -42,14 +45,14 @@ export default function MemoryView({ step, exposeAnswer, busy, onSubmit, onAbort
   const respondStart = useRef(0);
   /** All answers went to onSubmit: the block is over, focus no longer matters. */
   const sent = useRef(false);
-  const aborted = useEffectEvent(onAbort);
+  const focusLost = useEffectEvent(onFocusLost);
 
   useEffect(
     () =>
       attachFocusGuard(window, document, () => {
         if (sent.current) return;
         setOver(true);
-        aborted('focus_lost');
+        focusLost();
       }),
     [],
   );
@@ -105,7 +108,9 @@ export default function MemoryView({ step, exposeAnswer, busy, onSubmit, onAbort
       if (trial === undefined || e.ctrlKey || e.altKey || e.metaKey) return;
       if (isEnter(e)) {
         e.preventDefault();
-        send();
+        // An Enter on an empty answer is most likely by accident: it would waste the trial.
+        if (given.length === 0) setEmptyEnter(index);
+        else send();
         return;
       }
       if (trial.mode === 'positions') return;
@@ -186,6 +191,11 @@ export default function MemoryView({ step, exposeAnswer, busy, onSubmit, onAbort
               {[...given, ...Array.from({ length: Math.max(0, trial.items.length - given.length) }, () => '_')].map((x, i) => (
                 <span key={i}>{x}</span>
               ))}
+            </p>
+          )}
+          {emptyEnter === index && given.length === 0 && (
+            <p className="muted" role="status">
+              {trial.mode === 'positions' ? 'Нажми клетки, потом Enter.' : 'Набери ответ, потом Enter.'}
             </p>
           )}
         </div>
