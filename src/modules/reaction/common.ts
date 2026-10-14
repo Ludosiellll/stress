@@ -23,6 +23,11 @@ export interface ReactionModule<P> {
   describeParams(p: P): Array<{ label: string; value: string }>;
   /** Visual noise and sound of a block at these parameters; absent: none (read it with stressorsOf). */
   stressors?(p: P): BlockStressors;
+  /**
+   * Modules with trial conditions (COND_PAIRS): the fewest trials one condition can get in a block of `size` at
+   * these parameters, whatever the seed. The e2e scale sizes such blocks by it (W2-R30).
+   */
+  minCondTrials?(p: P, size: number): number;
 }
 
 /** What plays around the stimuli of a reaction block. */

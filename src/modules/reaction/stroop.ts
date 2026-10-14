@@ -40,6 +40,9 @@ function colorKeys(layout: LayoutId, nColors: number): { color: StroopColor; key
   return STROOP_COLORS.slice(0, nColors).map((color, i) => ({ color, key: keys[i] as InputKey }));
 }
 
+/** Incongruent trials in a block of n: round(ratio · n), the rest congruent. */
+const incongruentCount = (p: StroopParams, n: number): number => Math.round(p.incongruentRatio * n);
+
 /** «красный — F», «зелёный — J», … */
 const pairs = (layout: LayoutId, nColors: number): string[] =>
   colorKeys(layout, nColors).map(({ color, key }) => `${COLOR_NAMES[color]} — ${keyLabel(key)}`);
@@ -65,8 +68,8 @@ export const stroop: ReactionModule<StroopParams> = {
   generateBlock(p, rng, layout, size) {
     const n = blockLength(size, BLOCK_SIZE);
     const active = colorKeys(layout, p.nColors);
-    const incongruentCount = Math.round(p.incongruentRatio * n);
-    const incongruent = rng.shuffle(Array.from({ length: n }, (_, i) => i < incongruentCount));
+    const count = incongruentCount(p, n);
+    const incongruent = rng.shuffle(Array.from({ length: n }, (_, i) => i < count));
     return incongruent.map((isIncongruent): TrialSpec => {
       const isiMs = rng.int(p.isiMin, p.isiMax);
       const { color: ink, key } = rng.pick(active);
@@ -82,6 +85,11 @@ export const stroop: ReactionModule<StroopParams> = {
   },
 
   keyCount: (p) => p.nColors,
+
+  minCondTrials(p, size) {
+    const incongruent = incongruentCount(p, size);
+    return Math.min(incongruent, size - incongruent);
+  },
 
   legend: (layout, p) => (p.legend ? pairs(layout, p.nColors).join(' · ') : null),
 

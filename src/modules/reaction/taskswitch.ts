@@ -42,6 +42,9 @@ function ruleText(rule: SwitchRule, keys: readonly InputKey[]): string {
   return `${RULE_WORDS[rule]}: ${a} — ${keyLabel(keys[0] as InputKey)}, ${b} — ${keyLabel(keys[1] as InputKey)}.`;
 }
 
+/** Rule changes in a block of n: round(switchProb · (n − 1)); the other trials after the first repeat. */
+const switchCount = (p: TaskSwitchParams, n: number): number => Math.round(p.switchProb * (n - 1));
+
 /** Rule of each trial: a random first rule, then exactly `switches` changes at shuffled positions. */
 function ruleSequence(rules: readonly SwitchRule[], n: number, switches: number, rng: Rng): SwitchRule[] {
   const isSwitch = rng.shuffle(Array.from({ length: n - 1 }, (_, i) => i < switches));
@@ -72,7 +75,7 @@ export const taskswitch: ReactionModule<TaskSwitchParams> = {
   generateBlock(p, rng, layout, size) {
     const n = blockLength(size, BLOCK_SIZE);
     const keys = keysFor(layout, 2);
-    const rules = ruleSequence(p.rules, n, Math.round(p.switchProb * (n - 1)), rng);
+    const rules = ruleSequence(p.rules, n, switchCount(p, n), rng);
     return rules.map((rule, i): TrialSpec => {
       const isiMs = rng.int(p.cueLeadMs + ISI_MIN, p.cueLeadMs + ISI_MAX);
       const stimulus: SwitchStimulus = {
@@ -95,6 +98,11 @@ export const taskswitch: ReactionModule<TaskSwitchParams> = {
   },
 
   keyCount: () => 2,
+
+  minCondTrials(p, size) {
+    const switches = switchCount(p, size);
+    return Math.min(switches, size - 1 - switches);
+  },
 
   instruction: (layout, p) => {
     const keys = keysFor(layout, 2);

@@ -4,7 +4,7 @@ import { BASE_ITEM_LIMIT_MS, effectiveDifficulty } from '../engine/itemLimit';
 import { keyLabel, layoutKeys } from '../engine/layouts';
 import { FINISHER_AUDIO, mergeAudio } from '../engine/audio/stressors';
 import { OVERLOAD_LEVEL_STEP, type Segment } from '../engine/planner';
-import { COND_PAIRS, condCost, condPairOf, conditionStats, type CondPair, type ConditionStats } from '../engine/reaction/conditions';
+import { COND_PAIRS, MIN_COND_RTS, condCost, conditionStats, type CondPair, type ConditionStats } from '../engine/reaction/conditions';
 import { resolveBlock } from '../engine/reaction/resolve';
 import { summarize } from '../engine/reaction/summary';
 import type { BlockTimeline, ReactionSummary, TrialResult, TrialSpec } from '../engine/reaction/types';
@@ -30,7 +30,7 @@ import {
   type MemoryParams,
 } from '../modules/memory/params';
 import { generateBlockItems, generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
-import { stressorsOf, type BlockStressors } from '../modules/reaction/common';
+import { stressorsOf, type BlockStressors, type ReactionModule } from '../modules/reaction/common';
 import { reactionModules } from '../modules/registry';
 import {
   generateGorbovTable,
@@ -58,12 +58,40 @@ import {
 const SERIES_BLOCK_ITEMS = 10;
 /** Floor for block sizes and item counts under the e2e scale. */
 const MIN_SCALED = 3;
-/** Floor for blocks of modules with trial conditions (COND_PAIRS) under the e2e scale: ≥ 3 RTs per condition. */
+/** Floor for blocks of modules with trial conditions (COND_PAIRS) under the e2e scale. */
 const MIN_SCALED_COND = 12;
+/**
+ * Under the e2e scale every condition keeps this many trials beyond MIN_COND_RTS (W2-R30): a dropped onset frame
+ * or two on a CI runner still leaves its median.
+ */
+export const E2E_COND_MARGIN = 2;
+/** A floor search that gets this far means the module's conditions never reach the margin. */
+const MAX_COND_FLOOR = 1000;
 
 /** Block size or item count under the e2e scale: max(min, round(n·scale)), min 3 by default. */
 export function scaledCount(n: number, scale: number, min: number = MIN_SCALED): number {
   return Math.max(min, Math.round(n * scale));
+}
+
+/**
+ * The fewest trials (at least MIN_SCALED_COND) that give each condition of a block at `params`
+ * MIN_COND_RTS + E2E_COND_MARGIN trials, whatever the seed.
+ */
+export function e2eCondFloor<P>(mod: Pick<ReactionModule<P>, 'id' | 'minCondTrials'>, params: P): number {
+  const need = MIN_COND_RTS + E2E_COND_MARGIN;
+  for (let n = MIN_SCALED_COND; n <= MAX_COND_FLOOR; n++) {
+    if ((mod.minCondTrials?.(params, n) ?? 0) >= need) return n;
+  }
+  throw new RangeError(`${mod.id}: no block up to ${String(MAX_COND_FLOOR)} trials gives each condition ${String(need)}`);
+}
+
+/**
+ * A reaction block's size: scaledCount, and under the e2e scale (scale < 1) a module with trial conditions keeps
+ * e2eCondFloor trials. At scale ≥ 1 the planned count stands (it is above every floor).
+ */
+function reactionBlockSize<P>(mod: ReactionModule<P>, params: P, n: number, scale: number): number {
+  if (mod.minCondTrials === undefined) return scaledCount(n, scale);
+  return scaledCount(n, scale, scale < 1 ? e2eCondFloor(mod, params) : MIN_SCALED_COND);
 }
 
 /** Practice trials stay as planned unless the e2e scale shrinks them: max(1, round(n·scale)). */
@@ -131,7 +159,7 @@ export function planBlock(segment: Segment, segmentL: number, blockIndex: number
       params,
       keys,
       layout: effectiveLayout,
-      size: scaledCount(segment.trialCount ?? mod.blockSize, ctx.scale, condPairOf(module) === null ? MIN_SCALED : MIN_SCALED_COND),
+      size: reactionBlockSize(mod, params, segment.trialCount ?? mod.blockSize, ctx.scale),
       practice: scaledPractice(segment.practiceTrials ?? 0, ctx.scale),
       overload,
     };

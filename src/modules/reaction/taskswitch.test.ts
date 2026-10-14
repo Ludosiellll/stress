@@ -109,6 +109,21 @@ describe('taskswitch.generateBlock', () => {
     }
   });
 
+  it('minCondTrials: the smaller of the switch and repeat counts, whatever the seed', () => {
+    for (const L of [0, 5, 10, 20, 40]) {
+      const p = taskswitch.params(L);
+      for (let n = 1; n <= 60; n++) {
+        const block = taskswitch.generateBlock(p, createRng(n), 'keyboard', n);
+        const switches = block.filter((t) => t.cond === 'switch').length;
+        const repeats = block.filter((t) => t.cond === 'repeat').length;
+        expect(taskswitch.minCondTrials?.(p, n), `L ${String(L)}, n ${String(n)}`).toBe(Math.min(switches, repeats));
+      }
+    }
+    // L = 5 (0.3): 12 trials give 3 switches (W2-R30), 16 give 5; L = 0 (0.2) needs 24.
+    expect([12, 15, 16].map((n) => taskswitch.minCondTrials?.(taskswitch.params(5), n))).toEqual([3, 4, 5]);
+    expect([20, 23, 24].map((n) => taskswitch.minCondTrials?.(taskswitch.params(0), n))).toEqual([4, 4, 5]);
+  });
+
   it('switch positions are shuffled and the first rule is random', () => {
     const p = taskswitch.params(0);
     const block = taskswitch.generateBlock(p, createRng(2), 'keyboard', 40);

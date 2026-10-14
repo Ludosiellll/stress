@@ -48,6 +48,15 @@ function conditionRuns(n: number, rng: Rng): TrialCond[] {
   return conds;
 }
 
+/**
+ * Worst case of conditionRuns(n) for one condition: its runs as short as they come (RUN_MIN), the other's as long
+ * (RUN_MAX), the other condition first, so the cut last run goes to the other one while it fits.
+ */
+function fewestPerCond(n: number): number {
+  const period = RUN_MIN + RUN_MAX;
+  return RUN_MIN * Math.floor(n / period) + Math.max(0, (n % period) - RUN_MAX);
+}
+
 /** One or two keys: every layout has them, the mouse too (no keyboard fallback). */
 const keyCount = (p: PomehParams): number => (p.mode === 'choice' ? 2 : 1);
 
@@ -95,6 +104,8 @@ export const pomeh: ReactionModule<PomehParams> = {
   },
 
   keyCount,
+
+  minCondTrials: (_p, size) => fewestPerCond(size),
 
   stressors: (p) => ({ noise: p.noise, audio: p.audio, gate: 'noisy' }),
 

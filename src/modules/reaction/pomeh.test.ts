@@ -197,6 +197,48 @@ describe('pomeh.generateBlock', () => {
   });
 });
 
+/**
+ * By brute force over every sequence the generator can make (alternating runs of 3–5, the last cut to n):
+ * the fewest trials either condition gets in a block of n.
+ */
+function fewestPerCondBruteForce(n: number): number {
+  // reach[pos][turn]: the quiet counts the trials from pos to n can hold when the next run is quiet (0) or noisy (1).
+  const reach = Array.from({ length: n + 1 }, (): [Set<number>, Set<number>] => [new Set(), new Set()]);
+  const at = (pos: number): [Set<number>, Set<number>] => reach[pos] as [Set<number>, Set<number>];
+  at(n)[0].add(0);
+  at(n)[1].add(0);
+  for (let pos = n - 1; pos >= 0; pos--) {
+    for (const turn of [0, 1] as const) {
+      for (let len = 3; len <= 5; len++) {
+        const take = Math.min(len, n - pos);
+        for (const quiet of at(pos + take)[turn === 0 ? 1 : 0]) at(pos)[turn].add(quiet + (turn === 0 ? take : 0));
+      }
+    }
+  }
+  const quietCounts = [...at(0)[0], ...at(0)[1]];
+  return Math.min(...quietCounts.map((q) => Math.min(q, n - q)));
+}
+
+describe('pomeh.minCondTrials', () => {
+  it('is the worst case over every run sequence, for n in [1, 60], at any level', () => {
+    for (let n = 1; n <= 60; n++) {
+      expect(pomeh.minCondTrials?.(pomeh.params(0), n), `n = ${String(n)}`).toBe(fewestPerCondBruteForce(n));
+      expect(pomeh.minCondTrials?.(pomeh.params(30), n)).toBe(pomeh.minCondTrials?.(pomeh.params(0), n));
+    }
+    expect([12, 13, 14, 15, 16].map((n) => pomeh.minCondTrials?.(pomeh.params(8), n))).toEqual([3, 3, 4, 5, 6]);
+  });
+
+  it('no generated block gives a condition fewer trials', () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 1, max: 60 }), fc.integer({ min: 0, max: 0xffffffff }), (n, seed) => {
+        const block = pomeh.generateBlock(pomeh.params(8), createRng(seed), 'keyboard', n);
+        expect(Math.min(count(block, 'quiet'), count(block, 'noisy'))).toBeGreaterThanOrEqual(pomeh.minCondTrials?.(pomeh.params(8), n) ?? Infinity);
+      }),
+      { numRuns: 1000 },
+    );
+  });
+});
+
 describe('stressors', () => {
   it('pomeh: its noise and sound, gated by the noisy trials', () => {
     const p = pomeh.params(18);

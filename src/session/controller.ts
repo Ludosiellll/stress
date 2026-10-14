@@ -59,7 +59,7 @@ export interface SessionStartOptions {
   appVersion: string;
   /**
    * e2e only (Task 15): budgets and the series total limit × scale, block sizes and item counts max(3, round(n·scale))
-   * (12 for the modules with trial conditions, so each condition keeps ≥ 3 RTs).
+   * (for the modules with trial conditions at least 12 and enough for MIN_COND_RTS + 2 trials per condition, W2-R30).
    */
   scale?: number;
   /** Pause between save attempts; tests inject an instant one. Default: setTimeout. */

@@ -4,8 +4,9 @@ import { R0, updateRating, type Rating } from '../engine/elo';
 import { effectiveDifficulty } from '../engine/itemLimit';
 import { FINISHER_AUDIO } from '../engine/audio/stressors';
 import { OVERLOAD_LEVEL_STEP, type Segment } from '../engine/planner';
+import { MIN_COND_RTS, condPairOf, type CondPair } from '../engine/reaction/conditions';
 import type { Outcome, ReactionSummary } from '../engine/reaction/types';
-import type { FamilyId } from '../engine/types';
+import { REACTION_MODULE_IDS, type FamilyId, type ReactionModuleId } from '../engine/types';
 import { createRng, deriveSeed } from '../engine/rng';
 import { generateMemoryTrials, spanProtocolTrials } from '../modules/memory/generate';
 import { memoryModeForBlock, memoryParams } from '../modules/memory/params';
@@ -13,6 +14,7 @@ import { generateItem, type TimedSeriesItem } from '../modules/numseries/generat
 import { NO_STRESSORS } from '../modules/reaction/common';
 import { pomeh } from '../modules/reaction/pomeh';
 import { pzmr } from '../modules/reaction/pzmr';
+import { reactionModules } from '../modules/registry';
 import { gorbovMetrics } from '../modules/tables/gorbov';
 import { perfectPlayer, playTimeline } from '../testing/sessionPlayers';
 import {
@@ -20,6 +22,8 @@ import {
   buildBlock,
   diagnosticBlockSeed,
   diagnosticResults,
+  E2E_COND_MARGIN,
+  e2eCondFloor,
   isOverloadBlock,
   planBlock,
   scaledCount,
@@ -28,6 +32,8 @@ import {
   scoreSeries,
   trainingBlockSeed,
   updatedRatings,
+  type BlockPlan,
+  type PlanContext,
 } from './blocks';
 import { logicItemRows } from './rowsBuild';
 import { MEMORY_SPAN_INSTRUCTION, OVERLOAD_PREFIX, type StepOf } from './steps';
@@ -47,6 +53,18 @@ const summary = (over: Partial<ReactionSummary>): ReactionSummary => ({
   ...over,
 });
 
+/** The reaction modules with trial conditions (COND_PAIRS). */
+const CONDITION_MODULES: readonly ReactionModuleId[] = ['stroop', 'pomeh', 'taskswitch'];
+
+const freeSegment = (module: ReactionModuleId): Segment => ({ module, budgetMs: 300_000, purpose: 'free' });
+
+/** The first block of `seg` at level L, which must be a reaction block. */
+function reactionPlan(seg: Segment, L: number, ctx: PlanContext): Extract<BlockPlan, { kind: 'reaction' }> {
+  const plan = planBlock(seg, L, 0, ctx);
+  if (plan.kind !== 'reaction') throw new Error('expected a reaction plan');
+  return plan;
+}
+
 describe('scale', () => {
   it('block sizes and item counts: max(3, round(n·scale))', () => {
     expect([scaledCount(15, 1), scaledCount(15, 0.02), scaledCount(50, 0.1), scaledCount(10, 2)]).toEqual([15, 3, 5, 20]);
@@ -56,24 +74,79 @@ describe('scale', () => {
     expect([scaledCount(40, 0.02, 12), scaledCount(48, 0.5, 12), scaledCount(20, 1, 12), scaledCount(20, 0.02, 3)]).toEqual([12, 24, 20, 3]);
   });
 
-  it('under the e2e scale pomeh, stroop and taskswitch blocks keep 12 trials (≥ 3 RTs per condition); the others 3', () => {
+  it('under the e2e scale pomeh, stroop and taskswitch blocks hold MIN_COND_RTS + 2 trials per condition; the others 3', () => {
     const ctx = { layout: 'keyboard', scale: 0.02, diagnostic: true } as const;
     const sizes = planDiagnostic(1).segments.flatMap((seg) => {
       const plan = planBlock(seg, seg.fixedL ?? 0, 0, ctx);
-      return plan.kind === 'reaction' ? [[plan.module, plan.size, plan.practice]] : [];
+      return plan.kind === 'reaction' ? [[plan.module, plan.L, plan.size, plan.practice]] : [];
     });
+    // pomeh: runs of 5 and 3 leave the other condition 5 trials at 15; stroop L 8 (0.66): 5 congruent at 14;
+    // taskswitch L 5 (0.3): round(0.3·15) = 5 switches at 16.
     expect(sizes).toEqual([
-      ['pzmr', 3, 1],
-      ['szmr', 3, 1],
-      ['gonogo', 3, 1],
-      ['rdo', 3, 1],
-      ['pomeh', 12, 1],
-      ['stroop', 12, 1],
-      ['taskswitch', 12, 1],
+      ['pzmr', 0, 3, 1],
+      ['szmr', 0, 3, 1],
+      ['gonogo', 10, 3, 1],
+      ['rdo', 0, 3, 1],
+      ['pomeh', 8, 15, 1],
+      ['stroop', 8, 14, 1],
+      ['taskswitch', 5, 16, 1],
     ]);
-    const free: Segment = { module: 'stroop', budgetMs: 300_000, purpose: 'free' };
-    expect(planBlock(free, 0, 0, { ...ctx, diagnostic: false })).toMatchObject({ size: 12 });
-    expect(planBlock(free, 0, 0, { ...ctx, scale: 1, diagnostic: false })).toMatchObject({ size: 20 });
+    // A free (or first training) block at L 0; never below 12. taskswitch at 0.2 needs 24 for 5 switches.
+    const freeCtx = { ...ctx, diagnostic: false };
+    expect(CONDITION_MODULES.map((m) => reactionPlan(freeSegment(m), 0, freeCtx).size)).toEqual([12, 15, 24]);
+  });
+
+  it('pins the margin (W2-R30): at the levels e2e plays, every condition of every seed keeps MIN_COND_RTS + 2 trials', () => {
+    expect(E2E_COND_MARGIN).toBe(2);
+    const need = MIN_COND_RTS + E2E_COND_MARGIN;
+    const ctx = { layout: 'keyboard', scale: 0.02, diagnostic: true } as const;
+    // The diagnostic plays each at its fixedL; free training (and a new module's first training) plays L 0.
+    const diag = planDiagnostic(1)
+      .segments.filter((seg) => CONDITION_MODULES.includes(seg.module as ReactionModuleId))
+      .map((seg) => reactionPlan(seg, seg.fixedL ?? 0, ctx));
+    const free = CONDITION_MODULES.map((m) => reactionPlan(freeSegment(m), 0, { ...ctx, diagnostic: false }));
+    expect(diag.map((p) => [p.module, p.L])).toEqual([
+      ['pomeh', 8],
+      ['stroop', 8],
+      ['taskswitch', 5],
+    ]);
+    for (const plan of [...diag, ...free]) {
+      const pair = condPairOf(plan.module) as CondPair;
+      for (let seed = 0; seed < 300; seed++) {
+        const { step } = buildBlock(plan, seed, 'keyboard', new Map());
+        if (step.kind !== 'reaction_block') throw new Error('expected a reaction block');
+        const counted = step.specs.filter((t) => t.practice !== true);
+        for (const cond of [pair.slow, pair.fast]) {
+          expect(counted.filter((t) => t.cond === cond).length, `${plan.module} L ${String(plan.L)} ${cond}, seed ${String(seed)}`).toBeGreaterThanOrEqual(need);
+        }
+      }
+    }
+  });
+
+  it('the e2e floor holds at every level 0–40, and scale 1 keeps the planned sizes', () => {
+    const need = MIN_COND_RTS + E2E_COND_MARGIN;
+    for (const module of CONDITION_MODULES) {
+      const mod = reactionModules[module];
+      const diagSeg = planDiagnostic(1).segments.find((s) => s.module === module) as Segment;
+      for (let L = 0; L <= 40; L++) {
+        for (const seg of [diagSeg, freeSegment(module)]) {
+          const diagnostic = seg.purpose === 'diagnostic';
+          const e2e = reactionPlan(seg, L, { layout: 'keyboard', scale: 0.02, diagnostic });
+          expect(mod.minCondTrials?.(e2e.params, e2e.size), `${module} L ${String(L)}`).toBeGreaterThanOrEqual(need);
+          expect(planBlock(seg, L, 0, { layout: 'keyboard', scale: 1, diagnostic })).toMatchObject({ size: seg.trialCount ?? mod.blockSize });
+        }
+      }
+    }
+  });
+
+  it('the modules with trial conditions are exactly the ones that report their fewest trials per condition', () => {
+    expect(REACTION_MODULE_IDS.filter((m) => condPairOf(m) !== null).sort()).toEqual([...CONDITION_MODULES].sort());
+    for (const m of REACTION_MODULE_IDS) expect(reactionModules[m].minCondTrials !== undefined, m).toBe(condPairOf(m) !== null);
+  });
+
+  it('e2eCondFloor refuses a module whose conditions never reach the margin', () => {
+    const lopsided = { ...reactionModules.stroop, minCondTrials: () => 0 };
+    expect(() => e2eCondFloor(lopsided, reactionModules.stroop.params(0))).toThrow(RangeError);
   });
 
   it('practice trials only shrink under scale < 1, never below 1', () => {

@@ -115,6 +115,20 @@ describe('stroop.generateBlock', () => {
     expect(flags.filter(Boolean)).toHaveLength(20);
   });
 
+  it('minCondTrials: the smaller of the congruent and incongruent counts, whatever the seed', () => {
+    for (const L of [0, 5, 8, 12, 16, 40]) {
+      const p = stroop.params(L);
+      for (let n = 1; n <= 60; n++) {
+        const block = stroop.generateBlock(p, createRng(n), 'keyboard', n);
+        const incongruent = block.filter((t) => t.cond === 'incongruent').length;
+        expect(stroop.minCondTrials?.(p, n), `L ${String(L)}, n ${String(n)}`).toBe(Math.min(incongruent, n - incongruent));
+      }
+    }
+    // L = 8 (ratio 0.66): 14 trials hold 5 congruent; L = 16 (0.75): 19.
+    expect([13, 14].map((n) => stroop.minCondTrials?.(stroop.params(8), n))).toEqual([4, 5]);
+    expect([18, 19].map((n) => stroop.minCondTrials?.(stroop.params(16), n))).toEqual([4, 5]);
+  });
+
   it('is deterministic for a seed', () => {
     const p = stroop.params(8);
     expect(stroop.generateBlock(p, createRng(9), 'keyboard')).toEqual(stroop.generateBlock(p, createRng(9), 'keyboard'));
