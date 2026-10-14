@@ -35,11 +35,13 @@ export default tseslint.config(
         'error',
         {
           patterns: [
-            { group: ['react', 'react-dom', 'react/*', 'react-dom/*'], message: 'src/engine не зависит от React.' },
-            { group: ['**/runtime/**'], message: 'src/engine не импортирует src/runtime.' },
-            { group: ['**/ui/**'], message: 'src/engine не импортирует src/ui.' },
-            { group: ['**/data/**'], message: 'src/engine не импортирует src/data.' },
-            { group: ['**/platform/**'], message: 'src/engine не импортирует src/platform.' },
+            { group: ['react', 'react/*', 'react-dom', 'react-dom/*'], message: 'src/engine не зависит от React.' },
+            { group: ['@tauri-apps/*'], message: 'src/engine не зависит от Tauri.' },
+            { group: ['**/runtime', '**/runtime/**'], message: 'src/engine не импортирует src/runtime.' },
+            { group: ['**/ui', '**/ui/**'], message: 'src/engine не импортирует src/ui.' },
+            { group: ['**/data', '**/data/**'], message: 'src/engine не импортирует src/data.' },
+            { group: ['**/platform', '**/platform/**'], message: 'src/engine не импортирует src/platform.' },
+            { group: ['**/modules', '**/modules/**'], message: 'src/engine не импортирует src/modules (правило R1).' },
           ],
         },
       ],

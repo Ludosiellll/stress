@@ -7,4 +7,10 @@ describe('App', () => {
     render(<App />);
     expect(screen.getByRole('heading', { name: 'Тренажёр отбора' })).toBeTruthy();
   });
+
+  // Регрессия: без cleanup между тестами DOM накапливается и getByRole находит два заголовка.
+  it('starts each test with a clean DOM', () => {
+    render(<App />);
+    expect(screen.getByRole('heading', { name: 'Тренажёр отбора' })).toBeTruthy();
+  });
 });
