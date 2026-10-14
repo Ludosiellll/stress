@@ -90,7 +90,7 @@ function SessionFlow({
   startSession = startController,
   rootRef,
 }: SessionProps & { rootRef: RefObject<HTMLElement | null> }) {
-  const { platform, repo } = useApp();
+  const { platform, repo, audio } = useApp();
   const hooks = e2eHooks();
   const [phase, setPhase] = useState<Phase>({ kind: 'check' });
   const [frameMs, setFrameMs] = useState(FALLBACK_FRAME_MS);
@@ -104,6 +104,8 @@ function SessionFlow({
   const [crash, setCrash] = useState<Error | null>(null);
   const busyRef = useRef(false);
   const live = useRef(true);
+  /** The saved stress volume, 0..100; read with the other settings when the session starts. */
+  const stressVolume = useRef(0);
 
   const fullscreen = useCallback(
     (on: boolean): void => {
@@ -148,6 +150,7 @@ function SessionFlow({
     void (async () => {
       try {
         const [settings, appVersion] = await Promise.all([repo.getSettings(), platform.appVersion()]);
+        stressVolume.current = settings.stressVolume;
         const c = await startSession({ repo, plan, layout: settings.layout, now: () => new Date(), appVersion, scale: hooks.scale });
         if (live.current) setPhase({ kind: 'running', c });
       } catch (e) {
@@ -257,6 +260,9 @@ function SessionFlow({
           text={step.text}
           keysHint={step.keysHint}
           onStart={() => {
+            // A key press or click: the moment the browser lets the audio context start.
+            audio.setVolume(stressVolume.current / 100);
+            void audio.unlock();
             run((c) => {
               c.ackInstruction();
             });

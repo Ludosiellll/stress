@@ -1,10 +1,13 @@
 import { createContext, useContext } from 'react';
 import type { Repository } from '../data/repository';
 import type { Platform } from '../platform';
+import type { AudioOut } from '../runtime/audio/audioOut';
 
 export interface AppServices {
   platform: Platform;
   repo: Repository;
+  /** Sound stressors; reaction blocks and «Проверить звук» play through it. */
+  audio: AudioOut;
 }
 
 export const AppContext = createContext<AppServices | null>(null);

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { exportBundle, toCsv } from '../../data/export';
 import type { Settings as SettingsRow } from '../../data/rows';
+import type { AudioStressorParams } from '../../engine/audio/stressors';
 import type { LayoutId } from '../../engine/types';
 import { measureRefresh } from '../../engine/timing';
 import { useApp } from '../AppContext';
@@ -24,6 +25,14 @@ const CHECK_MS = 3000;
 const DROPPED_WARNING_PERCENT = 5;
 /** Excel reads UTF-8 CSV as Cyrillic only with a BOM. */
 const BOM = '﻿';
+
+/** «Проверить звук»: 2 s of hum and beeps at the set volume. */
+const SOUND_CHECK: AudioStressorParams = { layers: ['hum', 'beeps'], gain: 1 };
+const SOUND_CHECK_SEED = 1;
+const SOUND_CHECK_MS = 2000;
+const SOUND_HINT = 'Звуковые помехи включаются в «Помехоустойчивости» на высоких уровнях и в финишере. Лучше слушать в наушниках.';
+const SOUND_UNAVAILABLE = 'Звук недоступен на этом компьютере';
+const SOUND_SILENT = 'Звук не воспроизводился';
 
 const TIMING_NOTE =
   'Клавиатура ноутбука добавляет задержку по сравнению с кнопкой прибора. Сравнивай результаты со своими прошлыми, а нормы считай ориентировочными.';
@@ -96,13 +105,16 @@ function SelfCheckResult({ check, fresh }: { check: SelfCheck; fresh: boolean })
 }
 
 type Busy = 'check' | 'export' | 'report' | null;
+type SoundCheck = 'idle' | 'playing' | 'unavailable' | 'silent';
 
 export default function Settings({ onBack, measureFrames = (signal) => collectFrameTimestamps(CHECK_MS, signal) }: SettingsProps) {
-  const { platform, repo } = useApp();
+  const { platform, repo, audio } = useApp();
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [layout, setLayout] = useState<LayoutId>('keyboard');
   const [testDate, setTestDate] = useState('');
+  const [volume, setVolume] = useState(60);
+  const [sound, setSound] = useState<SoundCheck>('idle');
   const [check, setCheck] = useState<{ result: SelfCheck; fresh: boolean } | null>(null);
   const [version, setVersion] = useState<string | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
@@ -129,6 +141,8 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
         if (signal.aborted) return;
         setLayout(s.layout);
         setTestDate(s.testDate ?? '');
+        setVolume(s.stressVolume);
+        audio.setVolume(s.stressVolume / 100);
         const previous = parseSelfCheck(s.lastSelfCheckJson);
         setCheck(previous === null ? null : { result: previous, fresh: false });
         setVersion(v);
@@ -142,7 +156,7 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
     return () => {
       controller.abort();
     };
-  }, [repo, platform]);
+  }, [repo, platform, audio]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
@@ -177,6 +191,47 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
     const previous = testDate;
     setTestDate(value);
     void save('дата теста', { testDate: value === '' ? null : value }, () => { setTestDate(previous); });
+  };
+
+  const changeVolume = (value: number): void => {
+    const previous = volume;
+    setVolume(value);
+    audio.setVolume(value / 100);
+    void save('громкость помех', { stressVolume: value }, () => {
+      setVolume(previous);
+      audio.setVolume(previous / 100);
+    });
+  };
+
+  /** Plays hum and beeps for 2 s; the sound stops early when the screen closes. */
+  const checkSound = async (): Promise<void> => {
+    const signal = lifetime.current?.signal;
+    if (signal === undefined) return;
+    setSound('playing');
+    audio.setVolume(volume / 100);
+    await audio.unlock();
+    if (signal.aborted) return;
+    const handle = audio.prepare(SOUND_CHECK, SOUND_CHECK_SEED);
+    if (handle === null) {
+      setSound('unavailable');
+      return;
+    }
+    if (!handle.start(0)) {
+      handle.stop();
+      setSound('silent');
+      return;
+    }
+    handle.setActive(true);
+    const end = (): void => {
+      window.clearTimeout(timer);
+      handle.stop();
+    };
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener('abort', end);
+      end();
+      setSound('idle');
+    }, SOUND_CHECK_MS);
+    signal.addEventListener('abort', end, { once: true });
   };
 
   const runCheck = async (): Promise<void> => {
@@ -293,6 +348,29 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
         {checkError !== null && <p role="alert">Не удалось выполнить замер: {checkError}</p>}
         {check !== null && <SelfCheckResult check={check.result} fresh={check.fresh} />}
         <p className="muted">{TIMING_NOTE}</p>
+      </section>
+
+      <section>
+        <h3>Звук</h3>
+        <div className="row">
+          <label htmlFor="stress-volume">Громкость помех</label>
+          <input
+            id="stress-volume"
+            type="range"
+            min={0}
+            max={100}
+            step={5}
+            value={volume}
+            onChange={(e) => { changeVolume(Number(e.target.value)); }}
+          />
+          <span>{volume} %</span>
+        </div>
+        <button type="button" disabled={sound === 'playing'} onClick={() => void checkSound()}>
+          Проверить звук
+        </button>
+        {sound === 'unavailable' && <p role="status">{SOUND_UNAVAILABLE}</p>}
+        {sound === 'silent' && <p role="status">{SOUND_SILENT}</p>}
+        <p className="muted">{SOUND_HINT}</p>
       </section>
 
       <section>

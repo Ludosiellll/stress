@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Repository } from '../data/repository';
 import type { SessionPlan } from '../engine/planner';
 import { getPlatform, type Platform } from '../platform';
+import { browserAudioOut } from '../runtime/audio/audioOut';
 import { AppContext } from './AppContext';
 import { bootstrap } from './bootstrap';
 import Free from './screens/Free';
@@ -50,6 +51,7 @@ function Screens({ route, go }: { route: Route; go: (next: Route) => void }) {
 
 export default function App({ platform: given }: AppProps) {
   const platform = useMemo(() => given ?? getPlatform(), [given]);
+  const audio = useMemo(() => browserAudioOut(window), []);
   const [boot, setBoot] = useState<Boot>({ status: 'loading' });
   const [route, setRoute] = useState<Route>({ screen: 'home' });
   const [attempt, setAttempt] = useState(0);
@@ -89,7 +91,7 @@ export default function App({ platform: given }: AppProps) {
         </>
       )}
       {boot.status === 'ready' && (
-        <AppContext.Provider value={{ platform, repo: boot.repo }}>
+        <AppContext.Provider value={{ platform, repo: boot.repo, audio }}>
           <Screens route={route} go={setRoute} />
         </AppContext.Provider>
       )}

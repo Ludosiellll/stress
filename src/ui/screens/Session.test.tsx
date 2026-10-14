@@ -8,6 +8,7 @@ import type { BlockTimeline, TrialSpec } from '../../engine/reaction/types';
 import type { SessionStartOptions } from '../../session/controller';
 import type { BlockSummaryView, Step, StepOf } from '../../session/steps';
 import { frameStamps, manualFrames, mockCanvas, nextTask, stamped, type ManualFrames } from '../../testing/domFakes';
+import type { AudioOut } from '../../runtime/audio/audioOut';
 import { createFakePlatform, type FakePlatform } from '../../testing/fakePlatform';
 import { renderWithApp } from '../testUtils';
 import Session, { type SessionDriver } from './Session';
@@ -109,7 +110,7 @@ interface Rendered {
 
 async function renderSession(
   driver: SessionDriver | (() => SessionDriver),
-  o: { charging?: boolean | null; repo?: MemoryRepository; plan?: SessionPlan } = {},
+  o: { charging?: boolean | null; repo?: MemoryRepository; plan?: SessionPlan; audio?: AudioOut } = {},
 ): Promise<Rendered> {
   const repo = o.repo ?? new MemoryRepository();
   const platform = createFakePlatform({ repo, charging: o.charging ?? true });
@@ -126,6 +127,7 @@ async function renderSession(
     />,
     platform,
     repo,
+    o.audio,
   );
   if (o.charging === false) {
     await screen.findByRole('button', { name: 'Назад' });
@@ -165,6 +167,31 @@ describe('Session start', () => {
     expect(options.now()).toBeInstanceOf(Date);
     expect(screen.getByRole('region', { name: 'Сессия' })).toBeTruthy();
     expect(screen.getByText(INSTRUCTION.text)).toBeTruthy();
+  });
+
+  it('starting a block from the instruction unlocks audio and applies the saved volume', async () => {
+    const repo = new MemoryRepository();
+    await repo.saveSettings({ stressVolume: 35 });
+    const order: string[] = [];
+    const audio = {
+      unlock: vi.fn<AudioOut['unlock']>(() => {
+        order.push('unlock');
+        return Promise.resolve();
+      }),
+      setVolume: vi.fn<AudioOut['setVolume']>((v) => {
+        order.push(`volume ${String(v)}`);
+      }),
+      prepare: vi.fn<AudioOut['prepare']>(() => null),
+    };
+    const c = fakeDriver(INSTRUCTION);
+    c.ackInstruction.mockImplementation(() => {
+      order.push('ack');
+      c.step = { kind: 'summary', view: SUMMARY };
+    });
+    await renderSession(c, { repo, audio });
+    expect(audio.unlock).not.toHaveBeenCalled();
+    await press('Enter');
+    expect(order).toEqual(['volume 0.35', 'unlock', 'ack']);
   });
 
   it('on battery asks first; «Назад» leaves without starting', async () => {

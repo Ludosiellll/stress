@@ -1,7 +1,8 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRepository } from '../../data/memoryRepository';
 import { block, session, trial } from '../../data/repository.contract';
+import type { AudioOut, StressorHandle } from '../../runtime/audio/audioOut';
 import { createFakePlatform, type FakePlatformOptions } from '../../testing/fakePlatform';
 import { renderWithApp } from '../testUtils';
 import Settings from './Settings';
@@ -20,11 +21,14 @@ function frames(count: number, step: number, hiccupEvery = 0): number[] {
   return out;
 }
 
-async function renderSettings(options: FakePlatformOptions = {}, measureFrames = vi.fn(() => Promise.resolve(frames(181, 1000 / 60)))) {
+async function renderSettings(
+  { audio, ...options }: FakePlatformOptions & { audio?: AudioOut } = {},
+  measureFrames = vi.fn(() => Promise.resolve(frames(181, 1000 / 60))),
+) {
   const repo = options.repo ?? new MemoryRepository();
   const platform = createFakePlatform({ ...options, repo });
   const onBack = vi.fn();
-  const view = renderWithApp(<Settings onBack={onBack} measureFrames={measureFrames} />, platform, repo);
+  const view = renderWithApp(<Settings onBack={onBack} measureFrames={measureFrames} />, platform, repo, audio);
   await screen.findByText(/Версия приложения/);
   return { repo, platform, onBack, measureFrames, view };
 }
@@ -307,5 +311,107 @@ describe('Settings dropped-frame warning', () => {
     renderWithApp(<Settings onBack={vi.fn()} />, createFakePlatform({ repo }), repo);
     await screen.findByText(WARNING);
     expect(screen.getByText(WARNING).getAttribute('role')).toBe('status');
+  });
+});
+
+/** An AudioOut double whose loop handle records what the screen does with it. */
+function spyAudio(started = true) {
+  const handle = {
+    playing: false,
+    start: vi.fn<StressorHandle['start']>(() => started),
+    setActive: vi.fn<StressorHandle['setActive']>(),
+    stop: vi.fn<StressorHandle['stop']>(),
+  };
+  const audio = {
+    unlock: vi.fn<AudioOut['unlock']>(() => Promise.resolve()),
+    setVolume: vi.fn<AudioOut['setVolume']>(),
+    prepare: vi.fn<AudioOut['prepare']>(() => handle),
+  };
+  return { audio, handle };
+}
+
+async function clickCheckSound(): Promise<void> {
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Проверить звук' }));
+    await Promise.resolve();
+  });
+}
+
+describe('Settings sound', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('shows the default volume of 60 % and the hint', async () => {
+    await renderSettings();
+    expect(screen.getByRole<HTMLInputElement>('slider', { name: 'Громкость помех' }).value).toBe('60');
+    expect(screen.getByText('60 %')).toBeTruthy();
+    expect(screen.getByText('Звуковые помехи включаются в «Помехоустойчивости» на высоких уровнях и в финишере. Лучше слушать в наушниках.')).toBeTruthy();
+  });
+
+  it('the slider saves stressVolume in steps of 5 and sets the output volume', async () => {
+    const repo = new MemoryRepository();
+    await repo.saveSettings({ stressVolume: 40 });
+    const { audio } = spyAudio();
+    await renderSettings({ repo, audio });
+    const slider = screen.getByRole<HTMLInputElement>('slider', { name: 'Громкость помех' });
+    expect(slider.value).toBe('40');
+    expect(slider.min).toBe('0');
+    expect(slider.max).toBe('100');
+    expect(slider.step).toBe('5');
+    expect(audio.setVolume).toHaveBeenLastCalledWith(0.4);
+    fireEvent.change(slider, { target: { value: '75' } });
+    await waitFor(async () => {
+      expect((await repo.getSettings()).stressVolume).toBe(75);
+    });
+    expect(screen.getByText('75 %')).toBeTruthy();
+    expect(audio.setVolume).toHaveBeenLastCalledWith(0.75);
+  });
+
+  it('«Проверить звук» plays hum and beeps at the set volume and stops after 2 s', async () => {
+    const { audio, handle } = spyAudio();
+    await renderSettings({ audio });
+    vi.useFakeTimers();
+    await clickCheckSound();
+    expect(audio.unlock).toHaveBeenCalledTimes(1);
+    expect(audio.setVolume).toHaveBeenLastCalledWith(0.6);
+    expect(audio.prepare).toHaveBeenCalledWith({ layers: ['hum', 'beeps'], gain: 1 }, expect.any(Number));
+    expect(handle.start).toHaveBeenCalledTimes(1);
+    expect(handle.setActive).toHaveBeenCalledWith(true);
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Проверить звук' }).disabled).toBe(true);
+    act(() => {
+      vi.advanceTimersByTime(1999);
+    });
+    expect(handle.stop).not.toHaveBeenCalled();
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(handle.stop).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Проверить звук' }).disabled).toBe(false);
+  });
+
+  it('stops the check sound when the screen closes', async () => {
+    const { audio, handle } = spyAudio();
+    const { view } = await renderSettings({ audio });
+    await clickCheckSound();
+    expect(handle.start).toHaveBeenCalledTimes(1);
+    view.unmount();
+    expect(handle.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('without Web Audio says the sound is unavailable', async () => {
+    await renderSettings();
+    expect(screen.queryByText('Звук недоступен на этом компьютере')).toBeNull();
+    await clickCheckSound();
+    expect(screen.getByText('Звук недоступен на этом компьютере')).toBeTruthy();
+  });
+
+  it('says so when the sound could not start', async () => {
+    const { audio, handle } = spyAudio(false);
+    await renderSettings({ audio });
+    await clickCheckSound();
+    expect(screen.getByText('Звук не воспроизводился')).toBeTruthy();
+    expect(handle.setActive).not.toHaveBeenCalled();
+    expect(handle.stop).toHaveBeenCalled();
   });
 });

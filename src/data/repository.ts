@@ -55,7 +55,7 @@ export interface Repository {
   getRatings(): Promise<Map<FamilyId, Rating>>;
   /** Replaces the whole ratings cache with the given map (families not in it are dropped). */
   saveRatings(r: ReadonlyMap<FamilyId, Rating>): Promise<void>;
-  /** Defaults: keyboard, null, null. */
+  /** Defaults: keyboard, null, null, stress volume 60. */
   getSettings(): Promise<Settings>;
   /** Writes only the given keys. */
   saveSettings(p: Partial<Settings>): Promise<void>;
@@ -67,9 +67,9 @@ export interface Repository {
 
 export const LOG_LIMIT = 500;
 
-export const DEFAULT_SETTINGS: Readonly<Settings> = { layout: 'keyboard', testDate: null, lastSelfCheckJson: null };
+export const DEFAULT_SETTINGS: Readonly<Settings> = { layout: 'keyboard', testDate: null, lastSelfCheckJson: null, stressVolume: 60 };
 
-export const SETTINGS_KEYS: readonly (keyof Settings)[] = ['layout', 'testDate', 'lastSelfCheckJson'];
+export const SETTINGS_KEYS: readonly (keyof Settings)[] = ['layout', 'testDate', 'lastSelfCheckJson', 'stressVolume'];
 
 function assertFinite(what: string, fields: Record<string, number | null>): void {
   for (const [name, v] of Object.entries(fields)) {

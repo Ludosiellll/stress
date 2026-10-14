@@ -90,6 +90,8 @@ export interface Settings {
   layout: LayoutId;
   testDate: string | null;
   lastSelfCheckJson: string | null;
+  /** Volume of the sound stressors, 0..100 % (default 60). */
+  stressVolume: number;
 }
 
 /**
