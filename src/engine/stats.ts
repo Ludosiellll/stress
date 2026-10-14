@@ -6,8 +6,12 @@ export function mean(xs: readonly number[]): number {
 }
 
 export function median(xs: readonly number[]): number {
-  if (xs.length === 0) return NaN;
-  const sorted = [...xs].sort((a, b) => a - b);
+  return medianOfSorted([...xs].sort((a, b) => a - b));
+}
+
+/** Median of values already in ascending order, read in place (no copy, no sort); NaN for none. */
+export function medianOfSorted(sorted: readonly number[]): number {
+  if (sorted.length === 0) return NaN;
   const mid = sorted.length >> 1;
   return sorted.length % 2 === 1
     ? (sorted[mid] as number)

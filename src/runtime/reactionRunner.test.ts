@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { resolveBlock } from '../engine/reaction/resolve';
 import type { BlockTimeline, Stimulus, TrialSpec } from '../engine/reaction/types';
 import type { FrameClock } from './frameClock';
-import { LATE_GRACE_MS, ReactionBlockRunner, type RunnerEnd, type StimulusRenderer } from './reactionRunner';
+import {
+  LATE_GRACE_MS,
+  MIN_FRAME_SAMPLES,
+  ReactionBlockRunner,
+  type RunnerEnd,
+  type StimulusRenderer,
+} from './reactionRunner';
 
 const FRAME = 16.667;
 
@@ -17,9 +23,15 @@ class FakeClock implements FrameClock {
   ignoreCancel = false;
   /** Timestamps of the frames that ran at least one callback. */
   readonly frames: number[] = [];
+  /** Frame interval of `step()` without an argument, and so of `runOut()`. */
+  readonly frameMs: number;
   private nextId = 1;
   private readonly pending = new Map<number, (ts: number) => void>();
   private inputs: { ts: number; fn: () => void }[] = [];
+
+  constructor(frameMs = FRAME) {
+    this.frameMs = frameMs;
+  }
 
   request(cb: (ts: number) => void): number {
     const id = this.nextId++;
@@ -39,7 +51,7 @@ class FakeClock implements FrameClock {
     this.inputs.push({ ts, fn });
   }
 
-  step(dt = FRAME): void {
+  step(dt = this.frameMs): void {
     this.stepTo(this.now + dt);
   }
 
@@ -111,9 +123,15 @@ interface Harness {
 
 function setup(
   specs: readonly TrialSpec[],
-  opts: { nominalFrameMs?: number; presentationLeadMs?: number; onShow?: (at: number) => void } = {},
+  opts: {
+    nominalFrameMs?: number;
+    presentationLeadMs?: number;
+    /** The display's actual frame interval (FakeClock step); default FRAME. */
+    frameMs?: number;
+    onShow?: (at: number) => void;
+  } = {},
 ): Harness {
-  const clock = new FakeClock();
+  const clock = new FakeClock(opts.frameMs);
   const calls: Call[] = [];
   const renderer: StimulusRenderer = {
     show(stimulus) {
@@ -196,15 +214,99 @@ describe('ReactionBlockRunner: onsets', () => {
     expect(tl.droppedOnset).toEqual([true, false]);
   });
 
-  it('judges dropped frames against nominalFrameMs', async () => {
+  it.each([
+    [24, false],
+    [26, true],
+  ])('judges a %s ms onset frame against the block median, not nominalFrameMs', async (gap, dropped) => {
     const h = setup([pressTrial(500)], { nominalFrameMs: 30 });
     const { clock } = h;
     clock.step();
     const t0 = clock.now;
-    while (clock.now + 40 < t0 + 500) clock.step();
-    clock.step(40); // 40 ≤ 1.5 · 30
+    while (clock.now + gap < t0 + 500) clock.step();
+    clock.step(gap); // limit 1.5 · 16.667 ≈ 25; nominalFrameMs alone would allow 45
+    const onset = clock.now;
     clock.runOut();
-    expect((await timelineOf(h)).droppedOnset).toEqual([false]);
+    const tl = await timelineOf(h);
+    expect(tl.onsets).toEqual([onset]);
+    expect(tl.frameMs).toBeCloseTo(FRAME, 6);
+    expect(tl.droppedOnset).toEqual([dropped]);
+  });
+});
+
+describe('ReactionBlockRunner: block frame interval (R37)', () => {
+  it("flags dropped onsets against the block's own frame interval", async () => {
+    const h = setup([pressTrial(500)], { nominalFrameMs: 16.667, frameMs: 8.333 });
+    const { clock } = h;
+    clock.step();
+    const t0 = clock.now;
+    while (clock.now + 20 < t0 + 500) clock.step();
+    clock.step(20); // 20 > 1.5 · 8.333, but ≤ 1.5 · 16.667
+    const onset = clock.now;
+    clock.runOut();
+    const tl = await timelineOf(h);
+    expect(tl.onsets).toEqual([onset]);
+    expect(tl.droppedOnset).toEqual([true]);
+    expect(tl.frameMs).toBeCloseTo(8.333, 2);
+  });
+
+  it('a stale session interval does not flag normal frames', async () => {
+    const h = setup(
+      Array.from({ length: 5 }, () => pressTrial(500, 300)),
+      { nominalFrameMs: 8.333, frameMs: 16.667 },
+    );
+    h.clock.runOut();
+    const tl = await timelineOf(h);
+    expect(tl.droppedOnset).toEqual([false, false, false, false, false]);
+    expect(tl.frameMs).toBeCloseTo(16.667, 2);
+  });
+
+  it('falls back to nominalFrameMs with fewer than 10 frame deltas', async () => {
+    const h = setup([pressTrial(0, 100)], { nominalFrameMs: 16.667, frameMs: 200 });
+    h.clock.runOut();
+    const tl = await timelineOf(h);
+    expect(h.clock.frames.length - 1).toBeLessThan(MIN_FRAME_SAMPLES);
+    expect(tl.frameMs).toBe(16.667);
+    expect(tl.droppedOnset).toEqual([false]);
+  });
+
+  it.each([
+    [100, 9, FRAME],
+    [150, 10, 50],
+  ])('a %s ms window at 50 ms frames gives %s frame deltas and frameMs %s', async (windowMs, deltas, frameMs) => {
+    expect(MIN_FRAME_SAMPLES).toBe(10);
+    const h = setup([pressTrial(0, windowMs)], { frameMs: 50 });
+    h.clock.runOut();
+    const tl = await timelineOf(h);
+    expect(h.clock.frames).toHaveLength(deltas + 1); // every frame of the block counts, the closing one too
+    expect(tl.frameMs).toBe(frameMs);
+  });
+
+  it("RDO lead follows the block's frames", async () => {
+    const h = setup([rdoTrial(500, 1000)], { nominalFrameMs: 16.667, frameMs: 8.333 });
+    h.clock.runOut();
+    await timelineOf(h);
+    expect(h.calls.find((c) => c.op === 'tick')?.elapsed).toBeCloseTo(8.333, 2);
+  });
+
+  it('RDO lead falls back before 10 frames and stays fixed for the trial', async () => {
+    const h = setup([rdoTrial(0, 1000)], { nominalFrameMs: 16.667, frameMs: 8.333 });
+    h.clock.runOut();
+    const onset = (await timelineOf(h)).onsets[0] as number;
+    const ticks = h.calls.filter((c) => c.op === 'tick');
+    expect(ticks[0]?.elapsed).toBe(16.667);
+    // More than 10 deltas arrive while the dot moves; the lead chosen at the onset is kept.
+    expect(ticks.length).toBeGreaterThan(MIN_FRAME_SAMPLES);
+    expect(ticks.map((c) => c.elapsed)).toEqual(ticks.map((c) => c.at - onset + 16.667));
+  });
+
+  it.each([
+    [450, FRAME],
+    [500, 50],
+  ])('RDO lead at 50 ms frames, ISI %s ms: the onset frame delta counts toward the 10 (lead %s)', async (isiMs, lead) => {
+    const h = setup([rdoTrial(isiMs, 1000)], { frameMs: 50 });
+    h.clock.runOut();
+    await timelineOf(h);
+    expect(h.calls.find((c) => c.op === 'tick')?.elapsed).toBe(lead);
   });
 });
 
@@ -426,7 +528,7 @@ describe('ReactionBlockRunner: trial end', () => {
 });
 
 describe('ReactionBlockRunner: rdo', () => {
-  it('rdo ticks every frame while shown, one nominal frame ahead by default', async () => {
+  it('rdo ticks every frame while shown, one block frame ahead by default', async () => {
     const h = setup([rdoTrial(500, 200)]);
     h.clock.runOut();
     const tl = await timelineOf(h);
@@ -436,15 +538,17 @@ describe('ReactionBlockRunner: rdo', () => {
     const shownFrames = h.clock.frames.filter((ts) => ts >= onset && ts < hideAt);
     const ticks = h.calls.filter((c) => c.op === 'tick');
     expect(ticks.map((c) => c.at)).toEqual(shownFrames);
-    expect(ticks.map((c) => c.elapsed)).toEqual(shownFrames.map((ts) => ts - onset + FRAME));
-    expect(ticks[0]?.elapsed).toBe(FRAME); // the onset frame gets the lead, not 0
+    const lead = ticks[0]?.elapsed as number; // the onset frame gets the lead, not 0
+    expect(lead).toBeCloseTo(FRAME, 6); // median of the measured deltas: FRAME up to float rounding
+    expect(ticks.map((c) => c.elapsed)).toEqual(shownFrames.map((ts) => ts - onset + lead));
     expect(h.ops().slice(0, 2)).toEqual(['show', 'tick']);
   });
 
-  it('default presentation lead follows nominalFrameMs', async () => {
-    const h = setup([rdoTrial(500, 200)], { nominalFrameMs: 20 });
+  it('default presentation lead falls back to nominalFrameMs before 10 frame deltas', async () => {
+    const h = setup([rdoTrial(100, 200)], { nominalFrameMs: 20 });
     h.clock.runOut();
     const onset = (await timelineOf(h)).onsets[0] as number;
+    expect(h.clock.frames.indexOf(onset)).toBeLessThan(MIN_FRAME_SAMPLES); // deltas measured up to the onset
     const ticks = h.calls.filter((c) => c.op === 'tick');
     expect(ticks[0]?.elapsed).toBe(20);
     expect(ticks.map((c) => c.elapsed)).toEqual(ticks.map((c) => c.at - onset + 20));

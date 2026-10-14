@@ -452,6 +452,22 @@ describe('SessionController — levels and persistence', () => {
     expect(JSON.parse(trials[0]?.responseJson ?? '')).toEqual({ key: 'Space', rtMs: 300, errorMs: null, outcome: 'hit', practice: false, kind: 'press' });
   });
 
+  it('reaction summaryJson carries the block frame interval', async () => {
+    const h = await begin(planFree('pzmr', 9));
+    const frameMsOf = async (): Promise<unknown[]> =>
+      (await h.repo.listBlocks()).map((b) => (JSON.parse(b.summaryJson) as { frameMs?: unknown }).frameMs);
+    h.c.ackInstruction();
+    const first = expectStep(h.c, 'reaction_block');
+    await h.c.submitReaction({ ...playTimeline(first.specs, perfectPlayer), frameMs: 8.333 });
+    expect(await frameMsOf()).toEqual([8.333]);
+    h.clock.advance(30_000);
+    await h.c.continueAfterSummary();
+    if (h.c.step.kind === 'instruction') h.c.ackInstruction();
+    const second = expectStep(h.c, 'reaction_block');
+    await h.c.submitReaction(playTimeline(second.specs, perfectPlayer));
+    expect(await frameMsOf()).toEqual([8.333, null]);
+  });
+
   it('training block seeds: deriveSeed(plan.seed, segment:block:attempt)', async () => {
     const h = await begin(planFree('pzmr', 77));
     h.c.ackInstruction();

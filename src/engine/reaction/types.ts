@@ -28,8 +28,14 @@ export interface Press {
 /** What actually happened during a block: stimulus onsets (one per trial) and every key press. */
 export interface BlockTimeline {
   onsets: number[];
+  /** Per trial: its onset frame came more than 1.5 × `frameMs` after the previous frame. */
   droppedOnset: boolean[];
   presses: Press[];
+  /**
+   * The block's nominal frame interval (R37): the median of its frame deltas, or the session's measured interval
+   * when the block had fewer than 10 of them. Absent on timelines not made by the runner.
+   */
+  frameMs?: number;
 }
 
 export type Outcome =

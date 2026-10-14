@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cv, mean, median, sd } from './stats';
+import { cv, mean, median, medianOfSorted, sd } from './stats';
 
 describe('stats', () => {
   it('mean', () => {
@@ -17,6 +17,12 @@ describe('stats', () => {
     const xs = [3, 1, 2];
     median(xs);
     expect(xs).toEqual([3, 1, 2]);
+  });
+
+  it('medianOfSorted reads the middle of an ascending array in place', () => {
+    expect(medianOfSorted([1, 2, 7])).toBe(2);
+    expect(medianOfSorted([1, 2, 3, 10])).toBe(2.5);
+    expect(medianOfSorted([])).toBeNaN();
   });
 
   it('sd is the sample deviation (n-1)', () => {

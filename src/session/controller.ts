@@ -254,7 +254,7 @@ export class SessionController {
         score: summary.score,
         level: { cvRt: summary.cvRt, cvMax: reactionModules[module].cvMax(L), timingUnreliable: summary.timingUnreliable },
         hitRts,
-        summaryJson: JSON.stringify(summary),
+        summaryJson: JSON.stringify({ ...summary, frameMs: tl.frameMs ?? null }),
         lines: reactionLines(module, summary),
         rows: (blockId) => ({ trials: trialRows(blockId, step.specs, tl, results), items: [] }),
         onCommit: () => {
