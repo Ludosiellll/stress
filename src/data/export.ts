@@ -1,10 +1,10 @@
-import { deriveModuleStates, deriveRatings, MODULE_IDS } from '../engine/derive';
+import { deriveModuleStates, deriveRatings, isCountedSession, MODULE_IDS } from '../engine/derive';
 import type { Repository } from './repository';
 
 /**
  * Recomputes the caches (module_state, ratings) from history and saves them.
- * Diagnostic sessions never count: deriveModuleStates skips their blocks, and logic items
- * are passed on only when their block belongs to a non-diagnostic session (Ruling R19).
+ * Only counted sessions (isCountedSession: training, free) feed the caches: deriveModuleStates
+ * skips other blocks, and logic items are passed on only when their block belongs to a counted session (R19).
  */
 export async function rebuildCaches(repo: Repository): Promise<void> {
   const [sessions, blocks, items] = await Promise.all([repo.listSessions(), repo.listBlocks(), repo.listLogicItems()]);
@@ -12,7 +12,7 @@ export async function rebuildCaches(repo: Repository): Promise<void> {
   const countedBlocks = new Set(
     blocks.filter((b) => {
       const kind = kindBySession.get(b.sessionId);
-      return kind !== undefined && kind !== 'diagnostic';
+      return kind !== undefined && isCountedSession(kind);
     }).map((b) => b.id),
   );
 

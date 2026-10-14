@@ -1,7 +1,14 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { isPlateau, savedLevel } from './adaptive';
-import { MODULE_IDS, NUMSERIES_ITEM_LIMIT_MS, defaultModuleState, deriveModuleStates, deriveRatings } from './derive';
+import {
+  MODULE_IDS,
+  NUMSERIES_ITEM_LIMIT_MS,
+  defaultModuleState,
+  deriveModuleStates,
+  deriveRatings,
+  isCountedSession,
+} from './derive';
 import { R0, updateRating, type Rating } from './elo';
 import type { BlockFlag, FamilyId, ModuleId, SessionKind } from './types';
 
@@ -27,6 +34,14 @@ const blk = (sessionId: string, module: ModuleId, lAfter: number, startedAt: str
   lAfter,
   flags,
   startedAt,
+});
+
+describe('isCountedSession', () => {
+  it('counts training and free sessions, never diagnostics', () => {
+    expect(isCountedSession('training')).toBe(true);
+    expect(isCountedSession('free')).toBe(true);
+    expect(isCountedSession('diagnostic')).toBe(false);
+  });
 });
 
 describe('deriveModuleStates', () => {

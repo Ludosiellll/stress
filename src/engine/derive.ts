@@ -11,6 +11,12 @@ export const MODULE_IDS: readonly ModuleId[] = ['pzmr', 'szmr', 'gonogo', 'rdo',
 export const NUMSERIES_ITEM_LIMIT_MS = 40000;
 
 const COUNTED_KINDS: ReadonlySet<SessionKind> = new Set<SessionKind>(['training', 'free']);
+
+/** Sessions whose blocks and logic items feed the caches (levels, ratings): training and free; diagnostics never (R19). */
+export function isCountedSession(kind: SessionKind): boolean {
+  return COUNTED_KINDS.has(kind);
+}
+
 const UNCLEAN_FLAGS: readonly BlockFlag[] = ['fatigued', 'timing_unreliable'];
 
 export function defaultModuleState(module: ModuleId): ModuleState {
@@ -25,13 +31,15 @@ function compareIso(a: string, b: string): number {
   return ta - tb;
 }
 
-interface DeriveSession {
+/** Structural: SessionRow fits. */
+export interface DeriveSession {
   id: string;
   startedAt: string;
   kind: SessionKind;
 }
 
-interface DeriveBlock {
+/** Structural: BlockRow and the light BlockLevelRow (listBlockLevels) both fit. */
+export interface DeriveBlock {
   sessionId: string;
   module: ModuleId;
   lAfter: number;
@@ -49,7 +57,7 @@ export function deriveModuleStates(
   blocks: readonly DeriveBlock[],
 ): Record<ModuleId, ModuleState> {
   const states = Object.fromEntries(MODULE_IDS.map((m) => [m, defaultModuleState(m)])) as Record<ModuleId, ModuleState>;
-  const counted = new Set(sessions.filter((s) => COUNTED_KINDS.has(s.kind)).map((s) => s.id));
+  const counted = new Set(sessions.filter((s) => isCountedSession(s.kind)).map((s) => s.id));
   const ordered = blocks.filter((b) => counted.has(b.sessionId)).sort((a, b) => compareIso(a.startedAt, b.startedAt));
 
   // Session id → module → end level; later blocks overwrite earlier ones.
@@ -82,7 +90,7 @@ export function deriveModuleStates(
   return states;
 }
 
-interface DeriveItem {
+export interface DeriveItem {
   family: FamilyId;
   difficulty: number;
   correct: boolean;

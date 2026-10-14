@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { deriveModuleStates } from '../engine/derive';
 import type { ModuleState } from '../engine/planner';
 import { LOG_LIMIT, type Repository } from './repository';
 import type { BlockRow, DiagnosticRow, LogicItemRow, LogRow, SessionRow, TrialRow, WellbeingRow } from './rows';
@@ -182,6 +183,60 @@ export function repositoryContract(make: () => Promise<Repository>): void {
       expect(await repo.listBlocks()).toEqual([]);
     });
 
+    it('rejects non-finite numbers anywhere in the payload and stores nothing (R23)', async () => {
+      const repo = await make();
+      await repo.createSession(session('s1', T1));
+      const bad: [string, () => Promise<void>][] = [
+        ['score', () => repo.addBlock(block('b1', 's1', T1, { score: Number.NaN }), [], [])],
+        ['lBefore', () => repo.addBlock(block('b1', 's1', T1, { lBefore: Number.POSITIVE_INFINITY }), [], [])],
+        ['lAfter', () => repo.addBlock(block('b1', 's1', T1, { lAfter: Number.NaN }), [], [])],
+        ['idx', () => repo.addBlock(block('b1', 's1', T1), [trial('t1', 'b1', Number.NaN)], [])],
+        ['rtMs', () => repo.addBlock(block('b1', 's1', T1), [trial('t1', 'b1', 0, { rtMs: Number.NaN })], [])],
+        ['onsetTs', () => repo.addBlock(block('b1', 's1', T1), [trial('t1', 'b1', 0, { onsetTs: Number.NEGATIVE_INFINITY })], [])],
+        ['responseTs', () => repo.addBlock(block('b1', 's1', T1), [trial('t1', 'b1', 0, { responseTs: Number.NaN })], [])],
+        ['timeMs', () => repo.addBlock(block('b1', 's1', T1), [], [item('i1', 'b1', T1, { timeMs: Number.POSITIVE_INFINITY })])],
+        ['difficulty', () => repo.addBlock(block('b1', 's1', T1), [], [item('i1', 'b1', T1, { difficulty: Number.NaN })])],
+        ['answer', () => repo.addBlock(block('b1', 's1', T1), [], [item('i1', 'b1', T1, { answer: Number.NaN })])],
+        ['given', () => repo.addBlock(block('b1', 's1', T1), [], [item('i1', 'b1', T1, { given: Number.NaN })])],
+        ['seed', () => repo.addBlock(block('b1', 's1', T1), [], [item('i1', 'b1', T1, { seed: Number.NaN })])],
+      ];
+      for (const [field, write] of bad) {
+        await expect(write(), field).rejects.toThrow(new RegExp(`${field} is not a finite number`));
+      }
+      expect(await repo.listBlocks()).toEqual([]);
+      expect(await repo.listAllTrials()).toEqual([]);
+      expect(await repo.listLogicItems()).toEqual([]);
+      // null stays allowed where the row type allows it.
+      await repo.addBlock(
+        block('b1', 's1', T1),
+        [trial('t1', 'b1', 0, { rtMs: null, onsetTs: null, responseTs: null })],
+        [item('i1', 'b1', T1, { given: null })],
+      );
+      expect(await repo.listBlocks()).toHaveLength(1);
+    });
+
+    it('listBlockLevels returns the light rows of one module by startedAt (R26)', async () => {
+      const repo = await make();
+      expect(await repo.listBlockLevels('pzmr')).toEqual([]);
+      await repo.createSession(session('s1', T1));
+      await repo.createSession(session('s2', T2, { kind: 'diagnostic' }));
+      await repo.addBlock(block('b3', 's2', T3, { lAfter: 9, flags: ['timing_unreliable'] }), [trial('t1', 'b3', 0)], []);
+      await repo.addBlock(block('b1', 's1', T1, { lAfter: 4, flags: ['calibration'] }), [], []);
+      await repo.addBlock(block('bx', 's1', T2, { module: 'gorbov' }), [], []);
+      await repo.addBlock(block('b2', 's1', T3, { lAfter: 5 }), [], []);
+      const rows = await repo.listBlockLevels('pzmr');
+      expect(rows).toEqual([
+        { sessionId: 's1', module: 'pzmr', lAfter: 4, flags: ['calibration'], startedAt: T1 },
+        { sessionId: 's2', module: 'pzmr', lAfter: 9, flags: ['timing_unreliable'], startedAt: T3 },
+        { sessionId: 's1', module: 'pzmr', lAfter: 5, flags: [], startedAt: T3 },
+      ]);
+      rows[0]?.flags.push('fatigued');
+      expect((await repo.listBlockLevels('pzmr'))[0]?.flags).toEqual(['calibration']);
+      // The light rows are enough for deriveModuleStates and agree with full rows.
+      const sessions = await repo.listSessions();
+      expect(deriveModuleStates(sessions, rows).pzmr).toEqual(deriveModuleStates(sessions, await repo.listBlocks()).pzmr);
+    });
+
     it('rejects trials or items that name another block', async () => {
       const repo = await make();
       await repo.createSession(session('s1', T1));
@@ -292,6 +347,13 @@ export function repositoryContract(make: () => Promise<Repository>): void {
       expect((await repo.listLog(2)).map((x) => x.id)).toEqual(['log-2', 'log-1']);
       expect(await repo.listLog(10)).toEqual([logRow(2), logRow(1), logRow(0)]);
       expect(await repo.listLog(0)).toEqual([]);
+    });
+
+    it('rejects a duplicate log id and keeps the log unchanged', async () => {
+      const repo = await make();
+      await repo.appendLog(logRow(1));
+      await expect(repo.appendLog({ ...logRow(1), message: 'again' })).rejects.toThrow();
+      expect(await repo.listLog(10)).toEqual([logRow(1)]);
     });
 
     it(`keeps exactly ${String(LOG_LIMIT)} entries: the ${String(LOG_LIMIT + 1)}th append drops the oldest`, async () => {

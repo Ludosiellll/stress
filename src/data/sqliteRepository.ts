@@ -4,6 +4,7 @@ import type { ModuleState } from '../engine/planner';
 import type { BlockFlag, FamilyId, ModuleId, SessionKind } from '../engine/types';
 import { assertBlockPayload, DEFAULT_SETTINGS, LOG_LIMIT, SETTINGS_KEYS, type Repository } from './repository';
 import type {
+  BlockLevelRow,
   BlockRow,
   DiagnosticRow,
   LogicItemRow,
@@ -230,6 +231,20 @@ export class SqliteRepository implements Repository {
       flags: JSON.parse(r.flags_json) as BlockFlag[],
       startedAt: r.started_at,
       summaryJson: r.summary_json,
+    }));
+  }
+
+  async listBlockLevels(module: ModuleId): Promise<BlockLevelRow[]> {
+    const rows = await this.db.select<Pick<BlockDb, 'session_id' | 'module' | 'l_after' | 'flags_json' | 'started_at'>>(
+      'SELECT session_id, module, l_after, flags_json, started_at FROM blocks WHERE module = ? ORDER BY started_at, rowid',
+      [module],
+    );
+    return rows.map((r) => ({
+      sessionId: r.session_id,
+      module: r.module as ModuleId,
+      lAfter: r.l_after,
+      flags: JSON.parse(r.flags_json) as BlockFlag[],
+      startedAt: r.started_at,
     }));
   }
 

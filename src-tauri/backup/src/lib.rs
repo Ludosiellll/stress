@@ -25,6 +25,11 @@ const COMPANIONS: [&str; 2] = ["-journal", "-wal"];
 /// Call it before anything opens the database. The copy goes through a `.tmp` file and a
 /// rename, so a half-written copy never looks like a backup. If the clock is behind the
 /// newest copy, the new copy is named one second after it so it still counts as newest.
+///
+/// Nothing is left behind on failure: a failed attempt removes every file it wrote for its
+/// stamp, and each run first removes stale `.tmp` files and side files whose copy is gone
+/// (e.g. after a crash), so retries on a nearly full disk do not eat the space the live
+/// database needs.
 pub fn run_backup_if_needed(
     db: &Path,
     dir: &Path,
@@ -35,6 +40,7 @@ pub fn run_backup_if_needed(
         return Ok(None);
     }
     fs::create_dir_all(dir)?;
+    remove_stale(dir);
     let newest = list_backups(dir)?.into_iter().max();
     let last_version = match fs::read_to_string(dir.join(VERSION_FILE)) {
         Ok(v) => Some(v.trim().to_owned()),
@@ -52,16 +58,36 @@ pub fn run_backup_if_needed(
         _ => now_unix,
     };
     let target = dir.join(format!("{PREFIX}{stamp}{SUFFIX}"));
-    for suffix in COMPANIONS {
-        let side = companion(db, suffix);
-        if side.is_file() {
-            copy_atomic(&side, &companion(&target, suffix))?;
-        }
+    if let Err(e) = copy_with_side_files(db, &target) {
+        remove_copy(&target);
+        return Err(e);
     }
-    copy_atomic(db, &target)?;
     prune(dir);
     write_atomic(&dir.join(VERSION_FILE), app_version.as_bytes())?;
     Ok(Some(target))
+}
+
+/// The database first (the bulk of the space), then its side files.
+fn copy_with_side_files(db: &Path, target: &Path) -> io::Result<()> {
+    copy_atomic(db, target)?;
+    for suffix in COMPANIONS {
+        let side = companion(db, suffix);
+        if side.is_file() {
+            copy_atomic(&side, &companion(target, suffix))?;
+        }
+    }
+    Ok(())
+}
+
+/// Removes a copy with its side files and their temp files. Best effort.
+fn remove_copy(target: &Path) {
+    let _ = fs::remove_file(target);
+    let _ = fs::remove_file(tmp_path(target));
+    for suffix in COMPANIONS {
+        let side = companion(target, suffix);
+        let _ = fs::remove_file(tmp_path(&side));
+        let _ = fs::remove_file(side);
+    }
 }
 
 /// Writes `contents` to `dir/name` (replacing an existing file) and returns the path.
@@ -98,25 +124,41 @@ fn tmp_path(path: &Path) -> PathBuf {
 
 fn copy_atomic(from: &Path, to: &Path) -> io::Result<()> {
     let tmp = tmp_path(to);
-    fs::copy(from, &tmp)?;
-    fs::OpenOptions::new().write(true).open(&tmp)?.sync_all()?;
-    fs::rename(&tmp, to)
+    let result = (|| {
+        fs::copy(from, &tmp)?;
+        fs::OpenOptions::new().write(true).open(&tmp)?.sync_all()?;
+        fs::rename(&tmp, to)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let tmp = tmp_path(path);
-    let mut file = fs::File::create(&tmp)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    drop(file);
-    fs::rename(&tmp, path)
+    let result = (|| {
+        let mut file = fs::File::create(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&tmp, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
 }
 
-/// Timestamps of `trainer-<digits>.db` files in `dir`; other files are ignored.
+/// Timestamps of `trainer-<digits>.db` files in `dir`; other entries are ignored.
 fn list_backups(dir: &Path) -> io::Result<Vec<u64>> {
     let mut stamps = Vec::new();
     for entry in fs::read_dir(dir)? {
-        let name = entry?.file_name();
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
         let Some(digits) = name
             .strip_prefix(PREFIX)
@@ -131,6 +173,32 @@ fn list_backups(dir: &Path) -> io::Result<Vec<u64>> {
         }
     }
     Ok(stamps)
+}
+
+/// Removes files a crashed or failed run left: `trainer-*.tmp`, `last_version.tmp`, and
+/// side files (`trainer-<stamp>.db-journal` / `-wal`) whose `trainer-<stamp>.db` is gone. Best effort.
+fn remove_stale(dir: &Path) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if !entry.file_type().is_ok_and(|t| t.is_file()) {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let stale_tmp = (name.starts_with(PREFIX) && name.ends_with(".tmp"))
+            || name == format!("{VERSION_FILE}.tmp");
+        let orphan_side = name.starts_with(PREFIX)
+            && COMPANIONS.iter().any(|suffix| {
+                name.strip_suffix(suffix).is_some_and(|db_name| {
+                    db_name.ends_with(SUFFIX) && !dir.join(db_name).is_file()
+                })
+            });
+        if stale_tmp || orphan_side {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// Removes all but the KEEP newest copies with their side files. Best effort: a file that
@@ -316,6 +384,95 @@ mod tests {
             })
             .collect();
         assert!(tmp.is_empty());
+    }
+
+    fn names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn failed_database_copy_leaves_no_temp_file() {
+        // A directory where the copy must land makes the final rename fail after the
+        // DB-sized temp file was written.
+        let e = env_with_db();
+        fs::create_dir_all(e.dir.join(format!("trainer-{T0}.db"))).unwrap();
+        fs::write(e.db.with_file_name("trainer.db-journal"), b"journal").unwrap();
+        assert!(run_backup_if_needed(&e.db, &e.dir, "0.1.0", T0).is_err());
+        assert_eq!(names(&e.dir), vec![format!("trainer-{T0}.db")]);
+    }
+
+    #[test]
+    fn failed_side_file_copy_removes_everything_of_that_stamp() {
+        let e = env_with_db();
+        fs::write(e.db.with_file_name("trainer.db-wal"), b"wal").unwrap();
+        let blocker = format!("trainer-{T0}.db-wal.tmp");
+        fs::create_dir_all(e.dir.join(&blocker)).unwrap();
+        assert!(run_backup_if_needed(&e.db, &e.dir, "0.1.0", T0).is_err());
+        // Only the blocker is left: no copy, no temp file, no last_version.
+        assert_eq!(names(&e.dir), vec![blocker]);
+    }
+
+    #[test]
+    fn stale_temp_and_orphan_side_files_are_removed() {
+        let e = env_with_db();
+        fs::create_dir_all(&e.dir).unwrap();
+        for stale in [
+            "trainer-100.db.tmp",
+            "trainer-100.db-wal.tmp",
+            "trainer-200.db-journal",
+            "trainer-300.db-wal",
+            "last_version.tmp",
+        ] {
+            fs::write(e.dir.join(stale), b"stale").unwrap();
+        }
+        fs::write(e.dir.join("notes.txt"), b"keep").unwrap();
+        fs::write(e.db.with_file_name("trainer.db-wal"), b"wal").unwrap();
+        let copy = run_backup_if_needed(&e.db, &e.dir, "0.1.0", T0)
+            .unwrap()
+            .unwrap();
+        assert!(copy.exists());
+        assert_eq!(
+            names(&e.dir),
+            vec![
+                "last_version".to_string(),
+                "notes.txt".into(),
+                format!("trainer-{T0}.db"),
+                format!("trainer-{T0}.db-wal"),
+            ]
+        );
+    }
+
+    #[test]
+    fn stale_files_are_removed_even_when_no_backup_is_due() {
+        let e = env_with_db();
+        run_backup_if_needed(&e.db, &e.dir, "0.1.0", T0).unwrap();
+        fs::write(e.dir.join("trainer-5.db.tmp"), b"stale").unwrap();
+        assert_eq!(
+            run_backup_if_needed(&e.db, &e.dir, "0.1.0", T0 + 1).unwrap(),
+            None
+        );
+        assert!(!e.dir.join("trainer-5.db.tmp").exists());
+    }
+
+    #[test]
+    fn directories_named_like_copies_are_not_counted() {
+        let e = env_with_db();
+        fs::create_dir_all(e.dir.join("trainer-99999999999.db")).unwrap();
+        let r = run_backup_if_needed(&e.db, &e.dir, "0.1.0", T0).unwrap();
+        assert_eq!(r, Some(e.dir.join(format!("trainer-{T0}.db"))));
+    }
+
+    #[test]
+    fn failed_export_leaves_no_temp_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("out.json")).unwrap();
+        assert!(write_export(tmp.path(), "out.json", "x").is_err());
+        assert_eq!(names(tmp.path()), vec!["out.json".to_string()]);
     }
 
     #[test]

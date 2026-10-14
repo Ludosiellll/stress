@@ -4,6 +4,7 @@ import type { ModuleState } from '../engine/planner';
 import type { FamilyId, ModuleId } from '../engine/types';
 import { assertBlockPayload, DEFAULT_SETTINGS, LOG_LIMIT, SETTINGS_KEYS, type Repository } from './repository';
 import type {
+  BlockLevelRow,
   BlockRow,
   DiagnosticRow,
   LogicItemRow,
@@ -100,6 +101,15 @@ export class MemoryRepository implements Repository {
     return Promise.resolve(sortedCopies(this.blocks, (b) => b.startedAt));
   }
 
+  listBlockLevels(module: ModuleId): Promise<BlockLevelRow[]> {
+    return Promise.resolve(
+      sortedCopies(
+        this.blocks.filter((b) => b.module === module),
+        (b) => b.startedAt,
+      ).map((b) => ({ sessionId: b.sessionId, module: b.module, lAfter: b.lAfter, flags: b.flags, startedAt: b.startedAt })),
+    );
+  }
+
   listTrials(blockId: string): Promise<TrialRow[]> {
     return Promise.resolve(
       sortedCopies(
@@ -160,9 +170,11 @@ export class MemoryRepository implements Repository {
   }
 
   appendLog(e: LogRow): Promise<void> {
-    this.log.push(copy(e));
-    if (this.log.length > LOG_LIMIT) this.log = this.log.slice(-LOG_LIMIT);
-    return Promise.resolve();
+    return this.run(() => {
+      assertNew(new Set(this.log.map((x) => x.id)), e.id, 'log entry');
+      this.log.push(copy(e));
+      if (this.log.length > LOG_LIMIT) this.log = this.log.slice(-LOG_LIMIT);
+    });
   }
 
   listLog(limit: number): Promise<LogRow[]> {

@@ -23,6 +23,15 @@ export interface BlockRow {
   summaryJson: string;
 }
 
+/** The columns of a block that level derivation needs (listBlockLevels, R26). */
+export interface BlockLevelRow {
+  sessionId: string;
+  module: ModuleId;
+  lAfter: number;
+  flags: BlockFlag[];
+  startedAt: string;
+}
+
 export interface TrialRow {
   id: string;
   blockId: string;

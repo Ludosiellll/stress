@@ -2,6 +2,7 @@ import type { Rating } from '../engine/elo';
 import type { ModuleState } from '../engine/planner';
 import type { FamilyId, ModuleId } from '../engine/types';
 import type {
+  BlockLevelRow,
   BlockRow,
   DiagnosticRow,
   LogicItemRow,
@@ -33,6 +34,8 @@ export interface Repository {
   listSessions(): Promise<SessionRow[]>;
   /** By startedAt. */
   listBlocks(): Promise<BlockRow[]>;
+  /** Light rows of one module's blocks for deriveModuleStates (R26), by startedAt (ties: insertion). */
+  listBlockLevels(module: ModuleId): Promise<BlockLevelRow[]>;
   /** Trials of one block by idx. */
   listTrials(blockId: string): Promise<TrialRow[]>;
   /** Every trial in one query (export, R20): by their block's startedAt (ties: block insertion), then idx. */
@@ -54,7 +57,7 @@ export interface Repository {
   getSettings(): Promise<Settings>;
   /** Writes only the given keys. */
   saveSettings(p: Partial<Settings>): Promise<void>;
-  /** Keeps the newest LOG_LIMIT entries (by insertion). */
+  /** Keeps the newest LOG_LIMIT entries (by insertion). Rejects an id already in the log. */
   appendLog(e: LogRow): Promise<void>;
   /** Newest first, at most `limit` entries. */
   listLog(limit: number): Promise<LogRow[]>;
@@ -66,12 +69,30 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = { layout: 'keyboard', testDa
 
 export const SETTINGS_KEYS: readonly (keyof Settings)[] = ['layout', 'testDate', 'lastSelfCheckJson'];
 
-/** Trials and logic items must belong to the block they are saved with. */
+function assertFinite(what: string, fields: Record<string, number | null>): void {
+  for (const [name, v] of Object.entries(fields)) {
+    if (v !== null && !Number.isFinite(v)) throw new Error(`${what}: ${name} is not a finite number (${String(v)})`);
+  }
+}
+
+/**
+ * Trials and logic items must belong to the block they are saved with, and every number must be
+ * finite (R23): NaN/Infinity would reach SQLite as JSON null through the Tauri bridge.
+ */
 export function assertBlockPayload(b: BlockRow, trials: readonly TrialRow[], items: readonly LogicItemRow[]): void {
+  assertFinite(`block ${b.id}`, { score: b.score, lBefore: b.lBefore, lAfter: b.lAfter });
   for (const t of trials) {
     if (t.blockId !== b.id) throw new Error(`trial ${t.id} belongs to block ${t.blockId}, not ${b.id}`);
+    assertFinite(`trial ${t.id}`, { idx: t.idx, onsetTs: t.onsetTs, responseTs: t.responseTs, rtMs: t.rtMs });
   }
   for (const i of items) {
     if (i.blockId !== b.id) throw new Error(`logic item ${i.id} belongs to block ${i.blockId}, not ${b.id}`);
+    assertFinite(`logic item ${i.id}`, {
+      seed: i.seed,
+      difficulty: i.difficulty,
+      answer: i.answer,
+      given: i.given,
+      timeMs: i.timeMs,
+    });
   }
 }

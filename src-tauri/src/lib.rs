@@ -78,6 +78,93 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::migrate::{Migration as SqlxMigration, MigrationType, Migrator};
+    use std::borrow::Cow;
+
+    /// The plugin's conversion (tauri-plugin-sql 2.5.0 lib.rs:118-135): Up → ReversibleUp, no_tx false.
+    fn sqlx_migrations() -> Vec<SqlxMigration> {
+        migrations()
+            .into_iter()
+            .filter(|m| matches!(m.kind, MigrationKind::Up))
+            .map(|m| {
+                SqlxMigration::new(
+                    m.version,
+                    m.description.into(),
+                    MigrationType::ReversibleUp,
+                    m.sql.into(),
+                    false,
+                )
+            })
+            .collect()
+    }
+
+    /// Same settings as `Migrator::new` (what the plugin calls).
+    fn migrator() -> Migrator {
+        Migrator {
+            migrations: Cow::Owned(sqlx_migrations()),
+            ..Migrator::DEFAULT
+        }
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// Shipped migrations must never change: sqlx stores this SHA-384 per applied migration and
+    /// refuses to open a database whose recorded checksum differs (VersionMismatch). Add a new
+    /// migration file instead of editing an old one.
+    #[test]
+    fn shipped_migration_checksums_are_pinned() {
+        let pinned: [(i64, &str); 1] = [(
+            1,
+            "accc2b179dca5ad7a8c2a5305afc88a738f6bdbcbe540fa0d3a991f45e3b790a9f717ee301c6afa43dc0cb4b3be2293b",
+        )];
+        let actual: Vec<(i64, String)> = sqlx_migrations()
+            .iter()
+            .map(|m| (m.version, hex(&m.checksum)))
+            .collect();
+        for (version, sum) in pinned {
+            let found = actual.iter().find(|(v, _)| *v == version);
+            assert_eq!(
+                found.map(|(_, s)| s.as_str()),
+                Some(sum),
+                "migration {version} changed"
+            );
+        }
+    }
+
+    #[test]
+    fn migrator_runs_once_and_is_a_no_op_on_the_next_start() {
+        tauri::async_runtime::block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let options = sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(dir.path().join("trainer.db"))
+                .create_if_missing(true);
+            let pool = sqlx::SqlitePool::connect_with(options.clone())
+                .await
+                .unwrap();
+            migrator().run(&pool).await.unwrap();
+            sqlx::query("INSERT INTO settings (key, value) VALUES ('layout', '\"pult\"')")
+                .execute(&pool)
+                .await
+                .unwrap();
+            pool.close().await;
+
+            // Next app start: a new pool, the same migrations.
+            let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
+            migrator().run(&pool).await.unwrap();
+            let applied: Vec<(i64,)> = sqlx::query_as("SELECT version FROM _sqlx_migrations")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+            assert_eq!(applied, vec![(1,)]);
+            let kept: (String,) = sqlx::query_as("SELECT value FROM settings WHERE key = 'layout'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(kept.0, "\"pult\"");
+        });
+    }
 
     #[test]
     fn migration_applies_on_sqlx_sqlite() {
