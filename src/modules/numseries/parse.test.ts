@@ -1,0 +1,45 @@
+import { describe, expect, it } from 'vitest';
+import { parseAnswer } from './parse';
+
+describe('parseAnswer', () => {
+  it.each([
+    [' 42 ', 42],
+    ['−17', -17],
+    ['–5', -5],
+    ['007', 7],
+    ['1 000', 1000],
+  ])('reads %j as %d (brief examples)', (raw, expected) => {
+    expect(parseAnswer(raw)).toBe(expected);
+  });
+
+  it.each(['', 'abc', '4.5', '-'])('rejects %j (brief examples)', (raw) => {
+    expect(parseAnswer(raw)).toBeNull();
+  });
+
+  it('reads an em dash as a minus', () => {
+    expect(parseAnswer('—8')).toBe(-8);
+  });
+
+  it('drops no-break, thin and narrow no-break spaces inside the number', () => {
+    expect(parseAnswer('1 000')).toBe(1000);
+    expect(parseAnswer('12 345')).toBe(12345);
+    expect(parseAnswer(' -1 000 ')).toBe(-1000);
+    expect(parseAnswer('\t5\n')).toBe(5);
+  });
+
+  it('keeps a minus that is separated from the digits by spaces', () => {
+    expect(parseAnswer('− 5')).toBe(-5);
+  });
+
+  it('reads -0 as plain 0', () => {
+    expect(Object.is(parseAnswer('-0'), 0)).toBe(true);
+    expect(Object.is(parseAnswer('−000'), 0)).toBe(true);
+  });
+
+  it.each(['+5', '5-', '--5', '1,5', '1.000', '12a', '٣', '1e3', ' ', ' ', '0x10'])(
+    'rejects %j',
+    (raw) => {
+      expect(parseAnswer(raw)).toBeNull();
+    },
+  );
+});
