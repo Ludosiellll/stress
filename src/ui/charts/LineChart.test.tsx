@@ -149,6 +149,55 @@ describe('LineChart number format', () => {
   });
 });
 
+describe('LineChart whole units (B6)', () => {
+  const texts = (c: HTMLElement, sel: string): string[] => [...c.querySelectorAll(sel)].map((t) => t.textContent);
+  const zeros = [
+    { x: '№1', y: 0 },
+    { x: '№2', y: 0 },
+  ];
+
+  it('millisecond values are rounded as in the results table, and the ticks are whole', () => {
+    const points = [
+      { x: '№1', y: 0.1 },
+      { x: '№2', y: -0.4 },
+      { x: '№3', y: 1.6 },
+    ];
+    const { container } = render(<LineChart series={[{ name: 'Струп', points }]} yLabel="мс" whole />);
+    expect(texts(container, 'circle > title')).toEqual(['№1: 0', '№2: 0', '№3: 2']);
+    expect(texts(container, '.chart-summary')).toEqual(['0 (№1) → 2 (№3)']);
+    expect(container.querySelector('svg')?.getAttribute('aria-label')).toBe('мс. №1: 0, №3: 2');
+    for (const t of texts(container, 'text.y-tick')) expect(t).toMatch(/^−?\d+$/);
+  });
+
+  it('every value 0: whole ticks, with or without a lower bound', () => {
+    for (const domain of [{}, { min: 0 }]) {
+      const { container, unmount } = render(<LineChart series={[{ name: 'a', points: zeros }]} yLabel="мс" domain={domain} whole />);
+      const ticks = texts(container, 'text.y-tick');
+      expect(ticks.length).toBeGreaterThanOrEqual(2);
+      for (const t of ticks) expect(t).toMatch(/^−?\d+$/);
+      expect(texts(container, '.chart-summary')).toEqual(['0 (№1) → 0 (№2)']);
+      unmount();
+    }
+  });
+
+  it('niceTicks in whole units: never a step below 1 (property)', () => {
+    expect(niceTicks(0, 0, {}, true)).toEqual([-1, 0, 1]);
+    expect(niceTicks(0, 0, { min: 0 }, true)).toEqual([0, 1]);
+    expect(niceTicks(0.1, 1.6, {}, true)).toEqual([0, 1, 2]);
+    expect(niceTicks(290, 312, { min: 0 }, true)).toEqual(niceTicks(290, 312, { min: 0 }));
+    const value = fc.integer({ min: -100_000, max: 100_000 }).map((n) => n / 10);
+    fc.assert(
+      fc.property(value, value, fc.boolean(), (a, b, bounded) => {
+        const lo = Math.min(a, b);
+        const ticks = niceTicks(lo, Math.max(a, b), bounded && lo >= 0 ? { min: 0 } : {}, true);
+        expect(ticks.length).toBeGreaterThanOrEqual(2);
+        for (const t of ticks) expect(Number.isInteger(t)).toBe(true);
+      }),
+      { numRuns: 1000 },
+    );
+  });
+});
+
 describe('LineChart domain', () => {
   const ticksOf = (c: HTMLElement): number[] =>
     [...c.querySelectorAll('text.y-tick')].map((t) => Number(t.textContent.replace(',', '.').replace('−', '-')));

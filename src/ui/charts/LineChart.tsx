@@ -26,6 +26,8 @@ export interface LineChartProps {
   refLine?: { y: number; label: string };
   /** Values the metric can take (e.g. min 0 for times, 0..100 for percent): the axis never goes past them. */
   domain?: ChartDomain;
+  /** Whole units (milliseconds, %): values are rounded as the results tables round them and the ticks are whole. */
+  whole?: boolean;
 }
 
 export interface ChartDomain {
@@ -62,14 +64,18 @@ interface Grid {
   last: number;
 }
 
-/** 1, 2, 5 × 10^k grid over [lo, hi], or null when the range is flat, non-finite or too fine for its magnitude. */
-function gridFor(lo: number, hi: number): Grid | null {
+/**
+ * 1, 2, 5 × 10^k grid over [lo, hi] (k ≥ 0 in whole units), or null when the range is flat, non-finite or too fine
+ * for its magnitude.
+ */
+function gridFor(lo: number, hi: number, whole: boolean): Grid | null {
   const raw = (hi - lo) / 5;
   if (!(raw > 0) || !Number.isFinite(raw)) return null;
   const exponent = Math.floor(Math.log10(raw));
   const mag = 10 ** exponent;
   const f = raw / mag;
-  const step = (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * mag;
+  const nice = (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * mag;
+  const step = whole ? Math.max(1, nice) : nice;
   // Round to the digits the step has, not to a fixed ten: at 1e6 a fixed ten leaves noise above the data.
   const digits = Math.min(100, Math.max(0, -exponent));
   const first = Math.floor(lo / step + 1e-9);
@@ -79,8 +85,8 @@ function gridFor(lo: number, hi: number): Grid | null {
 }
 
 /** Ticks of the grid over [lo, hi] inside [floor, ceiling]; a finite bound closes an axis the grid does not reach. */
-function gridTicks(lo: number, hi: number, floor: number, ceiling: number): number[] {
-  const grid = gridFor(lo, hi);
+function gridTicks(lo: number, hi: number, floor: number, ceiling: number, whole: boolean): number[] {
+  const grid = gridFor(lo, hi, whole);
   if (grid === null) return [];
   const { step, digits, first, last } = grid;
   const ticks: number[] = [];
@@ -106,8 +112,9 @@ function usable(ticks: number[]): boolean {
  * least two finite, strictly increasing ticks for any input. Non-finite values are dropped, swapped bounds are
  * reordered, data outside the domain by rounding noise only are clamped onto it, a domain that is zero-width,
  * inverted or does not contain the data is ignored, and a range too fine for its magnitude is replaced by mid ± 1.
+ * `whole`: no step below 1, so the ticks are whole numbers (given whole domain bounds).
  */
-export function niceTicks(min: number, max: number, domain: ChartDomain = {}): number[] {
+export function niceTicks(min: number, max: number, domain: ChartDomain = {}, whole = false): number[] {
   const finite = [min, max].filter(Number.isFinite);
   const clamp = (v: number): number => Math.max(-AXIS_LIMIT, Math.min(AXIS_LIMIT, v));
   let dataLo = clamp(finite.length === 0 ? 0 : Math.min(...finite));
@@ -131,9 +138,10 @@ export function niceTicks(min: number, max: number, domain: ChartDomain = {}): n
     lo = Math.max(floor, lo - pad);
     hi = Math.min(ceiling, hi + pad);
   }
-  const ticks = gridTicks(lo, hi, floor, ceiling);
+  const ticks = gridTicks(lo, hi, floor, ceiling, whole);
   if (usable(ticks)) return ticks;
-  const mid = (dataLo + dataHi) / 2; // |mid| <= AXIS_LIMIT, so mid ± 1 are distinct finite numbers
+  const half = (dataLo + dataHi) / 2; // |mid| <= AXIS_LIMIT, so mid ± 1 are distinct finite numbers
+  const mid = whole ? Math.round(half) : half;
   return [mid - 1, mid + 1];
 }
 
@@ -141,9 +149,14 @@ export function niceTicks(min: number, max: number, domain: ChartDomain = {}): n
 const minus = (text: string): string => text.replace('-', '−');
 
 /** One decimal digit with a comma, whole numbers without it; never «−0». */
-function fmt(v: number): string {
+function fmtValue(v: number): string {
   const n = Number(v.toFixed(1)) + 0;
   return minus(Number.isInteger(n) ? String(n) : decimal(n, 1));
+}
+
+/** Rounded to a whole number as the results tables do; never «−0». */
+function fmtWhole(v: number): string {
+  return minus(String(Math.round(v) + 0));
 }
 
 function tickText(v: number, step: number): string {
@@ -164,13 +177,14 @@ function ends(s: ChartSeries): { first: ChartPoint & { y: number }; last: ChartP
   return first === undefined || last === undefined ? null : { first, last };
 }
 
-function summary(s: ChartSeries): string | null {
+function summary(s: ChartSeries, fmt: (v: number) => string): string | null {
   const e = ends(s);
   if (e === null) return null;
   return e.first === e.last ? `${fmt(e.first.y)} (${e.first.x})` : `${fmt(e.first.y)} (${e.first.x}) → ${fmt(e.last.y)} (${e.last.x})`;
 }
 
-export default function LineChart({ series, yLabel, xLabel, lowerIsBetter, refLine, domain }: LineChartProps) {
+export default function LineChart({ series, yLabel, xLabel, lowerIsBetter, refLine, domain, whole = false }: LineChartProps) {
+  const fmt = whole ? fmtWhole : fmtValue;
   const drawn = series.slice(0, MAX_SERIES);
   const values = drawn.flatMap((s) => s.points.flatMap((p) => (p.y === null ? [] : [p.y])));
   if (values.length === 0) return <p className="chart-empty muted">Нет данных</p>;
@@ -180,7 +194,7 @@ export default function LineChart({ series, yLabel, xLabel, lowerIsBetter, refLi
   const xLabels = widest.points.map((p) => p.x);
 
   const scale = refLine === undefined ? values : [...values, refLine.y];
-  const ticks = niceTicks(Math.min(...scale), Math.max(...scale), domain);
+  const ticks = niceTicks(Math.min(...scale), Math.max(...scale), domain, whole);
   const lo = ticks[0] as number;
   const hi = ticks[ticks.length - 1] as number;
   const step = (ticks[1] as number) - lo;
@@ -196,7 +210,7 @@ export default function LineChart({ series, yLabel, xLabel, lowerIsBetter, refLi
   const stride = Math.ceil(slots / MAX_X_LABELS);
   const radius = slots > 40 ? 2.5 : 4;
   const multi = drawn.length > 1;
-  const summaries = drawn.map(summary);
+  const summaries = drawn.map((s) => summary(s, fmt));
 
   const label = [
     yLabel,

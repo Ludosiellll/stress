@@ -19,6 +19,8 @@ export interface ChartSpec {
   unreliable: string[];
   /** Values the metric can take; the axis stays inside. */
   domain: ChartDomain;
+  /** Whole units (ms, %, counts): rounded as the results table rounds them, whole ticks (B6). */
+  whole: boolean;
 }
 
 /** Times, errors, counts and levels are never negative; Go/No-Go is a percentage. */
@@ -115,7 +117,7 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
   ): ChartSpec => {
     const series = [line(name, (r) => metric(r, key), id)];
     const unreliable = (series[0]?.points ?? []).flatMap((p) => (p.note === undefined ? [] : [p.x]));
-    return { id, title, yLabel, lowerIsBetter, series, unreliable, domain };
+    return { id, title, yLabel, lowerIsBetter, series, unreliable, domain, whole: true };
   };
   return [
     reaction('pzmr', 'ПЗМР, медиана, мс', 'мс', true, 'ПЗМР', 'pzmrMedianRt'),
@@ -131,6 +133,7 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
       unreliable: [],
       // Π = t3 − (t1 + t2) is usually negative: no bound.
       domain: {},
+      whole: false,
     },
     {
       id: 'numseries',
@@ -140,6 +143,7 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
       series: [line('Числовые ряды', (r) => metric(r, 'numseriesCorrect'))],
       unreliable: [],
       domain: NON_NEGATIVE,
+      whole: true,
     },
     reaction('pomeh', 'Помехоустойчивость: разница, мс', 'мс', true, moduleTitles.pomeh, 'pomehDeltaMs', {}),
     reaction('stroop', 'Струп: интерференция, мс', 'мс', true, moduleTitles.stroop, 'stroopInterferenceMs', {}),
@@ -152,6 +156,7 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
       series: [line(moduleTitles.memory, (r) => metric(r, 'memorySpan'))],
       unreliable: [],
       domain: NON_NEGATIVE,
+      whole: true,
     },
   ];
 }

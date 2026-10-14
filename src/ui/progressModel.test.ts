@@ -39,6 +39,22 @@ describe('diagnosticCharts', () => {
     });
   });
 
+  it('charts in whole units (ms, %, counts) round as the results table; Gorbov seconds keep a decimal (B6)', () => {
+    const whole = Object.fromEntries(diagnosticCharts([]).map((c) => [c.id, c.whole]));
+    expect(whole).toEqual({
+      pzmr: true,
+      szmr: true,
+      gonogo: true,
+      rdo: true,
+      gorbov: false,
+      numseries: true,
+      pomeh: true,
+      stroop: true,
+      taskswitch: true,
+      memory: true,
+    });
+  });
+
   it('the four W2 charts: differences and the span; gaps for 0.1.0 rows', () => {
     const charts = diagnosticCharts([row(1, full), row(2, fullW2), row(3, { ...fullW2, unreliable: ['taskswitch'] })]);
     const byId = Object.fromEntries(charts.map((c) => [c.id, c]));

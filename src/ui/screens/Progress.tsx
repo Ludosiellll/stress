@@ -21,8 +21,9 @@ function ChartCard(props: {
   /** x labels of values measured with dropped frames, listed under the chart. */
   unreliable?: readonly string[];
   domain: ChartDomain;
+  whole?: boolean;
 }) {
-  const { title, note, yLabel, xLabel, lowerIsBetter, series, refLine, unreliable = [], domain } = props;
+  const { title, note, yLabel, xLabel, lowerIsBetter, series, refLine, unreliable = [], domain, whole = false } = props;
   return (
     <figure className="chart-card">
       <figcaption>
@@ -33,6 +34,7 @@ function ChartCard(props: {
         series={series}
         yLabel={yLabel}
         domain={domain}
+        whole={whole}
         {...(xLabel === undefined ? {} : { xLabel })}
         {...(lowerIsBetter === undefined ? {} : { lowerIsBetter })}
         {...(refLine === undefined ? {} : { refLine })}
@@ -58,6 +60,7 @@ function Diagnostics({ model }: { model: ProgressModel }) {
             series={c.series}
             unreliable={c.unreliable}
             domain={c.domain}
+            whole={c.whole}
           />
         ))}
       </div>
