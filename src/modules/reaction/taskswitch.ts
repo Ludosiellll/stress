@@ -1,14 +1,11 @@
 import { keyLabel } from '../../engine/layouts';
 import { L_NORM } from '../../engine/planner';
-import type { Stimulus, SwitchRule, TrialSpec } from '../../engine/reaction/types';
+import { RULE_WORDS, type Stimulus, type SwitchRule, type TrialSpec } from '../../engine/reaction/types';
 import type { Rng } from '../../engine/rng';
 import type { InputKey } from '../../engine/types';
 import { blockLength, keysFor, ms, percent, type ReactionModule } from './common';
 
 type SwitchStimulus = Extract<Stimulus, { kind: 'switch' }>;
-
-/** The cue word shown above the figure. */
-export const RULE_WORDS: Readonly<Record<SwitchRule, string>> = { color: 'ЦВЕТ', shape: 'ФОРМА', size: 'РАЗМЕР' };
 
 /** Rules in the order they are added with L. */
 const RULES: readonly SwitchRule[] = ['color', 'shape', 'size'];

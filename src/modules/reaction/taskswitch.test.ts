@@ -2,9 +2,9 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { layoutKeys } from '../../engine/layouts';
 import { createRng } from '../../engine/rng';
-import type { SwitchRule, TrialSpec } from '../../engine/reaction/types';
+import { RULE_WORDS, type SwitchRule, type TrialSpec } from '../../engine/reaction/types';
 import type { LayoutId } from '../../engine/types';
-import { RULE_WORDS, taskswitch } from './taskswitch';
+import { taskswitch } from './taskswitch';
 
 const levelPair = fc
   .tuple(fc.double({ min: 0, max: 1000, noNaN: true }), fc.double({ min: 0, max: 1000, noNaN: true }))

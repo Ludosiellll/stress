@@ -7,8 +7,17 @@ export const SHAPE_IDS = ['circle', 'square', 'triangle', 'diamond', 'hexagon', 
 export type ShapeId = (typeof SHAPE_IDS)[number];
 /** Colours of the Stroop task (W2-R8). */
 export type StroopColor = 'red' | 'green' | 'blue' | 'yellow';
+/** The colour words the Stroop stimulus prints (the module's instruction and the canvas share them). */
+export const COLOR_WORDS: Readonly<Record<StroopColor, string>> = {
+  red: 'КРАСНЫЙ',
+  green: 'ЗЕЛЁНЫЙ',
+  blue: 'СИНИЙ',
+  yellow: 'ЖЁЛТЫЙ',
+};
 /** Rules of the task-switching module: which feature of the figure the answer goes by. */
 export type SwitchRule = 'color' | 'shape' | 'size';
+/** The cue word shown above the figure. */
+export const RULE_WORDS: Readonly<Record<SwitchRule, string>> = { color: 'ЦВЕТ', shape: 'ФОРМА', size: 'РАЗМЕР' };
 
 export type Stimulus =
   | { kind: 'shape'; shape: ShapeId; color: ColorId; frame?: ColorId }

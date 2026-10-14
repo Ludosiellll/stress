@@ -2,9 +2,9 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { layoutKeys } from '../../engine/layouts';
 import { createRng } from '../../engine/rng';
-import type { TrialSpec } from '../../engine/reaction/types';
+import { COLOR_WORDS, type TrialSpec } from '../../engine/reaction/types';
 import type { LayoutId } from '../../engine/types';
-import { COLOR_WORDS, STROOP_COLORS, stroop } from './stroop';
+import { STROOP_COLORS, stroop } from './stroop';
 
 const levelPair = fc
   .tuple(fc.double({ min: 0, max: 1000, noNaN: true }), fc.double({ min: 0, max: 1000, noNaN: true }))

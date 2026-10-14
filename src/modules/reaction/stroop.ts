@@ -7,13 +7,6 @@ import { COLOR_NAMES, blockLength, fallbackNote, keysFor, ms, percent, yesNo, ty
 /** Colours in key order: colour i → key i. */
 export const STROOP_COLORS: readonly ['red', 'green', 'blue', 'yellow'] = ['red', 'green', 'blue', 'yellow'];
 
-export const COLOR_WORDS: Readonly<Record<StroopColor, string>> = {
-  red: 'КРАСНЫЙ',
-  green: 'ЗЕЛЁНЫЙ',
-  blue: 'СИНИЙ',
-  yellow: 'ЖЁЛТЫЙ',
-};
-
 export interface StroopParams {
   windowMs: number;
   nColors: number;

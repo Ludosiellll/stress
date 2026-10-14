@@ -1,7 +1,5 @@
 import { flickerOn, noiseFrame, noiseSlots, type Distractor, type VisualNoiseParams } from '../engine/noise';
-import type { ColorId, ShapeId, Stimulus, SwitchRule } from '../engine/reaction/types';
-import { COLOR_WORDS } from '../modules/reaction/stroop';
-import { RULE_WORDS } from '../modules/reaction/taskswitch';
+import { COLOR_WORDS, RULE_WORDS, type ColorId, type ShapeId, type Stimulus, type SwitchRule } from '../engine/reaction/types';
 import type { StimulusRenderer } from './reactionRunner';
 
 export const BACKGROUND = '#2b2b2b';
