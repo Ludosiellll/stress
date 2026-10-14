@@ -2,10 +2,17 @@ import type { InputKey } from '../types';
 
 export type ColorId = 'red' | 'green' | 'yellow' | 'blue' | 'white' | 'purple';
 export type ShapeId = 'circle' | 'square' | 'triangle' | 'diamond' | 'hexagon' | 'star';
+/** Colours of the Stroop task (W2-R8). */
+export type StroopColor = 'red' | 'green' | 'blue' | 'yellow';
 
 export type Stimulus =
   | { kind: 'shape'; shape: ShapeId; color: ColorId; frame?: ColorId }
-  | { kind: 'rdo'; startDeg: number; targetDeg: number; periodMs: number };
+  | { kind: 'rdo'; startDeg: number; targetDeg: number; periodMs: number }
+  /** A colour word (`word`) printed in another or the same colour (`ink`); the answer goes by the ink. */
+  | { kind: 'word'; word: StroopColor; ink: StroopColor };
+
+/** Trial condition of modules that compare two kinds of trials (conditionStats, condCost). */
+export type TrialCond = 'congruent' | 'incongruent' | 'quiet' | 'noisy' | 'repeat' | 'switch';
 
 export type Expected =
   | { kind: 'press'; key: InputKey }
@@ -18,6 +25,8 @@ export interface TrialSpec {
   stimulus: Stimulus;
   expected: Expected;
   practice?: boolean;
+  /** Stored with the spec; trials of modules without conditions have none. */
+  cond?: TrialCond;
 }
 
 export interface Press {

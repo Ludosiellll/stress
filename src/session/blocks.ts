@@ -3,13 +3,21 @@ import { R0, updateRating, type Rating } from '../engine/elo';
 import { BASE_ITEM_LIMIT_MS, effectiveDifficulty } from '../engine/itemLimit';
 import { keyLabel, layoutKeys } from '../engine/layouts';
 import type { Segment } from '../engine/planner';
+import { conditionStats, type ConditionStats } from '../engine/reaction/conditions';
 import { resolveBlock } from '../engine/reaction/resolve';
 import { summarize } from '../engine/reaction/summary';
 import type { BlockTimeline, ReactionSummary, TrialResult, TrialSpec } from '../engine/reaction/types';
 import { createRng, deriveSeed } from '../engine/rng';
-import type { FamilyId, InputKey, LayoutId, ModuleId, ReactionModuleId, TableModuleId } from '../engine/types';
+import {
+  isReactionModule,
+  type FamilyId,
+  type InputKey,
+  type LayoutId,
+  type ModuleId,
+  type ReactionModuleId,
+  type TableModuleId,
+} from '../engine/types';
 import { generateBlockItems, generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
-import type { SzmrParams } from '../modules/reaction/szmr';
 import { reactionModules } from '../modules/registry';
 import {
   generateGorbovTable,
@@ -35,9 +43,6 @@ import {
 const SERIES_BLOCK_ITEMS = 10;
 /** Floor for block sizes and item counts under the e2e scale. */
 const MIN_SCALED = 3;
-
-export const isReaction = (m: ModuleId): m is ReactionModuleId =>
-  m === 'pzmr' || m === 'szmr' || m === 'gonogo' || m === 'rdo';
 
 /** Block size or item count under the e2e scale: max(3, round(n·scale)). */
 export function scaledCount(n: number, scale: number): number {
@@ -75,18 +80,13 @@ export interface PlanContext {
   diagnostic: boolean;
 }
 
-/** Keys a reaction block uses: СЗМР has nKeys, the other modules one. */
-function keyCount(module: ReactionModuleId, params: unknown): number {
-  return module === 'szmr' ? (params as SzmrParams).nKeys : 1;
-}
-
 /** Block `blockIndex` of the segment at level L (Gorbov runs cycle their tasks by index). */
 export function planBlock(segment: Segment, L: number, blockIndex: number, ctx: PlanContext): BlockPlan {
   const { module } = segment;
-  if (isReaction(module)) {
+  if (isReactionModule(module)) {
     const mod = reactionModules[module];
     const params = mod.params(L);
-    const { keys, effectiveLayout } = layoutKeys(ctx.layout, keyCount(module, params));
+    const { keys, effectiveLayout } = layoutKeys(ctx.layout, mod.keyCount(params));
     return {
       kind: 'reaction',
       module,
@@ -166,7 +166,15 @@ export function buildBlock(
           : [];
       const specs = [...practice, ...mod.generateBlock(plan.params, createRng(seed), layout, plan.size)];
       return {
-        step: { kind: 'reaction_block', module: plan.module, L: plan.L, specs, keys: plan.keys, layout: plan.layout },
+        step: {
+          kind: 'reaction_block',
+          module: plan.module,
+          L: plan.L,
+          specs,
+          keys: plan.keys,
+          layout: plan.layout,
+          legend: mod.legend?.(layout, plan.params) ?? null,
+        },
         paramsJson: JSON.stringify(plan.params),
       };
     }
@@ -199,6 +207,8 @@ export interface ScoredReaction {
   summary: ReactionSummary;
   /** RTs of `press` hits outside practice whose onset frame was not dropped (FatigueBlock.hitRts). */
   hitRts: number[];
+  /** Per trial condition ({} for modules without conditions). */
+  conditions: ConditionStats;
 }
 
 /** Outcomes and summary of a reaction block; null when no trial counts (nothing to score). */
@@ -209,7 +219,7 @@ export function scoreReaction(specs: readonly TrialSpec[], tl: BlockTimeline): S
   const hitRts = results.flatMap((r) =>
     !r.practice && !r.frameDropped && r.kind === 'press' && r.outcome === 'hit' && r.rtMs !== null ? [r.rtMs] : [],
   );
-  return { results, summary, hitRts };
+  return { results, summary, hitRts, conditions: conditionStats(specs, results) };
 }
 
 export interface SeriesOutcome {

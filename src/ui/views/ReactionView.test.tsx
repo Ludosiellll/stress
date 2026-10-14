@@ -14,7 +14,7 @@ const TRIAL: TrialSpec = {
 };
 
 function step(over: Partial<StepOf<'reaction_block'>> = {}): StepOf<'reaction_block'> {
-  return { kind: 'reaction_block', module: 'pzmr', L: 0, specs: [TRIAL], keys: ['Space'], layout: 'keyboard', ...over };
+  return { kind: 'reaction_block', module: 'pzmr', L: 0, specs: [TRIAL], keys: ['Space'], layout: 'keyboard', legend: null, ...over };
 }
 
 let frames: ManualFrames;
@@ -60,6 +60,20 @@ describe('ReactionView', () => {
     const root = container.querySelector('.reaction');
     expect(root?.querySelector('canvas')).toBeTruthy();
     expect(root?.querySelectorAll('button, input')).toHaveLength(0);
+  });
+
+  it('shows the key legend under the canvas', () => {
+    mockCanvas();
+    const { container, getByText } = renderView(step({ module: 'stroop', keys: ['KeyF', 'KeyJ'], legend: 'красный — F · зелёный — J' }));
+    const legend = getByText('красный — F · зелёный — J');
+    expect(legend.previousElementSibling?.tagName).toBe('CANVAS');
+    expect(legend.closest('.reaction')).toBe(container.querySelector('.reaction'));
+  });
+
+  it('no legend element without a legend', () => {
+    mockCanvas();
+    const { container } = renderView();
+    expect(container.querySelector('.reaction-legend')).toBeNull();
   });
 
   it('plays the block and reports the timeline', async () => {

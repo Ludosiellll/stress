@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { planFree, type SessionPlan } from '../../engine/planner';
 import { hashString } from '../../engine/rng';
-import type { ModuleId } from '../../engine/types';
+import { MODULE_IDS, type ModuleId } from '../../engine/types';
 import { moduleTitles } from '../../modules/registry';
 import { useApp } from '../AppContext';
 import { logEvent } from '../errorLog';
@@ -12,8 +12,6 @@ export interface FreeProps {
   onStart: (plan: SessionPlan) => void;
   onBack: () => void;
 }
-
-const MODULES: readonly ModuleId[] = ['pzmr', 'szmr', 'gonogo', 'rdo', 'gorbov', 'schulte', 'numseries'];
 
 /** Free training: one module for 5 minutes. The seed changes with every session started. */
 export default function Free({ onStart, onBack }: FreeProps) {
@@ -65,7 +63,7 @@ export default function Free({ onStart, onBack }: FreeProps) {
       <h2>Свободная тренировка</h2>
       <p className="muted">Выбери модуль. Подход длится 5 минут.</p>
       <ul aria-label="Модули" className="module-list">
-        {MODULES.map((m, i) => (
+        {MODULE_IDS.map((m, i) => (
           <li key={m}>
             <button type="button" autoFocus={i === 0} onClick={() => { start(m); }}>
               {moduleTitles[m]}

@@ -368,6 +368,38 @@ describe('SessionController — levels and persistence', () => {
     });
   });
 
+  it('stroop block stores conditions and shows the interference line', async () => {
+    const h = await begin(planFree('stroop', 4));
+    const slowerOnIncongruent: Respond = (spec, idx) => {
+      const r = perfectPlayer(spec, idx);
+      return r !== null && spec.cond === 'incongruent' ? { ...r, rtMs: r.rtMs + 80 } : r;
+    };
+    const { view } = await playReaction(h, slowerOnIncongruent);
+    expect(view.title).toBe('Струп');
+    expect(view.lines).toContain('Ошибки: 0');
+    expect(view.lines.slice(-3)).toEqual(['Цвет совпадает со словом: 300 мс', 'Не совпадает: 380 мс', 'Интерференция: +80 мс']);
+    const [row] = await h.repo.listBlocks();
+    const summary = JSON.parse(row?.summaryJson ?? '{}') as { conditions?: unknown; frameMs?: unknown };
+    expect(summary.conditions).toEqual({
+      congruent: { n: 10, errors: 0, medianRt: 300 },
+      incongruent: { n: 10, errors: 0, medianRt: 380 },
+    });
+    expect(summary).toHaveProperty('frameMs', null);
+    const trials = await h.repo.listTrials(row?.id ?? '');
+    expect(trials.map((t) => (JSON.parse(t.stimulusJson) as { cond?: unknown }).cond).sort()).toEqual([
+      ...Array<string>(10).fill('congruent'),
+      ...Array<string>(10).fill('incongruent'),
+    ]);
+  });
+
+  it('reaction blocks without conditions store an empty conditions object and no condition lines', async () => {
+    const h = await begin(planFree('pzmr', 1));
+    const { view } = await playReaction(h);
+    expect(view.lines.some((l) => l.startsWith('Интерференция'))).toBe(false);
+    const [row] = await h.repo.listBlocks();
+    expect((JSON.parse(row?.summaryJson ?? '{}') as { conditions?: unknown }).conditions).toEqual({});
+  });
+
   it('says why the level did not rise when the RT spread is above the stability threshold (I3)', async () => {
     const h = await begin(planFree('pzmr', 1));
     const rts = [150, 500];

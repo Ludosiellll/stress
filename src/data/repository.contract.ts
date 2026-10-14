@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveModuleStates } from '../engine/derive';
+import { deriveModuleStates, MODULE_IDS } from '../engine/derive';
 import type { ModuleState } from '../engine/planner';
 import { LOG_LIMIT, type Repository } from './repository';
 import type { BlockRow, DiagnosticRow, LogicItemRow, LogRow, SessionRow, TrialRow, WellbeingRow } from './rows';
@@ -300,10 +300,10 @@ export function repositoryContract(make: () => Promise<Repository>): void {
   });
 
   describe('caches', () => {
-    it('returns defaults for all 7 modules, then saved states', async () => {
+    it('returns defaults for every module of the catalogue, then saved states', async () => {
       const repo = await make();
       const initial = await repo.getModuleStates();
-      expect(Object.keys(initial).sort()).toEqual(['gonogo', 'gorbov', 'numseries', 'pzmr', 'rdo', 'schulte', 'szmr']);
+      expect(Object.keys(initial).sort()).toEqual([...MODULE_IDS].sort());
       expect(initial.rdo).toEqual({
         module: 'rdo',
         lSaved: 0,

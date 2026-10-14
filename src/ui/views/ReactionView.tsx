@@ -29,7 +29,8 @@ function hideQuietly(renderer: StimulusRenderer): void {
 }
 
 /**
- * Plays one reaction block on a full-screen canvas: no controls, hidden cursor, nothing but the stimulus.
+ * Plays one reaction block on a full-screen canvas: no controls, hidden cursor, nothing but the stimulus
+ * (and the module's key legend at the bottom, when the level shows one).
  *
  * Order (so that no event is lost or misattributed): renderer → runner → focus guard (may abort at once) →
  * Escape listener; then, in the next task — after the key event that opened the block has been fully
@@ -117,6 +118,7 @@ export default function ReactionView({ step, nominalFrameMs, onDone, onAbort, on
   return (
     <div className="reaction">
       <canvas ref={canvasRef} />
+      {step.legend !== null && <p className="reaction-legend">{step.legend}</p>}
     </div>
   );
 }

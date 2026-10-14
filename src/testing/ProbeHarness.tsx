@@ -28,7 +28,15 @@ export function probeSpecs(): TrialSpec[] {
   }));
 }
 
-const STEP: StepOf<'reaction_block'> = { kind: 'reaction_block', module: 'pzmr', L: 0, specs: probeSpecs(), keys: ['Space'], layout: 'keyboard' };
+const STEP: StepOf<'reaction_block'> = {
+  kind: 'reaction_block',
+  module: 'pzmr',
+  L: 0,
+  specs: probeSpecs(),
+  keys: ['Space'],
+  layout: 'keyboard',
+  legend: null,
+};
 
 const sampleFrames = (): Promise<number[]> => collectFrameTimestamps(MEASURE_MS);
 

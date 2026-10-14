@@ -2,7 +2,7 @@ import type { Repository } from '../data/repository';
 import type { DiagnosticRow, SessionRow } from '../data/rows';
 import type { DiagnosticResults } from '../engine/diagnostic';
 import { L_NORM } from '../engine/planner';
-import type { ModuleId, ReactionModuleId, SessionKind } from '../engine/types';
+import { MODULE_IDS, type ModuleId, type ReactionModuleId, type SessionKind } from '../engine/types';
 import { moduleTitles } from '../modules/registry';
 import type { ChartDomain, ChartPoint, ChartSeries } from './charts/LineChart';
 import { parseResults, readinessOf, type HomeModel } from './homeModel';
@@ -53,8 +53,7 @@ export interface ProgressModel {
 export const SESSION_LINES = 50;
 
 /** Modules with a level (numseries is rated by Elo, not by L). */
-const LEVEL_MODULES: readonly ModuleId[] = ['pzmr', 'szmr', 'gonogo', 'rdo', 'gorbov', 'schulte'];
-const ALL_MODULES: readonly ModuleId[] = [...LEVEL_MODULES, 'numseries'];
+const LEVEL_MODULES: readonly ModuleId[] = MODULE_IDS.filter((m) => m !== 'numseries');
 
 const KIND_TITLES: Record<SessionKind, string> = { training: 'Тренировка', diagnostic: 'Диагностика', free: 'Свободная' };
 
@@ -162,7 +161,7 @@ export async function loadProgressModel(repo: Repository): Promise<ProgressModel
     repo.listDiagnostics(),
     repo.getModuleStates(),
     repo.listSessions(),
-    Promise.all(ALL_MODULES.map((m) => repo.listBlockLevels(m))),
+    Promise.all(MODULE_IDS.map((m) => repo.listBlockLevels(m))),
   ]);
   const blocksBySession = new Map<string, number>();
   for (const rows of blockLevels) {

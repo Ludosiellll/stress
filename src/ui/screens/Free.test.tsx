@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { MemoryRepository } from '../../data/memoryRepository';
 import { session } from '../../data/repository.contract';
 import type { SessionPlan } from '../../engine/planner';
+import { MODULE_IDS } from '../../engine/types';
 import { moduleTitles } from '../../modules/registry';
 import { createFakePlatform } from '../../testing/fakePlatform';
 import { nextTask } from '../../testing/domFakes';
@@ -21,15 +22,8 @@ describe('Free', () => {
   it('lists every module', async () => {
     await renderFree();
     const list = screen.getByRole('list', { name: 'Модули' });
-    expect(within(list).getAllByRole('button').map((b) => b.textContent)).toEqual([
-      moduleTitles.pzmr,
-      moduleTitles.szmr,
-      moduleTitles.gonogo,
-      moduleTitles.rdo,
-      moduleTitles.gorbov,
-      moduleTitles.schulte,
-      moduleTitles.numseries,
-    ]);
+    expect(within(list).getAllByRole('button').map((b) => b.textContent)).toEqual(MODULE_IDS.map((m) => moduleTitles[m]));
+    expect(within(list).getByRole('button', { name: 'Струп' })).toBeTruthy();
     expect(document.activeElement?.textContent).toBe(moduleTitles.pzmr);
   });
 

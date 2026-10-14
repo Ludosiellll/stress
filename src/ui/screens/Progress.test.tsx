@@ -5,8 +5,10 @@ import { block, session } from '../../data/repository.contract';
 import type { DiagnosticResults } from '../../engine/diagnostic';
 import { defaultModuleState } from '../../engine/derive';
 import { L_NORM } from '../../engine/planner';
+import { MODULE_IDS } from '../../engine/types';
 import { createFakePlatform } from '../../testing/fakePlatform';
 import { moduleTitles } from '../../modules/registry';
+import { diagnosticCharts } from '../progressModel';
 import { renderWithApp } from '../testUtils';
 import Progress from './Progress';
 
@@ -120,8 +122,9 @@ describe('Progress edge cases', () => {
   it('says «Нет данных» in every chart of an empty history, with the invitation to run a diagnostic', async () => {
     await renderProgress();
     expect(screen.getByText('Пройди диагностику, чтобы увидеть индекс')).toBeTruthy();
-    // 6 diagnostic metrics + 6 level modules.
-    expect(screen.getAllByText('Нет данных')).toHaveLength(12);
+    // One chart per diagnostic metric + one level chart per module with a level (all but number series).
+    const levelModules = MODULE_IDS.filter((m) => m !== 'numseries').length;
+    expect(screen.getAllByText('Нет данных')).toHaveLength(diagnosticCharts([]).length + levelModules);
     expect(screen.getByText('Сессий пока нет')).toBeTruthy();
     expect(screen.queryByText('≈ формат теста')).toBeNull();
   });

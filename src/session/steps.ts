@@ -1,6 +1,7 @@
 import type { DiagnosticResults } from '../engine/diagnostic';
 import { BASE_ITEM_LIMIT_MS } from '../engine/itemLimit';
-import type { Outcome, ReactionSummary, TrialSpec } from '../engine/reaction/types';
+import { condCost, type ConditionStats } from '../engine/reaction/conditions';
+import type { Outcome, ReactionSummary, TrialCond, TrialSpec } from '../engine/reaction/types';
 import type { BlockFlag, InputKey, LayoutId, ModuleId, ReactionModuleId, TableModuleId } from '../engine/types';
 import type { ParamChange } from '../modules/describe';
 import type { TimedSeriesItem } from '../modules/numseries/generate';
@@ -19,6 +20,8 @@ export type Step =
       keys: InputKey[];
       /** Effective layout: 'keyboard' when the mouse cannot serve this many keys. */
       layout: LayoutId;
+      /** Key hint under the stimulus (ReactionModule.legend); null: none. */
+      legend: string | null;
     }
   | {
       kind: 'table_block';
@@ -125,6 +128,7 @@ const COUNT_LINES: Record<ReactionModuleId, readonly CountLine[]> = {
   szmr: [FALSE_STARTS, MISSES, ['Ошибки выбора', (c) => c.wrong]],
   gonogo: [FALSE_STARTS, MISSES, ['Нажатия на no-go', (c) => c.commission]],
   rdo: [FALSE_STARTS, MISSES],
+  stroop: [FALSE_STARTS, MISSES, ['Ошибки', (c) => c.wrong]],
 };
 
 function timingErrorLine(meanSignedErrorMs: number): string {
@@ -146,6 +150,39 @@ export function reactionLines(module: ReactionModuleId, s: ReactionSummary): str
     lines.push(`Опережений: ${String(s.counts.early)}, запаздываний: ${String(s.counts.timing_late)}`);
   }
   for (const [label, count] of COUNT_LINES[module]) lines.push(`${label}: ${String(count(s.counts))}`);
+  return lines;
+}
+
+/** Signed whole milliseconds: «+90», «−30», «0». */
+function signedMs(x: number): string {
+  const v = whole(x);
+  if (v > 0) return `+${String(v)}`;
+  if (v < 0) return `−${String(-v)}`;
+  return '0';
+}
+
+/** Modules that compare two kinds of trials: the fast and slow conditions with their labels, and the difference. */
+interface CondLines {
+  fast: [cond: TrialCond, label: string];
+  slow: [cond: TrialCond, label: string];
+  cost: string;
+}
+
+const COND_LINES: Partial<Record<ReactionModuleId, CondLines>> = {
+  stroop: { fast: ['congruent', 'Цвет совпадает со словом'], slow: ['incongruent', 'Не совпадает'], cost: 'Интерференция' },
+};
+
+/** «Цвет совпадает со словом: 520 мс», «Не совпадает: 610 мс», «Интерференция: +90 мс»; a line only for a known value. */
+export function conditionLines(module: ReactionModuleId, stats: ConditionStats): string[] {
+  const spec = COND_LINES[module];
+  if (spec === undefined) return [];
+  const lines: string[] = [];
+  for (const [cond, label] of [spec.fast, spec.slow]) {
+    const rt = stats[cond]?.medianRt ?? null;
+    if (rt !== null) lines.push(`${label}: ${String(whole(rt))} мс`);
+  }
+  const cost = condCost(stats, spec.slow[0], spec.fast[0]);
+  if (cost !== null) lines.push(`${spec.cost}: ${signedMs(cost)} мс`);
   return lines;
 }
 

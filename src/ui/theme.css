@@ -223,6 +223,19 @@ legend {
   height: 100%;
 }
 
+/* Key legend at the bottom edge, well away from the stimulus in the centre. */
+.reaction-legend {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 4vh;
+  margin: 0;
+  text-align: center;
+  font-size: 1.25rem;
+  color: var(--muted);
+  pointer-events: none;
+}
+
 .table-screen {
   display: flex;
   align-items: center;

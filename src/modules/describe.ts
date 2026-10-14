@@ -1,4 +1,4 @@
-import type { ModuleId } from '../engine/types';
+import { isReactionModule, type ModuleId } from '../engine/types';
 import { reactionModules } from './registry';
 import { gorbovParams, type TableTaskId } from './tables/gorbov';
 import { schulteParams } from './tables/schulte';
@@ -24,17 +24,15 @@ function changed(before: Described, after: Described): ParamChange[] {
 
 /**
  * What changed in the module's parameters between two levels, for the block summary.
- * Gorbov needs the run task (alternate gets 1.6× time); numseries has no level, so nothing changes.
+ * Reaction modules (any id of the catalogue) describe their own parameters. Gorbov needs the run task
+ * (alternate gets 1.6× time); numseries has no level, so nothing changes.
  */
 export function describeChanges(module: ModuleId, lBefore: number, lAfter: number, task?: TableTaskId): ParamChange[] {
+  if (isReactionModule(module)) {
+    const m = reactionModules[module];
+    return changed(m.describeParams(m.params(lBefore)), m.describeParams(m.params(lAfter)));
+  }
   switch (module) {
-    case 'pzmr':
-    case 'szmr':
-    case 'gonogo':
-    case 'rdo': {
-      const m = reactionModules[module];
-      return changed(m.describeParams(m.params(lBefore)), m.describeParams(m.params(lAfter)));
-    }
     case 'gorbov': {
       if (task === undefined) throw new RangeError('describeChanges: gorbov needs the run task');
       return changed(describeTableParams(gorbovParams(lBefore, task)), describeTableParams(gorbovParams(lAfter, task)));

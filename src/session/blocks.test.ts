@@ -83,6 +83,46 @@ describe('planBlock', () => {
   });
 });
 
+describe('reaction blocks', () => {
+  const ctx = { layout: 'keyboard', scale: 1, diagnostic: false } as const;
+  const free = (module: Segment['module']): Segment => ({ module, budgetMs: 300_000, purpose: 'free' });
+
+  it('keys come from keyCount', () => {
+    expect(planBlock(free('pzmr'), 30, 0, ctx)).toMatchObject({ kind: 'reaction', keys: ['Space'] });
+    // СЗМР as before: 3 colours on 2 keys at L 8, 4 keys at L 16.
+    expect(planBlock(free('szmr'), 8, 0, ctx)).toMatchObject({ keys: ['KeyF', 'KeyJ'] });
+    expect(planBlock(free('szmr'), 16, 0, ctx)).toMatchObject({ keys: ['KeyD', 'KeyF', 'KeyJ', 'KeyK'] });
+    // Струп: one key per colour.
+    expect(planBlock(free('stroop'), 0, 0, ctx)).toMatchObject({ keys: ['KeyF', 'KeyJ'], layout: 'keyboard', size: 20 });
+    expect(planBlock(free('stroop'), 8, 0, ctx)).toMatchObject({ keys: ['KeyD', 'KeyF', 'KeyJ'] });
+    expect(planBlock(free('stroop'), 8, 0, { ...ctx, layout: 'mouse' })).toMatchObject({
+      keys: ['KeyD', 'KeyF', 'KeyJ'],
+      layout: 'keyboard',
+    });
+  });
+
+  it('reaction step carries the legend', () => {
+    const build = (module: Segment['module'], L: number, layout: 'keyboard' | 'pult' = 'keyboard') =>
+      buildBlock(planBlock(free(module), L, 0, { ...ctx, layout }), 1, layout, new Map()).step;
+    expect(build('stroop', 0)).toMatchObject({ kind: 'reaction_block', legend: 'красный — F · зелёный — J' });
+    expect(build('stroop', 0, 'pult')).toMatchObject({ legend: 'красный — ← · зелёный — →' });
+    expect(build('stroop', 12)).toMatchObject({ legend: null });
+    expect(build('szmr', 0)).toMatchObject({ legend: null });
+  });
+
+  it('scoreReaction adds the per-condition statistics', () => {
+    const { step } = buildBlock(planBlock(free('stroop'), 8, 0, ctx), 3, 'keyboard', new Map());
+    if (step.kind !== 'reaction_block') throw new Error('expected a reaction block');
+    const scored = scoreReaction(step.specs, playTimeline(step.specs, perfectPlayer));
+    expect(scored?.conditions).toEqual({
+      incongruent: { n: 13, errors: 0, medianRt: 300 },
+      congruent: { n: 7, errors: 0, medianRt: 300 },
+    });
+    const pz = pzmr.generateBlock(pzmr.params(0), createRng(1), 'keyboard', 3);
+    expect(scoreReaction(pz, playTimeline(pz, perfectPlayer))?.conditions).toEqual({});
+  });
+});
+
 describe('scoreReaction', () => {
   it('null when every trial is practice (nothing to score)', () => {
     const specs = pzmr.generateBlock(pzmr.params(0), createRng(1), 'keyboard', 3).map((t) => ({ ...t, practice: true }));

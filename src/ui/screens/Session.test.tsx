@@ -28,6 +28,7 @@ const REACTION: StepOf<'reaction_block'> = {
   specs: [TRIAL],
   keys: ['Space'],
   layout: 'keyboard',
+  legend: null,
 };
 
 const INSTRUCTION: StepOf<'instruction'> = {

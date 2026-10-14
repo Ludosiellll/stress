@@ -6,7 +6,7 @@ import { isDiagnosticDue, planTraining, type SessionPlan } from '../engine/plann
 import { readiness, type Ability } from '../engine/readiness';
 import { hashString } from '../engine/rng';
 import { computeStreak, daysUntil } from '../engine/streak';
-import type { ReactionModuleId } from '../engine/types';
+import { REACTION_MODULE_IDS, type ReactionModuleId } from '../engine/types';
 
 export interface HomeModel {
   plan: SessionPlan;
@@ -20,7 +20,7 @@ export interface HomeModel {
 
 const NO_ABILITIES: Record<Ability, number | null> = { reaction: null, attention: null, switching: null, memory: null, logic: null };
 
-const REACTION_IDS: readonly string[] = ['pzmr', 'szmr', 'gonogo', 'rdo'];
+const REACTION_IDS: readonly string[] = REACTION_MODULE_IDS;
 const isReactionId = (v: unknown): v is ReactionModuleId => typeof v === 'string' && REACTION_IDS.includes(v);
 
 const NO_METRICS: DiagnosticMetrics = {

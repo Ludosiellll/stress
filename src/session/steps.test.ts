@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Outcome, ReactionSummary } from '../engine/reaction/types';
-import { plural, reactionLines, seriesDiagnosticInstruction, seriesLines, tableLines } from './steps';
+import { conditionLines, plural, reactionLines, seriesDiagnosticInstruction, seriesLines, tableLines } from './steps';
 
 const NO_COUNTS: Record<Outcome, number> = {
   hit: 0,
@@ -88,6 +88,37 @@ describe('reactionLines', () => {
     expect(rdo(-7.6)).toEqual(['Средняя ошибка: −8 мс (торопишься)', ...tail]);
     expect(rdo(-0.4)).toEqual(['Средняя ошибка: 0 мс', ...tail]);
     expect(rdo(null)).toEqual(tail);
+  });
+});
+
+describe('Струп', () => {
+  it('reactionLines: errors are wrong colours', () => {
+    expect(reactionLines('stroop', summary({}, { wrong: 3, miss: 1 })).slice(-3)).toEqual(['Фальстарты: 0', 'Пропуски: 1', 'Ошибки: 3']);
+  });
+
+  const stats = (congruent: number | null, incongruent: number | null) => ({
+    congruent: { n: 8, errors: 0, medianRt: congruent },
+    incongruent: { n: 12, errors: 1, medianRt: incongruent },
+  });
+
+  it('conditionLines: both medians and the interference with its sign', () => {
+    expect(conditionLines('stroop', stats(520, 610))).toEqual([
+      'Цвет совпадает со словом: 520 мс',
+      'Не совпадает: 610 мс',
+      'Интерференция: +90 мс',
+    ]);
+    expect(conditionLines('stroop', stats(530.4, 500.2)).at(-1)).toBe('Интерференция: −30 мс');
+    expect(conditionLines('stroop', stats(500.2, 500.4)).at(-1)).toBe('Интерференция: 0 мс');
+  });
+
+  it('conditionLines: a line only for a value that is not null', () => {
+    expect(conditionLines('stroop', stats(520, null))).toEqual(['Цвет совпадает со словом: 520 мс']);
+    expect(conditionLines('stroop', stats(null, 610))).toEqual(['Не совпадает: 610 мс']);
+    expect(conditionLines('stroop', {})).toEqual([]);
+  });
+
+  it('conditionLines: modules without conditions have none', () => {
+    expect(conditionLines('szmr', stats(520, 610))).toEqual([]);
   });
 });
 

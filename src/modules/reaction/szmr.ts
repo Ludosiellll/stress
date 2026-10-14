@@ -116,6 +116,8 @@ export const szmr: ReactionModule<SzmrParams> = {
     });
   },
 
+  keyCount: (p) => p.nKeys,
+
   instruction(layout, p) {
     return (
       colorKeyRule(keysFor(layout, p.nKeys), p.nColors) +

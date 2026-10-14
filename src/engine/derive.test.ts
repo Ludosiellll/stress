@@ -45,10 +45,9 @@ describe('isCountedSession', () => {
 });
 
 describe('deriveModuleStates', () => {
-  it('returns defaults for all 7 modules without history', () => {
+  it('returns defaults for every module of the catalogue without history', () => {
     const states = deriveModuleStates([], []);
     expect(Object.keys(states)).toEqual([...MODULE_IDS]);
-    expect(MODULE_IDS).toHaveLength(7);
     for (const m of MODULE_IDS) {
       expect(states[m]).toEqual({
         module: m,

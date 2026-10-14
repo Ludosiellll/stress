@@ -1,4 +1,5 @@
 import type { ColorId, ShapeId, Stimulus } from '../engine/reaction/types';
+import { COLOR_WORDS } from '../modules/reaction/stroop';
 import type { StimulusRenderer } from './reactionRunner';
 
 export const BACKGROUND = '#2b2b2b';
@@ -17,6 +18,9 @@ const STIMULUS_SIZE = 0.18;
 const FRAME_WIDTH_PX = 12;
 const FRAME_GAP_PX = 10;
 const STAR_INNER = 0.45;
+/** Stroop word height as a share of the shorter side. */
+const WORD_SIZE = 0.12;
+const WORD_FONT = "'Segoe UI', Arial, sans-serif";
 
 /** RDO dial radius as a share of the shorter side. */
 const RDO_RADIUS = 0.35;
@@ -108,6 +112,20 @@ function drawShape(
   ctx.stroke();
 }
 
+function drawWord(
+  ctx: CanvasRenderingContext2D,
+  s: Extract<Stimulus, { kind: 'word' }>,
+  cx: number,
+  cy: number,
+  side: number,
+): void {
+  ctx.font = `bold ${String(Math.round(WORD_SIZE * side))}px ${WORD_FONT}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = COLORS[s.ink];
+  ctx.fillText(COLOR_WORDS[s.word], cx, cy);
+}
+
 function drawRdo(
   ctx: CanvasRenderingContext2D,
   s: Extract<Stimulus, { kind: 'rdo' }>,
@@ -171,8 +189,17 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): StimulusRendere
     ctx.fillRect(0, 0, w, h);
     if (current === null) return;
     const side = Math.min(w, h);
-    if (current.kind === 'shape') drawShape(ctx, current, w / 2, h / 2, side);
-    else drawRdo(ctx, current, elapsedMs, w / 2, h / 2, side);
+    switch (current.kind) {
+      case 'shape':
+        drawShape(ctx, current, w / 2, h / 2, side);
+        return;
+      case 'word':
+        drawWord(ctx, current, w / 2, h / 2, side);
+        return;
+      case 'rdo':
+        drawRdo(ctx, current, elapsedMs, w / 2, h / 2, side);
+        return;
+    }
   };
 
   draw();

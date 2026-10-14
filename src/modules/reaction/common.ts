@@ -13,6 +13,10 @@ export interface ReactionModule<P> {
   params(L: number): P;
   cvMax(L: number): number | null;
   generateBlock(p: P, rng: Rng, layout: LayoutId, size?: number): TrialSpec[];
+  /** Keys a block at these parameters needs (layoutKeys(layout, keyCount(p))). */
+  keyCount(p: P): number;
+  /** Key hint shown under the stimulus during the block, e.g. «красный — F · зелёный — J»; null or absent: none. */
+  legend?(layout: LayoutId, p: P): string | null;
   /** Russian labels for the "what changed" view. */
   describeParams(p: P): Array<{ label: string; value: string }>;
 }

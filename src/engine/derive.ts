@@ -2,11 +2,11 @@ import { isPlateau, savedLevel } from './adaptive';
 import { R0, updateRating, type Rating } from './elo';
 import { BASE_ITEM_LIMIT_MS, effectiveDifficulty } from './itemLimit';
 import type { ModuleState } from './planner';
-import type { BlockFlag, FamilyId, ModuleId, SessionKind } from './types';
+import { MODULE_IDS, type BlockFlag, type FamilyId, type ModuleId, type SessionKind } from './types';
+
+export { MODULE_IDS };
 
 /** Caches (§8.1) are pure functions of history; these derive them. */
-
-export const MODULE_IDS: readonly ModuleId[] = ['pzmr', 'szmr', 'gonogo', 'rdo', 'gorbov', 'schulte', 'numseries'];
 
 const COUNTED_KINDS: ReadonlySet<SessionKind> = new Set<SessionKind>(['training', 'free']);
 

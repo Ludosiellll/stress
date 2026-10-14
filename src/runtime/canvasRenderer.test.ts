@@ -171,6 +171,38 @@ describe('createCanvasRenderer', () => {
     expect(ringRadius - 6).toBeGreaterThan(54 * Math.SQRT2);
   });
 
+  it('draws a colour word in its ink', () => {
+    const { renderer, calls } = setup({ w: 800, h: 600 });
+    calls.length = 0;
+    renderer.show({ kind: 'word', word: 'green', ink: 'red' });
+    const text = named(calls, 'fillText');
+    expect(text).toHaveLength(1);
+    expect(text[0]?.args).toEqual(['ЗЕЛЁНЫЙ', 400, 300]);
+    expect(text[0]?.fillStyle).toBe(COLORS.red);
+    expect(named(calls, 'fill')).toEqual([]);
+  });
+
+  it('the word is bold, centred, 12% of the shorter side', () => {
+    const { ctx, calls } = mockContext();
+    const canvas = {
+      clientWidth: 1000,
+      clientHeight: 500,
+      width: 0,
+      height: 0,
+      getContext: () => ctx,
+      ownerDocument: { defaultView: { devicePixelRatio: 1 } },
+    } as unknown as HTMLCanvasElement;
+    const renderer = createCanvasRenderer(canvas);
+    renderer.show({ kind: 'word', word: 'yellow', ink: 'blue' });
+    expect(ctx.font).toBe("bold 60px 'Segoe UI', Arial, sans-serif");
+    expect([ctx.textAlign, ctx.textBaseline]).toEqual(['center', 'middle']);
+    expect(named(calls, 'fillText')[0]?.args).toEqual(['ЖЁЛТЫЙ', 500, 250]);
+    // A word stimulus does not animate.
+    calls.length = 0;
+    renderer.tick(100);
+    expect(calls).toEqual([]);
+  });
+
   it('palette matches the reference colours', () => {
     expect(BACKGROUND).toBe('#2b2b2b');
     expect(COLORS).toEqual({

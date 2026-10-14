@@ -52,6 +52,11 @@ describe('describeChanges', () => {
     ]);
   });
 
+  it('stroop: a third colour at L = 8', () => {
+    expect(describeChanges('stroop', 7, 8)).toContainEqual({ label: 'Цветов', from: '2', to: '3' });
+    expect(describeChanges('stroop', 11, 12)).toContainEqual({ label: 'Подсказка клавиш', from: 'да', to: 'нет' });
+  });
+
   it('numseries has no level parameters', () => {
     expect(describeChanges('numseries', 0, 0)).toEqual([]);
   });

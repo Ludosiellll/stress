@@ -42,6 +42,8 @@ export const pzmr: ReactionModule<PzmrParams> = {
     );
   },
 
+  keyCount: () => 1,
+
   instruction: (layout) =>
     `Когда появится красный круг, как можно быстрее нажми ${singleKeyLabel(layout)}. ` +
     'Не нажимай заранее: это фальстарт.',

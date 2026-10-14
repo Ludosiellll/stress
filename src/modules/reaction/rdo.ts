@@ -46,6 +46,8 @@ export const rdo: ReactionModule<RdoParams> = {
     });
   },
 
+  keyCount: () => 1,
+
   instruction: (layout) =>
     `Метка бежит по кругу. Нажми ${singleKeyLabel(layout)} точно в момент, когда она дойдёт до отметки. ` +
     'Важна точность, а не скорость.',

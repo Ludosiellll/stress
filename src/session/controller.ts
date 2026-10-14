@@ -8,7 +8,7 @@ import type { DiagnosticResults } from '../engine/diagnostic';
 import type { Rating } from '../engine/elo';
 import type { ModuleState, Segment, SessionPlan } from '../engine/planner';
 import type { BlockTimeline } from '../engine/reaction/types';
-import type { BlockFlag, FamilyId, LayoutId, ModuleId } from '../engine/types';
+import { isReactionModule, type BlockFlag, type FamilyId, type LayoutId, type ModuleId } from '../engine/types';
 import { describeChanges } from '../modules/describe';
 import { moduleTitles, reactionModules } from '../modules/registry';
 import type { TableTaskId } from '../modules/tables/gorbov';
@@ -18,7 +18,6 @@ import {
   buildBlock,
   diagnosticBlockSeed,
   diagnosticResults,
-  isReaction,
   planBlock,
   scoreReaction,
   scoreSeries,
@@ -31,6 +30,7 @@ import {
 import { blockRow, errorLogRow, logicItemRows, sessionRow, trialRows, wellbeingRow } from './rowsBuild';
 import { SaveQueue, type SaveOutcome, type Write } from './saveQueue';
 import {
+  conditionLines,
   reactionLines,
   saveErrorMessage,
   seriesLines,
@@ -240,7 +240,7 @@ export class SessionController {
         this.restartBlock(module, 'error');
         return;
       }
-      const { results, summary, hitRts } = scored;
+      const { results, summary, hitRts, conditions } = scored;
       const seg = this.segment();
       if (!this.counted && summary.timingUnreliable && !seg.unreliableReplayed) {
         // A diagnostic value from a block with dropped frames is replayed once; a second one is kept and marked.
@@ -254,8 +254,8 @@ export class SessionController {
         score: summary.score,
         level: { cvRt: summary.cvRt, cvMax: reactionModules[module].cvMax(L), timingUnreliable: summary.timingUnreliable },
         hitRts,
-        summaryJson: JSON.stringify({ ...summary, frameMs: tl.frameMs ?? null }),
-        lines: reactionLines(module, summary),
+        summaryJson: JSON.stringify({ ...summary, frameMs: tl.frameMs ?? null, conditions }),
+        lines: [...reactionLines(module, summary), ...conditionLines(module, conditions)],
         rows: (blockId) => ({ trials: trialRows(blockId, step.specs, tl, results), items: [] }),
         onCommit: () => {
           if (!this.counted) this.diagParts.push({ module, summary });
@@ -642,7 +642,7 @@ export class SessionController {
     seg.unreliableReplayed = false;
     this.active = null;
     if (b.module !== 'numseries') this.levels.set(b.module, lAfter);
-    if (this.counted && isReaction(b.module)) {
+    if (this.counted && isReactionModule(b.module)) {
       const clean = this.sessionBlocks.filter(
         (x) => x.module === b.module && !x.flags.includes('fatigued') && !x.flags.includes('timing_unreliable'),
       );

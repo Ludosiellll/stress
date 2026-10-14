@@ -3,12 +3,19 @@ import type { ReactionModule } from './reaction/common';
 import { gonogo } from './reaction/gonogo';
 import { pzmr } from './reaction/pzmr';
 import { rdo } from './reaction/rdo';
+import { stroop } from './reaction/stroop';
 import { szmr } from './reaction/szmr';
 
 export { L_NORM as lNorm } from '../engine/planner';
 export type { ReactionModule } from './reaction/common';
 
-export const reactionModules: Record<ReactionModuleId, ReactionModule<unknown>> = { pzmr, szmr, gonogo, rdo };
+export const reactionModules: Record<ReactionModuleId, ReactionModule<unknown>> = {
+  pzmr,
+  szmr,
+  gonogo,
+  rdo,
+  stroop,
+};
 
 export const moduleTitles: Record<ModuleId, string> = {
   pzmr: pzmr.title,
@@ -17,5 +24,6 @@ export const moduleTitles: Record<ModuleId, string> = {
   rdo: rdo.title,
   gorbov: 'Красно-чёрные таблицы Горбова',
   schulte: 'Таблицы Шульте',
+  stroop: stroop.title,
   numseries: 'Числовые ряды',
 };

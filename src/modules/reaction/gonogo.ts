@@ -51,6 +51,8 @@ export const gonogo: ReactionModule<GoNoGoParams> = {
     );
   },
 
+  keyCount: () => 1,
+
   instruction: (layout, p) =>
     `На красный круг нажимай ${singleKeyLabel(layout)}. На ${NO_GO_NAMES[p.noGoStimulus]} не нажимай ничего.`,
 

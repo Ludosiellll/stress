@@ -1,5 +1,20 @@
-export type ModuleId = 'pzmr' | 'szmr' | 'gonogo' | 'rdo' | 'gorbov' | 'schulte' | 'numseries';
-export type ReactionModuleId = 'pzmr' | 'szmr' | 'gonogo' | 'rdo';
+/**
+ * The module catalogue: every other list of modules (free training, progress charts, caches, dispatch) reads
+ * these. New modules are inserted before 'numseries' in MODULE_IDS; reaction modules are also appended to
+ * REACTION_MODULE_IDS.
+ */
+export const REACTION_MODULE_IDS = ['pzmr', 'szmr', 'gonogo', 'rdo', 'stroop'] as const;
+export type ReactionModuleId = (typeof REACTION_MODULE_IDS)[number];
+export const MODULE_IDS = ['pzmr', 'szmr', 'gonogo', 'rdo', 'gorbov', 'schulte', 'stroop', 'numseries'] as const;
+export type ModuleId = (typeof MODULE_IDS)[number];
+
+const REACTION_SET: ReadonlySet<ModuleId> = new Set<ModuleId>(REACTION_MODULE_IDS);
+
+/** Modules played by ReactionModule + ReactionBlockRunner. */
+export function isReactionModule(m: ModuleId): m is ReactionModuleId {
+  return REACTION_SET.has(m);
+}
+
 export type TableModuleId = 'gorbov' | 'schulte';
 export type LayoutId = 'keyboard' | 'mouse' | 'pult';
 export type InputKey = string;
