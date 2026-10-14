@@ -35,6 +35,8 @@ export interface Repository {
   listBlocks(): Promise<BlockRow[]>;
   /** Trials of one block by idx. */
   listTrials(blockId: string): Promise<TrialRow[]>;
+  /** Every trial in one query (export, R20): by their block's startedAt (ties: block insertion), then idx. */
+  listAllTrials(): Promise<TrialRow[]>;
   /** By at. */
   listLogicItems(): Promise<LogicItemRow[]>;
   /** By number. */

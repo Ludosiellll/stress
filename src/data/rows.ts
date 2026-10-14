@@ -78,3 +78,15 @@ export interface Settings {
   testDate: string | null;
   lastSelfCheckJson: string | null;
 }
+
+/**
+ * Tauri command contract (Ruling R21): `invoke<BackupStatus>('backup_status')` returns the
+ * outcome of the backup made at startup (src-tauri/src/commands.rs). `ok` with `path: null`
+ * means no copy was needed; `at` is Unix seconds. Task 14 writes it to app_log on startup.
+ */
+export interface BackupStatus {
+  ok: boolean;
+  path: string | null;
+  error: string | null;
+  at: number;
+}

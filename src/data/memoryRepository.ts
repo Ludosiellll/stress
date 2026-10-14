@@ -109,6 +109,12 @@ export class MemoryRepository implements Repository {
     );
   }
 
+  listAllTrials(): Promise<TrialRow[]> {
+    const blockOrder = new Map(sortedCopies(this.blocks, (b) => b.startedAt).map((b, i) => [b.id, i]));
+    const position = (t: TrialRow): number => blockOrder.get(t.blockId) ?? Number.MAX_SAFE_INTEGER;
+    return Promise.resolve(this.trials.map(copy).sort((a, b) => position(a) - position(b) || a.idx - b.idx));
+  }
+
   listLogicItems(): Promise<LogicItemRow[]> {
     return Promise.resolve(sortedCopies(this.items, (i) => i.at));
   }

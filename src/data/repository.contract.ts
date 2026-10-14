@@ -129,6 +129,21 @@ export function repositoryContract(make: () => Promise<Repository>): void {
       expect((await repo.listLogicItems()).map((x) => x.id)).toEqual(['i1', 'i2']);
     });
 
+    it('listAllTrials returns every trial by block startedAt, then idx (R20)', async () => {
+      const repo = await make();
+      expect(await repo.listAllTrials()).toEqual([]);
+      await repo.createSession(session('s1', T1));
+      await repo.addBlock(block('b2', 's1', T3), [trial('t3', 'b2', 1), trial('t2', 'b2', 0)], []);
+      await repo.addBlock(block('b1', 's1', T1), [trial('t1b', 'b1', 1), trial('t1a', 'b1', 0)], []);
+      await repo.addBlock(block('b3', 's1', T3), [trial('t4', 'b3', 0)], []);
+      await repo.addBlock(block('b0', 's1', T2), [], []);
+      const all = await repo.listAllTrials();
+      expect(all.map((x) => x.id)).toEqual(['t1a', 't1b', 't2', 't3', 't4']);
+      expect(all[0]).toEqual(trial('t1a', 'b1', 0));
+      if (all[0]) all[0].outcome = 'mutated';
+      expect((await repo.listAllTrials())[0]).toEqual(trial('t1a', 'b1', 0));
+    });
+
     it('addBlock is atomic: a duplicate trial id stores nothing', async () => {
       const repo = await make();
       await repo.createSession(session('s1', T1));

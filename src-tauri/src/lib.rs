@@ -25,24 +25,33 @@ fn migrations() -> Vec<Migration> {
 /// Backs up the database file before anything can open it. Plugins are initialized in
 /// registration order inside `Builder::build` (tauri 2.12 app.rs:2607), before the windows
 /// are created and before the app `setup` hook runs (app.rs:2691-2698), so registering this
-/// plugin first guarantees no webview has loaded the database yet. A failed backup is
-/// reported and does not stop the app.
+/// plugin first guarantees no webview has loaded the database yet. A failed backup does not
+/// stop the app: the outcome is kept as `BackupStatus` state for the `backup_status` command (R21).
 fn backup_plugin<R: Runtime>() -> TauriPlugin<R> {
     PluginBuilder::new("db-backup")
         .setup(|app, _api| {
-            let dir = app.path().app_config_dir()?;
             let version = app.package_info().version.to_string();
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |d| d.as_secs());
-            if let Err(e) = backup::run_backup_if_needed(
-                &dir.join(DB_FILE),
-                &dir.join(BACKUP_DIR),
-                &version,
-                now,
-            ) {
+            let result = app
+                .path()
+                .app_config_dir()
+                .map_err(|e| e.to_string())
+                .and_then(|dir| {
+                    backup::run_backup_if_needed(
+                        &dir.join(DB_FILE),
+                        &dir.join(BACKUP_DIR),
+                        &version,
+                        now,
+                    )
+                    .map_err(|e| e.to_string())
+                });
+            let status = commands::BackupStatus::from_result(result, now);
+            if let Some(e) = &status.error {
                 eprintln!("database backup failed: {e}");
             }
+            app.manage(status);
             Ok(())
         })
         .build()
@@ -58,6 +67,7 @@ pub fn run() {
                 .build(),
         )
         .invoke_handler(tauri::generate_handler![
+            commands::backup_status,
             commands::db_batch,
             commands::export_file
         ])

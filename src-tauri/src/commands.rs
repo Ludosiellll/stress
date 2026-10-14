@@ -1,6 +1,8 @@
 //! Tauri commands of the app (the SQL plugin brings its own load/execute/select).
 
-use serde::Deserialize;
+use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Manager, Runtime, State};
@@ -31,6 +33,42 @@ pub async fn db_batch(
         Some(DbPool::Sqlite(pool)) => run_batch(pool, &statements).await,
         None => Err(format!("database {db} is not loaded")),
     }
+}
+
+/// Outcome of the startup backup (Ruling R21), managed as app state and read by the
+/// frontend with `invoke('backup_status')`. `ok` with `path: None` means no copy was needed.
+/// `at` is the Unix time (seconds) of the attempt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BackupStatus {
+    pub ok: bool,
+    pub path: Option<String>,
+    pub error: Option<String>,
+    pub at: u64,
+}
+
+impl BackupStatus {
+    pub fn from_result(result: Result<Option<PathBuf>, String>, at: u64) -> Self {
+        match result {
+            Ok(path) => Self {
+                ok: true,
+                path: path.map(|p| p.to_string_lossy().into_owned()),
+                error: None,
+                at,
+            },
+            Err(e) => Self {
+                ok: false,
+                path: None,
+                error: Some(e),
+                at,
+            },
+        }
+    }
+}
+
+/// Result of the backup made when the app started.
+#[tauri::command]
+pub fn backup_status(status: State<'_, BackupStatus>) -> BackupStatus {
+    status.inner().clone()
 }
 
 /// Writes an export file into the user's Downloads folder and returns its full path.
@@ -215,6 +253,34 @@ mod tests {
             assert!(err.contains("unsupported parameter"), "{err}");
             assert_eq!(count(&pool).await, 0);
         });
+    }
+
+    #[test]
+    fn backup_status_from_result() {
+        let copy = PathBuf::from("backups").join("trainer-5.db");
+        assert_eq!(
+            BackupStatus::from_result(Ok(Some(copy.clone())), 5),
+            BackupStatus {
+                ok: true,
+                path: Some(copy.to_string_lossy().into_owned()),
+                error: None,
+                at: 5
+            }
+        );
+        assert_eq!(
+            BackupStatus::from_result(Ok(None), 6),
+            BackupStatus {
+                ok: true,
+                path: None,
+                error: None,
+                at: 6
+            }
+        );
+        let failed = BackupStatus::from_result(Err("disk full".into()), 7);
+        assert_eq!(
+            serde_json::to_value(&failed).unwrap(),
+            json!({ "ok": false, "path": null, "error": "disk full", "at": 7 })
+        );
     }
 
     #[test]

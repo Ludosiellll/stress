@@ -102,6 +102,21 @@ interface LogDb {
 
 const bool = (b: boolean): number => (b ? 1 : 0);
 
+function toTrial(r: TrialDb): TrialRow {
+  return {
+    id: r.id,
+    blockId: r.block_id,
+    idx: r.idx,
+    stimulusJson: r.stimulus_json,
+    responseJson: r.response_json,
+    onsetTs: r.onset_ts,
+    responseTs: r.response_ts,
+    rtMs: r.rt_ms,
+    outcome: r.outcome,
+    frameDropped: r.frame_dropped !== 0,
+  };
+}
+
 const INSERT_BLOCK = `INSERT INTO blocks (id, session_id, module, l_before, l_after, params_json, score, flags_json, started_at, summary_json)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 const INSERT_TRIAL = `INSERT INTO trials (id, block_id, idx, stimulus_json, response_json, onset_ts, response_ts, rt_ms, outcome, frame_dropped)
@@ -220,18 +235,14 @@ export class SqliteRepository implements Repository {
 
   async listTrials(blockId: string): Promise<TrialRow[]> {
     const rows = await this.db.select<TrialDb>('SELECT * FROM trials WHERE block_id = ? ORDER BY idx, rowid', [blockId]);
-    return rows.map((r) => ({
-      id: r.id,
-      blockId: r.block_id,
-      idx: r.idx,
-      stimulusJson: r.stimulus_json,
-      responseJson: r.response_json,
-      onsetTs: r.onset_ts,
-      responseTs: r.response_ts,
-      rtMs: r.rt_ms,
-      outcome: r.outcome,
-      frameDropped: r.frame_dropped !== 0,
-    }));
+    return rows.map(toTrial);
+  }
+
+  async listAllTrials(): Promise<TrialRow[]> {
+    const rows = await this.db.select<TrialDb>(
+      'SELECT t.* FROM trials t JOIN blocks b ON b.id = t.block_id ORDER BY b.started_at, b.rowid, t.idx, t.rowid',
+    );
+    return rows.map(toTrial);
   }
 
   async listLogicItems(): Promise<LogicItemRow[]> {

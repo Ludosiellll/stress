@@ -1,6 +1,5 @@
 import { deriveModuleStates, deriveRatings, MODULE_IDS } from '../engine/derive';
 import type { Repository } from './repository';
-import type { TrialRow } from './rows';
 
 /**
  * Recomputes the caches (module_state, ratings) from history and saves them.
@@ -24,16 +23,12 @@ export async function rebuildCaches(repo: Repository): Promise<void> {
 
 /** JSON of every history table plus settings (caches are left out: rebuildCaches restores them). */
 export async function exportBundle(repo: Repository, appVersion: string): Promise<string> {
-  const sessions = await repo.listSessions();
-  const blocks = await repo.listBlocks();
-  const trials: TrialRow[] = [];
-  for (const b of blocks) trials.push(...(await repo.listTrials(b.id)));
   const bundle = {
     appVersion,
     exportedAt: new Date().toISOString(),
-    sessions,
-    blocks,
-    trials,
+    sessions: await repo.listSessions(),
+    blocks: await repo.listBlocks(),
+    trials: await repo.listAllTrials(),
     logicItems: await repo.listLogicItems(),
     diagnostics: await repo.listDiagnostics(),
     wellbeing: await repo.listWellbeing(),
@@ -64,7 +59,10 @@ function csvField(v: unknown): string {
   return NEEDS_QUOTES.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
 }
 
-/** RFC 4180 with ';' as separator (Excel in Russian locales): CRLF between records, no trailing CRLF. */
+/**
+ * RFC 4180 with ';' as separator (Excel in Russian locales): CRLF between records, no trailing CRLF.
+ * No BOM here (pure text); the export UI (Task 14) prepends '\uFEFF' when it writes a .csv file so Excel reads UTF-8.
+ */
 export function toCsv(rows: readonly Record<string, unknown>[]): string {
   if (rows.length === 0) return '';
   const header: string[] = [];
