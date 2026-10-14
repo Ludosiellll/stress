@@ -66,15 +66,15 @@ describe('number series time-limit lever (R36) simulation', () => {
     const lever = runs(true);
     const plain = runs(false);
 
-    // Rating: past 1500 with the lever, and clearly above the same player without it (W2-R4).
-    // Seeds 1–10: 1605 vs 1525. Over 100 seeds the gap averages ≈ 76, so a change in how the
-    // generator draws from its rng can move this clause below +80; the effective-D clause below is robust.
+    // Rating: past 1500 with the lever, and clearly above the same player without it (W2-R17).
+    // Seeds 0–99: the gap averages 75.6 and every disjoint group of 10 seeds gives ≥ 66.9, so +60
+    // holds whichever seeds the generator's rng draws land on (seeds 1–10 here: 1605 vs 1525).
     const leverR = overSeeds(lever, rating);
     expect(leverR).toBeGreaterThanOrEqual(1500);
     lever.forEach((w, i) => {
       expect(seedMean(w, rating), `seed ${String(SEEDS[i])}`).toBeGreaterThanOrEqual(1450);
     });
-    expect(leverR).toBeGreaterThanOrEqual(overSeeds(plain, rating) + 80);
+    expect(leverR).toBeGreaterThanOrEqual(overSeeds(plain, rating) + 60);
 
     // Items: the lever lifts the effective difficulty above what arith reaches structurally.
     expect(overSeeds(lever, (p) => p.effectiveD)).toBeGreaterThanOrEqual(1300);
