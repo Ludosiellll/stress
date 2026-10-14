@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { NOISE_EXCLUSION_RADIUS, noiseFrame, type VisualNoiseParams } from '../engine/noise';
 import type { ColorId, ShapeId, Stimulus } from '../engine/reaction/types';
+import { stressorsOf } from '../modules/reaction/common';
+import { STROOP_COLORS, stroop } from '../modules/reaction/stroop';
 import { BACKGROUND, COLORS, FLICKER_BACKGROUND, createCanvasRenderer, polarPoint, rdoAngleAt } from './canvasRenderer';
 
 interface Call {
@@ -486,5 +488,43 @@ describe('createCanvasRenderer', () => {
       renderer.tick(100);
       expect(calls).toHaveLength(afterHide);
     });
+  });
+});
+
+/** WCAG 2.x relative luminance of a #rrggbb colour. */
+function luminance(hex: string): number {
+  const channel = (i: number): number => {
+    const c = parseInt(hex.slice(1 + 2 * i, 3 + 2 * i), 16) / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(0) + 0.7152 * channel(1) + 0.0722 * channel(2);
+}
+
+/** WCAG 2.x contrast ratio of two #rrggbb colours (1…21). */
+function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+describe('readability of the word stimuli (WCAG contrast, large text ≥ 3:1)', () => {
+  it('computes the WCAG ratio', () => {
+    expect(contrast('#000000', '#ffffff')).toBeCloseTo(21, 5);
+    expect(contrast('#777777', '#ffffff')).toBeCloseTo(4.48, 2);
+    expect(contrast(BACKGROUND, BACKGROUND)).toBe(1);
+  });
+
+  it('every Stroop ink reads at ≥ 3:1 on the reaction background', () => {
+    const ratios = Object.fromEntries(STROOP_COLORS.map((c) => [c, Number(contrast(COLORS[c], BACKGROUND).toFixed(2))]));
+    // red 3.35, green 4.29, blue 3.85, yellow 10.15 against #2b2b2b.
+    expect(ratios).toEqual({ red: 3.35, green: 4.29, blue: 3.85, yellow: 10.15 });
+    for (const c of STROOP_COLORS) expect(contrast(COLORS[c], BACKGROUND), c).toBeGreaterThanOrEqual(3);
+  });
+
+  it('Stroop words are never drawn on the flicker shade: the module has no visual noise at any level', () => {
+    for (let L = 0; L <= 60; L++) expect(stressorsOf(stroop, stroop.params(L)).noise, `L ${String(L)}`).toBeNull();
+  });
+
+  it('the task-switching rule word (white) reads at ≥ 4.5:1 on the background', () => {
+    expect(contrast(COLORS.white, BACKGROUND)).toBeGreaterThanOrEqual(4.5);
   });
 });
