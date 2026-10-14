@@ -2,6 +2,8 @@
   --bg: #1f1f1f;
   --text: #e8e8e8;
   --accent: #d64545;
+  /* Primary button fill: white 1.15rem bold text needs 4.5:1, which --accent gives only 4.4:1. */
+  --accent-strong: #c93c3c;
   --muted: #9a9a9a;
   --surface: #2a2a2a;
   --border: #3a3a3a;
@@ -87,8 +89,8 @@ button:disabled {
 }
 
 button.primary {
-  border-color: var(--accent);
-  background: var(--accent);
+  border-color: var(--accent-strong);
+  background: var(--accent-strong);
   color: #fff;
   font-size: 1.15rem;
   font-weight: 700;
@@ -96,7 +98,7 @@ button.primary {
 
 /* More specific than the generic hover rule above: the accent border stays on hover. */
 button.primary:hover:not(:disabled) {
-  border-color: var(--accent);
+  border-color: var(--accent-strong);
 }
 
 input[type='date'] {
