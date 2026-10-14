@@ -169,29 +169,81 @@ describe('szmr.generateBlock', () => {
 });
 
 describe('szmr texts', () => {
-  it('instruction lists color → key pairs', () => {
-    expect(szmr.instruction('keyboard', szmr.params(0))).toBe(
-      'Каждому цвету соответствует своя клавиша: красный — F, зелёный — J. ' +
-        'Нажимай нужную как можно быстрее. Форму фигуры не учитывай.',
-    );
-    expect(szmr.instruction('pult', szmr.params(8))).toContain('красный — ←, зелёный — →, жёлтый — ←.');
+  const ONE_KEY_EACH = 'Каждому цвету соответствует своя клавиша: ';
+  const FAST = ' Нажимай нужную как можно быстрее.';
+  const SHAPE = ' Форму фигуры не учитывай.';
+  const FRAME = ' Белая рамка — правило перевёрнуто.';
+
+  it.each([
+    ['L < 8', 0, 'keyboard', ONE_KEY_EACH + 'красный — F, зелёный — J.' + FAST],
+    ['L < 8, pult', 7, 'pult', ONE_KEY_EACH + 'красный — ←, зелёный — →.' + FAST],
+    [
+      '8 ≤ L < 16: shared key',
+      8,
+      'keyboard',
+      'Нажимай клавишу по цвету: красный и жёлтый — F, зелёный — J. Отвечай как можно быстрее.',
+    ],
+    [
+      '8 ≤ L < 16, pult',
+      15,
+      'pult',
+      'Нажимай клавишу по цвету: красный и жёлтый — ←, зелёный — →. Отвечай как можно быстрее.',
+    ],
+    [
+      '16 ≤ L < 20',
+      16,
+      'keyboard',
+      ONE_KEY_EACH + 'красный — D, зелёный — F, жёлтый — J, синий — K.' + FAST,
+    ],
+    [
+      '20 ≤ L < 24: shape distractor',
+      20,
+      'keyboard',
+      ONE_KEY_EACH + 'красный — D, зелёный — F, жёлтый — J, синий — K.' + FAST + SHAPE,
+    ],
+    [
+      '24 ≤ L < 32',
+      31,
+      'keyboard',
+      ONE_KEY_EACH + 'красный — S, зелёный — D, жёлтый — F, синий — J, белый — K.' + FAST + SHAPE,
+    ],
+    [
+      'L ≥ 32: inversion',
+      32,
+      'keyboard',
+      ONE_KEY_EACH +
+        'красный — S, зелёный — D, жёлтый — F, синий — J, белый — K, фиолетовый — L.' +
+        FAST +
+        SHAPE +
+        FRAME,
+    ],
+    [
+      'L ≥ 32, pult',
+      40,
+      'pult',
+      ONE_KEY_EACH +
+        'красный — 1, зелёный — 2, жёлтый — 3, синий — 4, белый — 5, фиолетовый — 6.' +
+        FAST +
+        SHAPE +
+        FRAME,
+    ],
+  ] as const)('instruction, %s', (_, L, layout, text) => {
+    expect(szmr.instruction(layout, szmr.params(L))).toBe(text);
   });
 
-  it('instruction mentions the inverted rule at L ≥ 32', () => {
-    expect(szmr.instruction('keyboard', szmr.params(31))).not.toContain('Белая рамка');
-    expect(szmr.instruction('keyboard', szmr.params(32))).toBe(
-      'Каждому цвету соответствует своя клавиша: красный — S, зелёный — D, жёлтый — F, синий — J, ' +
-        'белый — K, фиолетовый — L. Нажимай нужную как можно быстрее. Форму фигуры не учитывай. ' +
-        'Белая рамка — правило перевёрнуто.',
+  it('mouse layout names its buttons and falls back to keyboard keys above 2', () => {
+    expect(szmr.instruction('mouse', szmr.params(0))).toBe(
+      ONE_KEY_EACH + 'красный — ЛКМ, зелёный — ПКМ.' + FAST,
     );
-  });
-
-  it('mouse layout with more than 2 keys names the keyboard keys', () => {
-    expect(szmr.instruction('mouse', szmr.params(0))).toContain('красный — ЛКМ, зелёный — ПКМ.');
-    expect(szmr.instruction('mouse', szmr.params(0))).not.toContain('Для этого уровня');
-    const text = szmr.instruction('mouse', szmr.params(16));
-    expect(text).toContain('красный — D, зелёный — F, жёлтый — J, синий — K.');
-    expect(text.endsWith(' Для этого уровня нужны клавиши: D, F, J, K.')).toBe(true);
+    expect(szmr.instruction('mouse', szmr.params(8))).toBe(
+      'Нажимай клавишу по цвету: красный и жёлтый — ЛКМ, зелёный — ПКМ. Отвечай как можно быстрее.',
+    );
+    expect(szmr.instruction('mouse', szmr.params(16))).toBe(
+      ONE_KEY_EACH +
+        'красный — D, зелёный — F, жёлтый — J, синий — K.' +
+        FAST +
+        ' Для этого уровня нужны клавиши: D, F, J, K.',
+    );
   });
 
   it('describeParams', () => {

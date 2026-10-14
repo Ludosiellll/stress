@@ -58,10 +58,21 @@ function inversionFlags(n: number, rng: Rng): boolean[] {
   return flags;
 }
 
-function colorKeyPairs(keys: readonly InputKey[], nColors: number): string {
-  return COLORS.slice(0, nColors)
-    .map((color, c) => `${COLOR_NAMES[color]} — ${keyLabel(keys[normalKeyIndex(c, keys.length)] as InputKey)}`)
-    .join(', ');
+/**
+ * Color → key part of the instruction. Colors sharing a key are grouped («красный и жёлтый — F»)
+ * and introduced differently, so the text never claims one key per color when that is false.
+ */
+function colorKeyRule(keys: readonly InputKey[], nColors: number): string {
+  const groups = keys.map((key, k) => ({
+    key,
+    names: COLORS.slice(0, nColors)
+      .filter((_, c) => normalKeyIndex(c, keys.length) === k)
+      .map((color) => COLOR_NAMES[color]),
+  }));
+  const list = groups.map((g) => `${g.names.join(' и ')} — ${keyLabel(g.key)}`).join(', ');
+  return groups.some((g) => g.names.length > 1)
+    ? `Нажимай клавишу по цвету: ${list}. Отвечай как можно быстрее.`
+    : `Каждому цвету соответствует своя клавиша: ${list}. Нажимай нужную как можно быстрее.`;
 }
 
 /** СЗМР: choice reaction, each color has its key. */
@@ -106,10 +117,9 @@ export const szmr: ReactionModule<SzmrParams> = {
   },
 
   instruction(layout, p) {
-    const pairs = colorKeyPairs(keysFor(layout, p.nKeys), p.nColors);
     return (
-      `Каждому цвету соответствует своя клавиша: ${pairs}. ` +
-      'Нажимай нужную как можно быстрее. Форму фигуры не учитывай.' +
+      colorKeyRule(keysFor(layout, p.nKeys), p.nColors) +
+      (p.shapeDistractor ? ' Форму фигуры не учитывай.' : '') +
       (p.inversion ? ' Белая рамка — правило перевёрнуто.' : '') +
       fallbackNote(layout, p.nKeys)
     );
