@@ -4,7 +4,7 @@ import type { DiagnosticResults } from '../engine/diagnostic';
 import { L_NORM } from '../engine/planner';
 import type { ModuleId, ReactionModuleId, SessionKind } from '../engine/types';
 import { moduleTitles } from '../modules/registry';
-import type { ChartPoint, ChartSeries } from './charts/LineChart';
+import type { ChartDomain, ChartPoint, ChartSeries } from './charts/LineChart';
 import { parseResults, readinessOf, type HomeModel } from './homeModel';
 
 export interface ChartSpec {
@@ -17,7 +17,13 @@ export interface ChartSpec {
   series: ChartSeries[];
   /** x labels of the diagnostics whose value was measured with dropped frames (I1); the points carry a note too. */
   unreliable: string[];
+  /** Values the metric can take; the axis stays inside. */
+  domain: ChartDomain;
 }
+
+/** Times, errors, counts and levels are never negative; Go/No-Go is a percentage. */
+const NON_NEGATIVE: ChartDomain = { min: 0 };
+const PERCENT: ChartDomain = { min: 0, max: 100 };
 
 export interface LevelChartSpec {
   module: ModuleId;
@@ -98,15 +104,23 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
     }),
   });
   const metric = (r: DiagnosticResults | null, key: NumericMetric): number | null => num(r?.[key]);
-  const reaction = (id: ReactionModuleId, title: string, yLabel: string, lowerIsBetter: boolean, name: string, key: NumericMetric): ChartSpec => {
+  const reaction = (
+    id: ReactionModuleId,
+    title: string,
+    yLabel: string,
+    lowerIsBetter: boolean,
+    name: string,
+    key: NumericMetric,
+    domain: ChartDomain = NON_NEGATIVE,
+  ): ChartSpec => {
     const series = [line(name, (r) => metric(r, key), id)];
     const unreliable = (series[0]?.points ?? []).flatMap((p) => (p.note === undefined ? [] : [p.x]));
-    return { id, title, yLabel, lowerIsBetter, series, unreliable };
+    return { id, title, yLabel, lowerIsBetter, series, unreliable, domain };
   };
   return [
     reaction('pzmr', 'ПЗМР, медиана, мс', 'мс', true, 'ПЗМР', 'pzmrMedianRt'),
     reaction('szmr', 'СЗМР, медиана, мс', 'мс', true, 'СЗМР', 'szmrMedianRt'),
-    reaction('gonogo', 'Go/No-Go, точность, %', '%', false, 'Go/No-Go', 'gonogoScore'),
+    reaction('gonogo', 'Go/No-Go, точность, %', '%', false, 'Go/No-Go', 'gonogoScore', PERCENT),
     reaction('rdo', 'РДО, средняя ошибка, мс', 'мс', true, 'РДО', 'rdoMeanAbsErrorMs'),
     {
       id: 'gorbov',
@@ -115,6 +129,8 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
       lowerIsBetter: true,
       series: [line('V', (r) => gorbovOf(r).V), line('P', (r) => gorbovOf(r).P), line('Π', (r) => gorbovOf(r).Pi)],
       unreliable: [],
+      // Π = t3 − (t1 + t2) is usually negative: no bound.
+      domain: {},
     },
     {
       id: 'numseries',
@@ -123,6 +139,7 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
       lowerIsBetter: false,
       series: [line('Числовые ряды', (r) => metric(r, 'numseriesCorrect'))],
       unreliable: [],
+      domain: NON_NEGATIVE,
     },
   ];
 }

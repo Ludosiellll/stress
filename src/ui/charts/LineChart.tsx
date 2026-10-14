@@ -24,24 +24,40 @@ export interface LineChartProps {
   lowerIsBetter?: boolean;
   /** Horizontal dashed reference line; the y scale always reaches it. */
   refLine?: { y: number; label: string };
+  /** Values the metric can take (e.g. min 0 for times, 0..100 for percent): the axis never goes past them. */
+  domain?: ChartDomain;
 }
 
-const W = 420;
-const H = 230;
-const TOP = 24;
+export interface ChartDomain {
+  min?: number;
+  max?: number;
+}
+
+/** viewBox width. Text sizes in theme.css are in these units; theme.test checks they render at ≥ 12 px. */
+export const CHART_VIEWBOX_WIDTH = 420;
+const W = CHART_VIEWBOX_WIDTH;
+const H = 240;
+const TOP = 26;
 const RIGHT = 14;
 const X_PAD = 10;
 const MAX_X_LABELS = 8;
 const MAX_SERIES = 3;
+/** Width of one tick-label character in viewBox units at the chart font size (15). */
+const CHAR_W = 9;
 
-/** Axis ticks on 1, 2, 5 × 10^k, at least three of them, covering [min, max]. */
-export function niceTicks(min: number, max: number): number[] {
+/**
+ * Axis ticks on 1, 2, 5 × 10^k, at least three of them, covering [min, max]. A flat range is padded, the
+ * padding never crossing the domain bounds; ticks stay inside the domain.
+ */
+export function niceTicks(min: number, max: number, domain: ChartDomain = {}): number[] {
+  const floor = domain.min ?? -Infinity;
+  const ceiling = domain.max ?? Infinity;
   let lo = min;
   let hi = max;
   if (!(hi > lo)) {
     const pad = Math.max(1, Math.abs(lo) * 0.1);
-    lo -= pad;
-    hi += pad;
+    lo = Math.max(floor, lo - pad);
+    hi = Math.min(ceiling, hi + pad);
   }
   const raw = (hi - lo) / 5;
   const mag = 10 ** Math.floor(Math.log10(raw));
@@ -50,18 +66,28 @@ export function niceTicks(min: number, max: number): number[] {
   const first = Math.floor(lo / step + 1e-9);
   const last = Math.ceil(hi / step - 1e-9);
   const ticks: number[] = [];
-  for (let k = first; k <= last; k += 1) ticks.push(Number((k * step).toFixed(10)));
+  for (let k = first; k <= last; k += 1) {
+    const t = Number((k * step).toFixed(10)) + 0; // + 0 turns −0 into 0
+    if (t >= floor && t <= ceiling) ticks.push(t);
+  }
+  // A bound that is not a multiple of the step closes the axis itself, so the data stay covered.
+  if ((ticks[0] ?? Infinity) > lo) ticks.unshift(floor);
+  if ((ticks.at(-1) ?? -Infinity) < hi) ticks.push(ceiling);
   return ticks;
 }
 
-/** Whole numbers as they are, others with one decimal digit and a comma. */
+/** U+2212 instead of the hyphen, as everywhere else in the UI. */
+const minus = (text: string): string => text.replace('-', '−');
+
+/** One decimal digit with a comma, whole numbers without it; never «−0». */
 function fmt(v: number): string {
-  return Number.isInteger(v) ? String(v) : decimal(v, 1);
+  const n = Number(v.toFixed(1)) + 0;
+  return minus(Number.isInteger(n) ? String(n) : decimal(n, 1));
 }
 
 function tickText(v: number, step: number): string {
-  if (step >= 1) return String(v);
-  return decimal(v, step >= 0.1 ? 1 : 2);
+  if (step >= 1) return minus(String(v));
+  return minus(decimal(v, step >= 0.1 ? 1 : 2));
 }
 
 /** «№2: 300», «№2: 40 (V)», «№2: 300 (замер ненадёжен)». */
@@ -83,7 +109,7 @@ function summary(s: ChartSeries): string | null {
   return e.first === e.last ? `${fmt(e.first.y)} (${e.first.x})` : `${fmt(e.first.y)} (${e.first.x}) → ${fmt(e.last.y)} (${e.last.x})`;
 }
 
-export default function LineChart({ series, yLabel, xLabel, lowerIsBetter, refLine }: LineChartProps) {
+export default function LineChart({ series, yLabel, xLabel, lowerIsBetter, refLine, domain }: LineChartProps) {
   const drawn = series.slice(0, MAX_SERIES);
   const values = drawn.flatMap((s) => s.points.flatMap((p) => (p.y === null ? [] : [p.y])));
   if (values.length === 0) return <p className="chart-empty muted">Нет данных</p>;
@@ -93,14 +119,14 @@ export default function LineChart({ series, yLabel, xLabel, lowerIsBetter, refLi
   const xLabels = widest.points.map((p) => p.x);
 
   const scale = refLine === undefined ? values : [...values, refLine.y];
-  const ticks = niceTicks(Math.min(...scale), Math.max(...scale));
+  const ticks = niceTicks(Math.min(...scale), Math.max(...scale), domain);
   const lo = ticks[0] as number;
   const hi = ticks[ticks.length - 1] as number;
   const step = (ticks[1] as number) - lo;
   const tickStrings = ticks.map((t) => tickText(t, step));
 
-  const left = Math.max(...tickStrings.map((t) => t.length)) * 6.6 + 14;
-  const bottom = xLabel === undefined ? 26 : 42;
+  const left = Math.max(...tickStrings.map((t) => t.length)) * CHAR_W + 14;
+  const bottom = xLabel === undefined ? 30 : 50;
   const plotW = W - left - RIGHT;
   const plotH = H - TOP - bottom;
   const xAt = (i: number): number => (slots === 1 ? left + plotW / 2 : left + X_PAD + (i * (plotW - 2 * X_PAD)) / (slots - 1));
@@ -123,7 +149,7 @@ export default function LineChart({ series, yLabel, xLabel, lowerIsBetter, refLi
   ].join('. ');
 
   const refY = refLine === undefined ? 0 : yAt(refLine.y);
-  const refBelow = refLine !== undefined && refY - 6 < TOP + 8;
+  const refBelow = refLine !== undefined && refY - 6 < TOP + 10;
 
   return (
     <div className="chart">
@@ -139,20 +165,20 @@ export default function LineChart({ series, yLabel, xLabel, lowerIsBetter, refLi
         </ul>
       )}
       <svg viewBox={`0 0 ${String(W)} ${String(H)}`} width="100%" role="img" aria-label={label}>
-        <text className="axis-label" x={0} y={12}>
+        <text className="axis-label" x={0} y={15}>
           {yLabel}
         </text>
         {ticks.map((t, i) => (
           <g key={t}>
             <line className="grid" x1={left} x2={W - RIGHT} y1={yAt(t)} y2={yAt(t)} />
-            <text className="y-tick" x={left - 6} y={yAt(t) + 4} textAnchor="end">
+            <text className="y-tick" x={left - 6} y={yAt(t) + 5} textAnchor="end">
               {tickStrings[i]}
             </text>
           </g>
         ))}
         {xLabels.map((x, i) =>
           (slots - 1 - i) % stride === 0 ? (
-            <text key={i} className="x-tick" x={xAt(i)} y={TOP + plotH + 16} textAnchor="middle">
+            <text key={i} className="x-tick" x={xAt(i)} y={TOP + plotH + 19} textAnchor="middle">
               {x}
             </text>
           ) : null,
@@ -165,7 +191,7 @@ export default function LineChart({ series, yLabel, xLabel, lowerIsBetter, refLi
         {refLine !== undefined && (
           <>
             <line className="chart-ref" x1={left} x2={W - RIGHT} y1={refY} y2={refY} strokeDasharray="6 4" />
-            <text className="ref-label" x={W - RIGHT - 2} y={refBelow ? refY + 14 : refY - 6} textAnchor="end">
+            <text className="ref-label" x={W - RIGHT - 2} y={refBelow ? refY + 17 : refY - 6} textAnchor="end">
               {refLine.label}
             </text>
           </>

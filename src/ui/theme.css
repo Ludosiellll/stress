@@ -101,6 +101,14 @@ button.primary:hover:not(:disabled) {
   border-color: var(--accent-strong);
 }
 
+/* More specific than button.primary: a disabled primary button loses its red fill (no hover change: see above). */
+button.primary:disabled {
+  border-color: var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  cursor: default;
+}
+
 input[type='date'] {
   margin-left: 8px;
   padding: 6px 8px;
@@ -386,9 +394,10 @@ legend {
   overflow: visible;
 }
 
+/* viewBox units (CHART_VIEWBOX_WIDTH 420): 15 renders at ≥ 12 px in the narrowest card (theme.test.ts). */
 .chart text {
   fill: var(--muted);
-  font-size: 11px;
+  font-size: 15px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -458,6 +467,11 @@ legend {
 .chart .swatch.s1 { border-color: var(--series-1); }
 .chart .swatch.s2 { border-color: var(--series-2); }
 .chart .swatch.s3 { border-color: var(--series-3); }
+
+.chart-note {
+  margin: 4px 0 0;
+  font-size: 0.9rem;
+}
 
 .chart-empty {
   margin: 12px 0 4px;

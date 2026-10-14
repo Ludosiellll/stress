@@ -86,7 +86,7 @@ describe('Progress with two diagnostics', () => {
     const ticks = [...card.querySelectorAll('text.y-tick')].map((t) => Number(t.textContent));
     expect(Math.max(...ticks)).toBeGreaterThanOrEqual(L_NORM.pzmr);
     expect(screen.getAllByText('≈ формат теста')).toHaveLength(1);
-    expect(within(card).getByText('номер сессии')).toBeTruthy();
+    expect(within(card).getByText('сессия с этим модулем')).toBeTruthy();
   });
 });
 

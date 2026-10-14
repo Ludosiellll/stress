@@ -163,6 +163,19 @@ describe('Settings export and report', () => {
     expect(screen.getByText(`C:\\Downloads\\${blocks?.name ?? ''}`)).toBeTruthy();
   });
 
+  it('no timing check while an export runs (no concurrent measurement)', async () => {
+    const repo = await seeded();
+    const { platform, measureFrames } = await renderSettings({ repo });
+    let release: () => void = () => undefined;
+    platform.exportFile = () => new Promise((resolve) => { release = () => { resolve('C:\\Downloads\\x'); }; });
+    fireEvent.click(screen.getByRole('button', { name: 'Экспорт данных (JSON и CSV)' }));
+    const checkButton = screen.getByRole<HTMLButtonElement>('button', { name: 'Проверить тайминги (3 с)' });
+    await waitFor(() => { expect(checkButton.disabled).toBe(true); });
+    fireEvent.click(checkButton);
+    expect(measureFrames).not.toHaveBeenCalled();
+    release();
+  });
+
   it('shows an error and logs it when a file cannot be written', async () => {
     const repo = await seeded();
     const { platform } = await renderSettings({ repo });

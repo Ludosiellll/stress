@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { CHART_VIEWBOX_WIDTH } from './charts/LineChart';
 
 /** WCAG 2 contrast checks of the theme colours (visual QA, Task 17). Vitest runs from the project root. */
 
@@ -52,7 +53,29 @@ describe('theme contrast', () => {
     expect(contrast(fg, bg)).toBeGreaterThanOrEqual(4.5);
   });
 
+  it('a disabled primary button looks disabled: no red fill, muted label, no pointer (more specific than button.primary)', () => {
+    expect(declaration('button.primary:disabled', 'background')).toBe(variable('surface'));
+    expect(declaration('button.primary:disabled', 'border-color')).toBe(variable('border'));
+    expect(declaration('button.primary:disabled', 'color')).toBe(variable('muted'));
+    expect(declaration('button.primary:disabled', 'cursor')).toBe('default');
+    // The hover rule of the primary button never applies to a disabled one.
+    expect(css).toMatch(/button\.primary:hover:not\(:disabled\)/);
+  });
+
   it('the focus ring reaches 3:1 on the background', () => {
     expect(contrast(variable('accent'), variable('bg'))).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe('chart text size', () => {
+  it('axis and tick labels render at 12 px or more in the narrowest chart card', () => {
+    const px = (v: string): number => Number(/^([\d.]+)px$/.exec(v)?.[1] ?? NaN);
+    const columnMin = Number(/minmax\((\d+)px/.exec(declaration('.chart-grid', 'grid-template-columns'))?.[1] ?? NaN);
+    const [, side] = declaration('.chart-card', 'padding').split(/\s+/) as [string, string];
+    const border = px(declaration('.chart-card', 'border').split(/\s+/)[0] ?? '');
+    const narrowest = columnMin - 2 * px(side) - 2 * border;
+    const rendered = (px(declaration('.chart text', 'font-size')) * narrowest) / CHART_VIEWBOX_WIDTH;
+    expect(narrowest).toBeGreaterThan(300);
+    expect(rendered).toBeGreaterThanOrEqual(12);
   });
 });

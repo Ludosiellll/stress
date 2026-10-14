@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useApp } from '../AppContext';
-import LineChart, { type ChartSeries } from '../charts/LineChart';
+import LineChart, { type ChartDomain, type ChartSeries } from '../charts/LineChart';
 import { logEvent } from '../errorLog';
 import { useKeyDown } from '../keys';
 import { loadProgressModel, SESSION_LINES, type ProgressModel } from '../progressModel';
@@ -20,8 +20,9 @@ function ChartCard(props: {
   refLine?: { y: number; label: string };
   /** x labels of values measured with dropped frames, listed under the chart. */
   unreliable?: readonly string[];
+  domain: ChartDomain;
 }) {
-  const { title, note, yLabel, xLabel, lowerIsBetter, series, refLine, unreliable = [] } = props;
+  const { title, note, yLabel, xLabel, lowerIsBetter, series, refLine, unreliable = [], domain } = props;
   return (
     <figure className="chart-card">
       <figcaption>
@@ -31,6 +32,7 @@ function ChartCard(props: {
       <LineChart
         series={series}
         yLabel={yLabel}
+        domain={domain}
         {...(xLabel === undefined ? {} : { xLabel })}
         {...(lowerIsBetter === undefined ? {} : { lowerIsBetter })}
         {...(refLine === undefined ? {} : { refLine })}
@@ -55,6 +57,7 @@ function Diagnostics({ model }: { model: ProgressModel }) {
             lowerIsBetter={c.lowerIsBetter}
             series={c.series}
             unreliable={c.unreliable}
+            domain={c.domain}
           />
         ))}
       </div>
@@ -75,9 +78,10 @@ function Levels({ model }: { model: ProgressModel }) {
             title={l.title}
             note="больше — лучше"
             yLabel="уровень"
-            xLabel="номер сессии"
+            xLabel="сессия с этим модулем"
             lowerIsBetter={false}
             series={l.series}
+            domain={{ min: 0 }}
             {...(l.series.some((s) => s.points.length > 0) ? { refLine: { y: l.norm, label: '≈ формат теста' } } : {})}
           />
         ))}

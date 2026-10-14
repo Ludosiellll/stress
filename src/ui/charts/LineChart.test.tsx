@@ -129,7 +129,71 @@ describe('LineChart', () => {
   });
 });
 
+describe('LineChart number format', () => {
+  const texts = (c: HTMLElement, sel: string): string[] => [...c.querySelectorAll(sel)].map((t) => t.textContent);
+
+  it('never writes «−0,0» and uses the typographic minus for negatives (point titles, legend, summary)', () => {
+    const series = [
+      { name: 'V', points: [{ x: '№1', y: -0.04 }, { x: '№2', y: 12.5 }] },
+      { name: 'Π', points: [{ x: '№1', y: -12 }, { x: '№2', y: -3.25 }] },
+    ];
+    const { container } = render(<LineChart series={series} yLabel="с" />);
+    const all = [...texts(container, 'circle > title'), ...texts(container, '.chart-legend li'), container.querySelector('svg')?.getAttribute('aria-label') ?? ''];
+    expect(all.join(' ')).not.toMatch(/-/);
+    expect(all.join(' ')).not.toMatch(/−0,0|−0(?![,\d])/);
+    expect(texts(container, 'circle > title')).toEqual(['№1: 0 (V)', '№2: 12,5 (V)', '№1: −12 (Π)', '№2: −3,3 (Π)']);
+    expect(texts(container, '.chart-legend li')).toEqual(['V: 0 (№1) → 12,5 (№2)', 'Π: −12 (№1) → −3,3 (№2)']);
+    expect(texts(container, 'text.y-tick').some((t) => t.startsWith('−'))).toBe(true);
+    expect(texts(container, 'text.y-tick').join(' ')).not.toMatch(/-/);
+  });
+});
+
+describe('LineChart domain', () => {
+  const ticksOf = (c: HTMLElement): number[] =>
+    [...c.querySelectorAll('text.y-tick')].map((t) => Number(t.textContent.replace(',', '.').replace('−', '-')));
+
+  it('a flat series at 0 with a lower bound of 0 gets a 0..1 axis, not −1..1', () => {
+    const { container } = render(
+      <LineChart series={[{ name: 'a', points: [{ x: '1', y: 0 }, { x: '2', y: 0 }] }]} yLabel="уровень" domain={{ min: 0 }} />,
+    );
+    const ticks = ticksOf(container);
+    expect(ticks[0]).toBe(0);
+    expect(ticks.at(-1)).toBe(1);
+  });
+
+  it('100 % with a 0..100 domain stays at or below 100', () => {
+    const { container } = render(
+      <LineChart series={[{ name: 'a', points: [{ x: '№1', y: 100 }, { x: '№2', y: 100 }] }]} yLabel="%" domain={{ min: 0, max: 100 }} />,
+    );
+    const ticks = ticksOf(container);
+    expect(ticks.at(-1)).toBe(100);
+    expect(ticks[0]).toBeGreaterThanOrEqual(80);
+    expect(ticks[0]).toBeLessThan(100);
+  });
+
+  it('values far from the bounds are not stretched to them', () => {
+    const { container } = render(<LineChart series={[{ name: 'a', points: three }]} yLabel="мс" domain={{ min: 0 }} />);
+    expect(Math.min(...ticksOf(container))).toBeGreaterThan(200);
+  });
+});
+
 describe('niceTicks', () => {
+  it('clamps the padding of a flat range to the domain', () => {
+    expect(niceTicks(0, 0, { min: 0 })).toEqual([0, 0.2, 0.4, 0.6, 0.8, 1]);
+    expect(niceTicks(100, 100, { min: 0, max: 100 })).toEqual([90, 92, 94, 96, 98, 100]);
+    expect(niceTicks(0, 0)).toEqual([-1, -0.5, 0, 0.5, 1]);
+  });
+
+  it('a bound off the tick grid closes the axis so the data stay covered', () => {
+    expect(niceTicks(0, 7, { max: 7 })).toEqual([0, 2, 4, 6, 7]);
+    expect(niceTicks(3, 10, { min: 3 })).toEqual([3, 4, 6, 8, 10]);
+  });
+
+  it('never returns −0', () => {
+    for (const t of niceTicks(-0.4, 0.4)) expect(Object.is(t, -0)).toBe(false);
+  });
+
+
   it('rounds to 1, 2 or 5 times a power of ten', () => {
     expect(niceTicks(288, 314)).toEqual([280, 290, 300, 310, 320]);
     expect(niceTicks(0, 100)).toEqual([0, 20, 40, 60, 80, 100]);

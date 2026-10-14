@@ -20,6 +20,18 @@ describe('diagnosticCharts', () => {
     expect(charts[4]?.series.map((s) => s.points[0]?.y)).toEqual([40, 80, 12]);
   });
 
+  it('bounds every axis by what the metric can take; Π of Gorbov can be negative', () => {
+    const domains = Object.fromEntries(diagnosticCharts([]).map((c) => [c.id, c.domain]));
+    expect(domains).toEqual({
+      pzmr: { min: 0 },
+      szmr: { min: 0 },
+      gonogo: { min: 0, max: 100 },
+      rdo: { min: 0 },
+      gorbov: {},
+      numseries: { min: 0 },
+    });
+  });
+
   it('turns missing and non-finite values and unreadable rows into gaps, never zeros', () => {
     const charts = diagnosticCharts([
       row(1, { ...full, pzmrMedianRt: null, gorbov: null }),

@@ -286,7 +286,7 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
 
       <section>
         <h3>Проверка таймингов</h3>
-        <button type="button" disabled={busy === 'check'} onClick={() => void runCheck()}>
+        <button type="button" disabled={busy !== null} onClick={() => void runCheck()}>
           Проверить тайминги (3 с)
         </button>
         {busy === 'check' && <p>Идёт замер, не нажимай клавиши…</p>}
