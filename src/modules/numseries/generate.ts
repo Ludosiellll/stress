@@ -1,10 +1,8 @@
 import { R0, familyWeights, pickWeighted, targetDifficulty } from '../../engine/elo';
-import { BASE_ITEM_LIMIT_MS, itemTimeLimit } from '../../engine/itemLimit';
+import { itemTimeLimit } from '../../engine/itemLimit';
 import { createRng, deriveSeed, type Rng } from '../../engine/rng';
 import { isUnique } from './check';
 import { BASE_DIFFICULTY, FAMILIES, fitFamily, generateTerms, type FamilyId } from './families';
-
-export const ITEM_TIME_LIMIT_MS = BASE_ITEM_LIMIT_MS;
 
 /**
  * Highest difficulty a candidate of each family reaches under its generation ranges (R36).
@@ -42,6 +40,11 @@ export interface SeriesItem {
 /** An item with its own time limit; null for diagnostic items, where the block's total limit applies (R19). */
 export interface TimedSeriesItem extends SeriesItem {
   timeLimitMs: number | null;
+}
+
+/** A training item: it always has its own limit (R36). */
+export interface TrainingSeriesItem extends TimedSeriesItem {
+  timeLimitMs: number;
 }
 
 /** D = base + 100·[max|t| > 100] + 200·[max|t| > 1000] + 50·[any t < 0] over the shown terms and the answer. */
@@ -121,18 +124,18 @@ export function generateItem(family: FamilyId, targetD: number, seed: number): S
  * generateItem plus its time limit: 40 s up to STRUCT_D_MAX of the family, shorter above it so that
  * the effective difficulty reaches `targetD` (R36). The series itself is exactly generateItem's.
  */
-export function generateTrainingItem(family: FamilyId, targetD: number, seed: number): TimedSeriesItem {
+export function generateTrainingItem(family: FamilyId, targetD: number, seed: number): TrainingSeriesItem {
   const item = generateItem(family, targetD, seed);
   return { ...item, timeLimitMs: itemTimeLimit(targetD, item.difficulty, STRUCT_D_MAX[family]) };
 }
 
 /** `count` training items; weaker families come up more often, each aimed at P ≈ 0.75 for its rating. */
-export function generateBlockItems(ratings: ReadonlyMap<FamilyId, number>, count: number, rng: Rng): TimedSeriesItem[] {
+export function generateBlockItems(ratings: ReadonlyMap<FamilyId, number>, count: number, rng: Rng): TrainingSeriesItem[] {
   if (!Number.isInteger(count) || count < 0) {
     throw new RangeError(`count must be a non-negative integer, got ${String(count)}`);
   }
   const weights = familyWeights(FAMILIES.map((f) => ratings.get(f) ?? R0));
-  const items: TimedSeriesItem[] = [];
+  const items: TrainingSeriesItem[] = [];
   for (let i = 0; i < count; i++) {
     const family = pickWeighted(FAMILIES, weights, rng);
     const targetD = targetDifficulty(ratings.get(family) ?? R0);

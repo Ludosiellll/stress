@@ -447,6 +447,12 @@ describe('number series', () => {
     expect(scoreSeries(step([null, null, null], null), answers).map((o) => o.success)).toEqual([true, false, true]);
   });
 
+  it('scoreSeries refuses a step with item limits and a total limit at once', () => {
+    expect(() => scoreSeries(step([11_900, null, null], 31_000), answers)).toThrow(RangeError);
+    expect(() => scoreSeries(step([11_900, 40_000, 40_000], null), answers)).not.toThrow();
+    expect(() => scoreSeries(step([null, null, null], 31_000), answers)).not.toThrow();
+  });
+
   it('updatedRatings uses the effective difficulty', () => {
     const start = new Map<FamilyId, Rating>([['arith', { rating: 1400, n: 30 }]]);
     const s: StepOf<'numseries_block'> = { kind: 'numseries_block', items: [seriesItem(1, 11_900, 950), seriesItem(2, 40_000, 900)], totalLimitMs: null };

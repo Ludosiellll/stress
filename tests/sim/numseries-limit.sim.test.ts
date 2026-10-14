@@ -33,7 +33,7 @@ function play(seed: number, lever: boolean): Played[] {
     if (lever) {
       const item = generateTrainingItem('arith', target, itemSeed);
       limitMs = item.timeLimitMs;
-      effectiveD = effectiveDifficulty(item.difficulty, item.timeLimitMs ?? BASE_ITEM_LIMIT_MS);
+      effectiveD = effectiveDifficulty(item.difficulty, item.timeLimitMs);
     } else {
       effectiveD = generateItem('arith', target, itemSeed).difficulty;
     }

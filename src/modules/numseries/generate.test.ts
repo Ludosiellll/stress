@@ -1,12 +1,11 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { R0, targetDifficulty } from '../../engine/elo';
-import { BASE_ITEM_LIMIT_MS } from '../../engine/itemLimit';
+import { itemTimeLimit } from '../../engine/itemLimit';
 import { createRng, deriveSeed } from '../../engine/rng';
 import { fitPredictions, isUnique } from './check';
 import { BASE_DIFFICULTY, FAMILIES, SHOWN_LENGTH, generateTerms, type FamilyId } from './families';
 import {
-  ITEM_TIME_LIMIT_MS,
   STRUCT_D_MAX,
   attemptItem,
   candidateItem,
@@ -326,17 +325,12 @@ describe('generateTrainingItem', () => {
           const { timeLimitMs, ...item } = generateTrainingItem(f, targetD, seed);
           expect(item).toEqual(generateItem(f, targetD, seed));
           expect(isUnique(item.shown, item.answer)).toBe(true);
-          expect(timeLimitMs).not.toBeNull();
+          // A training item always has its own limit (the type says so): the one itemTimeLimit gives.
+          const limit: number = timeLimitMs;
+          expect(limit).toBe(itemTimeLimit(targetD, item.difficulty, STRUCT_D_MAX[f]));
         },
       ),
       { numRuns: 1000 },
     );
   }, 60_000);
-});
-
-describe('ITEM_TIME_LIMIT_MS', () => {
-  it('is 40 s, the engine base limit', () => {
-    expect(ITEM_TIME_LIMIT_MS).toBe(40000);
-    expect(ITEM_TIME_LIMIT_MS).toBe(BASE_ITEM_LIMIT_MS);
-  });
 });

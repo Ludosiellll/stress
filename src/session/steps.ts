@@ -38,7 +38,10 @@ export type Step =
       /** Block seed; TableView reshuffles with it. */
       seed: number;
     }
-  /** Every item carries its own limit (training, R36); diagnostic items have none and `totalLimitMs` applies. */
+  /**
+   * Training: every item carries its own limit (R36) and `totalLimitMs` is null. Diagnostic: items have none and
+   * `totalLimitMs` applies. Never both: scoreSeries rejects a step with item limits and a total limit.
+   */
   | { kind: 'numseries_block'; items: TimedSeriesItem[]; totalLimitMs: number | null }
   /**
    * «Память»: each trial is shown, then reproduced; answered with submitMemory. `fixed`: one answer per trial.

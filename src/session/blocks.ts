@@ -336,9 +336,12 @@ export interface SeriesOutcome {
   success: boolean;
 }
 
-/** Answers matched to the block's items one to one, in order, and scored. */
+/** Answers matched to the block's items one to one, in order, and scored. RangeError for a step with both kinds of limit. */
 export function scoreSeries(step: StepOf<'numseries_block'>, answers: readonly SeriesAnswer[]): SeriesOutcome[] {
   const { items, totalLimitMs } = step;
+  if (totalLimitMs !== null && items.some((it) => it.timeLimitMs !== null)) {
+    throw new RangeError('submitNumSeries: a block has item limits (training) or a total limit (diagnostic), not both');
+  }
   if (answers.length !== items.length) {
     throw new RangeError(`submitNumSeries: ${String(answers.length)} answers for ${String(items.length)} items`);
   }
