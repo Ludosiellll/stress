@@ -104,6 +104,19 @@ test('free training of Струп reaches a summary with 100 %', async ({ page }
   await expect(page.getByRole('list', { name: 'Итог по модулям' })).toContainText('Струп: блоков');
 });
 
+test('free training of Переключение правил reaches 100 %', async ({ page }) => {
+  await openApp(page, E2E_URL);
+  await page.getByRole('button', { name: 'Свободная тренировка' }).click();
+  await page.getByRole('button', { name: 'Переключение правил' }).click();
+  const titles: string[] = [];
+  const screens = await playSession(page, { onScreen: checkSummaries(page, titles) });
+  expect(screens).toContain('summary');
+  expect(new Set(titles)).toEqual(new Set(['Переключение правил']));
+  const kinds = await page.evaluate(() => [...new Set(window.__bot?.stimuli.map((s) => `${s.module}:${s.kind}`))]);
+  expect(kinds).toEqual(['taskswitch:press']);
+  await expect(page.getByRole('list', { name: 'Итог по модулям' })).toContainText('Переключение правил: блоков');
+});
+
 test('settings layout pult changes key hints to arrows', async ({ page }) => {
   await openApp(page, E2E_URL);
   await page.getByRole('button', { name: 'Настройки' }).click();

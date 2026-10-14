@@ -1,5 +1,6 @@
-import type { ColorId, ShapeId, Stimulus } from '../engine/reaction/types';
+import type { ColorId, ShapeId, Stimulus, SwitchRule } from '../engine/reaction/types';
 import { COLOR_WORDS } from '../modules/reaction/stroop';
+import { RULE_WORDS } from '../modules/reaction/taskswitch';
 import type { StimulusRenderer } from './reactionRunner';
 
 export const BACKGROUND = '#2b2b2b';
@@ -21,6 +22,11 @@ const STAR_INNER = 0.45;
 /** Stroop word height as a share of the shorter side. */
 const WORD_SIZE = 0.12;
 const WORD_FONT = "'Segoe UI', Arial, sans-serif";
+/** Task-switching figure diameters as a share of the shorter side. */
+const SWITCH_SIZE = { large: 0.18, small: 0.09 } as const;
+/** The rule word: height and how far above the centre, as shares of the shorter side. */
+const RULE_WORD_SIZE = 0.07;
+const RULE_WORD_RISE = 0.22;
 
 /** RDO dial radius as a share of the shorter side. */
 const RDO_RADIUS = 0.35;
@@ -126,6 +132,28 @@ function drawWord(
   ctx.fillText(COLOR_WORDS[s.word], cx, cy);
 }
 
+/** The rule word above the centre (the cue, and with the figure). */
+function drawRule(ctx: CanvasRenderingContext2D, rule: SwitchRule, cx: number, cy: number, side: number): void {
+  ctx.font = `bold ${String(Math.round(RULE_WORD_SIZE * side))}px ${WORD_FONT}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = COLORS.white;
+  ctx.fillText(RULE_WORDS[rule], cx, cy - RULE_WORD_RISE * side);
+}
+
+function drawSwitch(
+  ctx: CanvasRenderingContext2D,
+  s: Extract<Stimulus, { kind: 'switch' }>,
+  cx: number,
+  cy: number,
+  side: number,
+): void {
+  drawRule(ctx, s.rule, cx, cy, side);
+  shapePath(ctx, s.shape, cx, cy, (SWITCH_SIZE[s.size] * side) / 2);
+  ctx.fillStyle = COLORS[s.color];
+  ctx.fill();
+}
+
 function drawRdo(
   ctx: CanvasRenderingContext2D,
   s: Extract<Stimulus, { kind: 'rdo' }>,
@@ -174,6 +202,8 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): StimulusRendere
   const ctx = canvas.getContext('2d');
   if (ctx === null) throw new Error('createCanvasRenderer: 2D context is not available');
   let current: Stimulus | null = null;
+  /** The rule word drawn alone before the figure (`cue`); the shown stimulus brings its own. */
+  let cueRule: SwitchRule | null = null;
   let elapsedMs = 0;
 
   const draw = (): void => {
@@ -187,14 +217,20 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): StimulusRendere
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = BACKGROUND;
     ctx.fillRect(0, 0, w, h);
-    if (current === null) return;
     const side = Math.min(w, h);
+    if (current === null) {
+      if (cueRule !== null) drawRule(ctx, cueRule, w / 2, h / 2, side);
+      return;
+    }
     switch (current.kind) {
       case 'shape':
         drawShape(ctx, current, w / 2, h / 2, side);
         return;
       case 'word':
         drawWord(ctx, current, w / 2, h / 2, side);
+        return;
+      case 'switch':
+        drawSwitch(ctx, current, w / 2, h / 2, side);
         return;
       case 'rdo':
         drawRdo(ctx, current, elapsedMs, w / 2, h / 2, side);
@@ -206,11 +242,19 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): StimulusRendere
   return {
     show(s) {
       current = s;
+      cueRule = null;
       elapsedMs = 0;
       draw();
     },
     hide() {
       current = null;
+      cueRule = null;
+      draw();
+    },
+    cue(s) {
+      if (s.kind !== 'switch') return;
+      current = null;
+      cueRule = s.rule;
       draw();
     },
     tick(ms) {

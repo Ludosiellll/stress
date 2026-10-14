@@ -15,13 +15,14 @@ describe('registry', () => {
       gorbov: 'Красно-чёрные таблицы Горбова',
       schulte: 'Таблицы Шульте',
       stroop: 'Струп',
+      taskswitch: 'Переключение правил',
       numseries: 'Числовые ряды',
     });
   });
 
   it('lNorm re-exports L_NORM (R1)', () => {
     expect(lNorm).toBe(L_NORM);
-    expect(lNorm).toEqual({ pzmr: 14, szmr: 12, gonogo: 10, rdo: 10, gorbov: 12, schulte: 6, stroop: 10, numseries: 0 });
+    expect(lNorm).toEqual({ pzmr: 14, szmr: 12, gonogo: 10, rdo: 10, gorbov: 12, schulte: 6, stroop: 10, taskswitch: 10, numseries: 0 });
   });
 
   it('MODULE_IDS lists every module once and every module has a title and L_norm', () => {
@@ -39,7 +40,7 @@ describe('registry', () => {
     for (const m of MODULE_IDS) {
       expect(isReactionModule(m)).toBe((REACTION_MODULE_IDS as readonly string[]).includes(m));
     }
-    expect(MODULE_IDS.filter(isReactionModule)).toEqual(['pzmr', 'szmr', 'gonogo', 'rdo', 'stroop']);
+    expect(MODULE_IDS.filter(isReactionModule)).toEqual(['pzmr', 'szmr', 'gonogo', 'rdo', 'stroop', 'taskswitch']);
   });
 
   it.each(REACTION_MODULE_IDS)('%s: id, title, lNorm and block size are wired', (id) => {
@@ -47,7 +48,7 @@ describe('registry', () => {
     expect(m.id).toBe(id);
     expect(m.title).toBe(moduleTitles[id]);
     expect(m.lNorm).toBe(L_NORM[id]);
-    expect(m.blockSize).toBe({ pzmr: 15, szmr: 20, gonogo: 20, rdo: 10, stroop: 20 }[id]);
+    expect(m.blockSize).toBe({ pzmr: 15, szmr: 20, gonogo: 20, rdo: 10, stroop: 20, taskswitch: 20 }[id]);
   });
 
   it.each(REACTION_MODULE_IDS)('%s: works through the erased interface', (id) => {
@@ -58,7 +59,7 @@ describe('registry', () => {
     expect(m.describeParams(p).length).toBeGreaterThan(0);
   });
 
-  it('keyCount: СЗМР nKeys, Струп nColors, the other W1 modules one key', () => {
+  it('keyCount: СЗМР nKeys, Струп nColors, переключение two keys, the other W1 modules one key', () => {
     for (const id of ['pzmr', 'gonogo', 'rdo'] as const) {
       const m = reactionModules[id];
       expect(m.keyCount(m.params(0))).toBe(1);
@@ -67,5 +68,6 @@ describe('registry', () => {
     expect(reactionModules.szmr.keyCount(szmr.params(8))).toBe(2);
     expect(reactionModules.szmr.keyCount(szmr.params(32))).toBe(6);
     expect(reactionModules.stroop.keyCount(reactionModules.stroop.params(16))).toBe(4);
+    expect(reactionModules.taskswitch.keyCount(reactionModules.taskswitch.params(20))).toBe(2);
   });
 });

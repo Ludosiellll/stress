@@ -122,6 +122,25 @@ describe('Струп', () => {
   });
 });
 
+describe('Переключение правил', () => {
+  it('reactionLines: errors are answers by the wrong rule', () => {
+    expect(reactionLines('taskswitch', summary({}, { wrong: 2, false_start: 1 })).slice(-3)).toEqual([
+      'Фальстарты: 1',
+      'Пропуски: 0',
+      'Ошибки: 2',
+    ]);
+  });
+
+  it('conditionLines: repeat and switch medians and the switch cost', () => {
+    const stats = { repeat: { n: 15, errors: 0, medianRt: 600 }, switch: { n: 4, errors: 1, medianRt: 750 } };
+    expect(conditionLines('taskswitch', stats)).toEqual([
+      'Правило повторяется: 600 мс',
+      'Правило сменилось: 750 мс',
+      'Цена переключения: +150 мс',
+    ]);
+  });
+});
+
 describe('tableLines', () => {
   it('completed run: time with a decimal comma, errors', () => {
     expect(tableLines({ score: 0.9, timeMs: 41_234, errors: 2, correct: 24, completed: true })).toEqual([

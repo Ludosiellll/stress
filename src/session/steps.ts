@@ -129,6 +129,7 @@ const COUNT_LINES: Record<ReactionModuleId, readonly CountLine[]> = {
   gonogo: [FALSE_STARTS, MISSES, ['Нажатия на no-go', (c) => c.commission]],
   rdo: [FALSE_STARTS, MISSES],
   stroop: [FALSE_STARTS, MISSES, ['Ошибки', (c) => c.wrong]],
+  taskswitch: [FALSE_STARTS, MISSES, ['Ошибки', (c) => c.wrong]],
 };
 
 function timingErrorLine(meanSignedErrorMs: number): string {
@@ -170,6 +171,7 @@ interface CondLines {
 
 const COND_LINES: Partial<Record<ReactionModuleId, CondLines>> = {
   stroop: { fast: ['congruent', 'Цвет совпадает со словом'], slow: ['incongruent', 'Не совпадает'], cost: 'Интерференция' },
+  taskswitch: { fast: ['repeat', 'Правило повторяется'], slow: ['switch', 'Правило сменилось'], cost: 'Цена переключения' },
 };
 
 /** «Цвет совпадает со словом: 520 мс», «Не совпадает: 610 мс», «Интерференция: +90 мс»; a line only for a known value. */

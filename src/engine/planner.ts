@@ -12,6 +12,7 @@ export const L_NORM: Record<ModuleId, number> = {
   gorbov: 12,
   schulte: 6,
   stroop: 10,
+  taskswitch: 10,
   numseries: 0,
 };
 

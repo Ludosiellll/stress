@@ -203,6 +203,72 @@ describe('createCanvasRenderer', () => {
     expect(calls).toEqual([]);
   });
 
+  describe('switch (task switching)', () => {
+    const font = (px: number): string => `bold ${String(px)}px 'Segoe UI', Arial, sans-serif`;
+
+    it('draws the rule word as cue and keeps it with the stimulus', () => {
+      const { ctx, calls } = mockContext();
+      const canvas = {
+        clientWidth: 800,
+        clientHeight: 600,
+        width: 0,
+        height: 0,
+        getContext: () => ctx,
+        ownerDocument: { defaultView: { devicePixelRatio: 1 } },
+      } as unknown as HTMLCanvasElement;
+      const renderer = createCanvasRenderer(canvas);
+      const s: Stimulus = { kind: 'switch', rule: 'shape', color: 'blue', shape: 'circle', size: 'large' };
+      calls.length = 0;
+      renderer.cue?.(s);
+      // The word alone, white, 0.07 of the shorter side, centred 0.22 of it above the centre (300 − 132).
+      expect(named(calls, 'fillText')).toEqual([
+        { name: 'fillText', args: ['ФОРМА', 400, 168], fillStyle: COLORS.white, strokeStyle: undefined, lineWidth: undefined },
+      ]);
+      expect(ctx.font).toBe(font(42));
+      expect([ctx.textAlign, ctx.textBaseline]).toEqual(['center', 'middle']);
+      expect(named(calls, 'fill')).toEqual([]);
+
+      calls.length = 0;
+      renderer.show(s);
+      expect(named(calls, 'fillText').map((c) => [c.args, c.fillStyle])).toEqual([[['ФОРМА', 400, 168], COLORS.white]]);
+      expect(named(calls, 'arc')[0]?.args).toEqual([400, 300, 54, 0, 2 * Math.PI]);
+      expect(named(calls, 'fill').map((c) => c.fillStyle)).toEqual([COLORS.blue]);
+
+      // Does not animate; hide clears the word too.
+      calls.length = 0;
+      renderer.tick(100);
+      expect(calls).toEqual([]);
+      renderer.hide();
+      expect(calls.map((c) => c.name)).toEqual(['setTransform', 'fillRect']);
+    });
+
+    it('a small figure has half the radius of a large one; squares too', () => {
+      const { renderer, calls } = setup({ w: 800, h: 600 });
+      calls.length = 0;
+      renderer.show({ kind: 'switch', rule: 'size', color: 'red', shape: 'circle', size: 'small' });
+      expect(named(calls, 'arc')[0]?.args).toEqual([400, 300, 27, 0, 2 * Math.PI]);
+      expect(named(calls, 'fillText')[0]?.args[0]).toBe('РАЗМЕР');
+      expect(named(calls, 'fill').map((c) => c.fillStyle)).toEqual([COLORS.red]);
+      calls.length = 0;
+      renderer.show({ kind: 'switch', rule: 'color', color: 'red', shape: 'square', size: 'large' });
+      expect(named(calls, 'rect')[0]?.args).toEqual([346, 246, 108, 108]);
+      calls.length = 0;
+      renderer.show({ kind: 'switch', rule: 'color', color: 'red', shape: 'square', size: 'small' });
+      expect(named(calls, 'rect')[0]?.args).toEqual([373, 273, 54, 54]);
+    });
+
+    it('a cue for a stimulus without a rule draws nothing; a later show of it has no word', () => {
+      const { renderer, calls } = setup();
+      calls.length = 0;
+      renderer.cue?.({ kind: 'shape', shape: 'circle', color: 'red' });
+      expect(calls).toEqual([]);
+      renderer.cue?.({ kind: 'switch', rule: 'color', color: 'red', shape: 'circle', size: 'large' });
+      calls.length = 0;
+      renderer.show({ kind: 'shape', shape: 'circle', color: 'red' });
+      expect(named(calls, 'fillText')).toEqual([]);
+    });
+  });
+
   it('palette matches the reference colours', () => {
     expect(BACKGROUND).toBe('#2b2b2b');
     expect(COLORS).toEqual({

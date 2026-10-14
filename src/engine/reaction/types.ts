@@ -4,12 +4,16 @@ export type ColorId = 'red' | 'green' | 'yellow' | 'blue' | 'white' | 'purple';
 export type ShapeId = 'circle' | 'square' | 'triangle' | 'diamond' | 'hexagon' | 'star';
 /** Colours of the Stroop task (W2-R8). */
 export type StroopColor = 'red' | 'green' | 'blue' | 'yellow';
+/** Rules of the task-switching module: which feature of the figure the answer goes by. */
+export type SwitchRule = 'color' | 'shape' | 'size';
 
 export type Stimulus =
   | { kind: 'shape'; shape: ShapeId; color: ColorId; frame?: ColorId }
   | { kind: 'rdo'; startDeg: number; targetDeg: number; periodMs: number }
   /** A colour word (`word`) printed in another or the same colour (`ink`); the answer goes by the ink. */
-  | { kind: 'word'; word: StroopColor; ink: StroopColor };
+  | { kind: 'word'; word: StroopColor; ink: StroopColor }
+  /** A figure under the word of its rule; the answer goes by the feature the rule names. */
+  | { kind: 'switch'; rule: SwitchRule; color: 'red' | 'blue'; shape: 'circle' | 'square'; size: 'large' | 'small' };
 
 /** Trial condition of modules that compare two kinds of trials (conditionStats, condCost). */
 export type TrialCond = 'congruent' | 'incongruent' | 'quiet' | 'noisy' | 'repeat' | 'switch';
@@ -27,6 +31,11 @@ export interface TrialSpec {
   practice?: boolean;
   /** Stored with the spec; trials of modules without conditions have none. */
   cond?: TrialCond;
+  /**
+   * The cue (StimulusRenderer.cue) appears this long before the onset and stays with the stimulus; the onset, the
+   * window and the press timing do not change. Absent or 0: no cue.
+   */
+  cueLeadMs?: number;
 }
 
 export interface Press {

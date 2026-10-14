@@ -8,6 +8,11 @@ export interface StimulusRenderer {
   show(s: Stimulus): void;
   hide(): void;
   /**
+   * Draws the trial's cue alone (task switching: the rule word), `TrialSpec.cueLeadMs` before the onset. The cue
+   * stays on screen with the stimulus; `hide` clears both. Renderers without cues leave it out.
+   */
+  cue?(s: Stimulus): void;
+  /**
    * RDO only: called on every frame while the stimulus is shown, with the time since onset at which this frame will
    * be seen (frame ts − onset + presentation lead; the lead alone on the onset frame).
    */
@@ -46,7 +51,8 @@ export interface RunnerOptions {
 type Phase =
   | { kind: 'idle' }
   | { kind: 'starting' }
-  | { kind: 'waiting'; i: number; onsetAt: number }
+  /** cueAt: when the cue of trial i is due; null when it has none or was already drawn. */
+  | { kind: 'waiting'; i: number; onsetAt: number; cueAt: number | null }
   /** leadMs: the RDO presentation lead, fixed at the onset. */
   | { kind: 'shown'; i: number; onset: number; deadline: number; answeredAt: number | null; leadMs: number }
   /** Presses stamped ≤ until are recorded; the block closes at closeAt (one frame later, for input in flight). */
@@ -77,6 +83,9 @@ function validate(o: RunnerOptions): void {
     if (!(Number.isFinite(s.windowMs) && s.windowMs > 0)) {
       throw new RangeError(`ReactionBlockRunner: trial ${String(i)} windowMs must be > 0, got ${String(s.windowMs)}`);
     }
+    if (s.cueLeadMs !== undefined && !(Number.isFinite(s.cueLeadMs) && s.cueLeadMs >= 0)) {
+      throw new RangeError(`ReactionBlockRunner: trial ${String(i)} cueLeadMs must be ≥ 0, got ${String(s.cueLeadMs)}`);
+    }
   });
   const lead = o.presentationLeadMs;
   if (lead !== undefined && !(Number.isFinite(lead) && lead >= 0)) {
@@ -89,6 +98,9 @@ function validate(o: RunnerOptions): void {
  *
  * - t0 is the timestamp of the first frame after `start()`. Trial i is due at (i = 0 ? t0 : end of trial i−1) + isi_i
  *   and appears in the first frame at or after that time; its onset is that frame's timestamp.
+ * - A trial with `cueLeadMs` > 0 gets its cue once, in the first frame at or after its due time − cueLeadMs (the
+ *   first waiting frame when the lead is longer than the ISI). The cue changes nothing else: the onset is still the
+ *   stimulus frame, and a press during the cue is a press before the onset.
  * - An in-window press ends the trial at the press time, and the stimulus is hidden in the next frame.
  *   Otherwise the trial ends at onset + windowMs and is hidden in the first frame at or after that time.
  * - Every press while the block runs is recorded, whatever the phase. After the last trial, presses stamped up to
@@ -197,6 +209,12 @@ export class ReactionBlockRunner {
       const ph = this.phase;
       switch (ph.kind) {
         case 'waiting':
+          if (ph.cueAt !== null && ts >= ph.cueAt) {
+            ph.cueAt = null;
+            this.renderer.cue?.((this.specs[ph.i] as TrialSpec).stimulus);
+            // A cue callback that aborted the block leaves nothing to show.
+            if (this.phase !== ph) return;
+          }
           if (ts >= ph.onsetAt) this.show(ph.i, ts);
           return;
         case 'shown': {
@@ -219,7 +237,10 @@ export class ReactionBlockRunner {
   }
 
   private waitFor(i: number, from: number): Phase {
-    return { kind: 'waiting', i, onsetAt: from + (this.specs[i] as TrialSpec).isiMs };
+    const spec = this.specs[i] as TrialSpec;
+    const onsetAt = from + spec.isiMs;
+    const lead = spec.cueLeadMs ?? 0;
+    return { kind: 'waiting', i, onsetAt, cueAt: lead > 0 ? onsetAt - lead : null };
   }
 
   private graceAfter(end: number): Phase {

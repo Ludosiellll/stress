@@ -82,6 +82,7 @@ class FakeClock implements FrameClock {
 }
 
 type Call =
+  | { op: 'cue'; at: number; stimulus: Stimulus }
   | { op: 'show'; at: number; stimulus: Stimulus }
   | { op: 'hide'; at: number }
   | { op: 'tick'; at: number; elapsed: number };
@@ -95,6 +96,9 @@ const pressTrial = (isiMs: number, windowMs = 1000, key = 'Space'): TrialSpec =>
   stimulus: circle,
   expected: { kind: 'press', key },
 });
+
+/** A press trial whose cue appears `cueLeadMs` before the stimulus. */
+const cuedTrial = (isiMs: number, cueLeadMs: number, windowMs = 1000): TrialSpec => ({ ...pressTrial(isiMs, windowMs), cueLeadMs });
 
 const withholdTrial = (isiMs: number, windowMs = 1000): TrialSpec => ({
   isiMs,
@@ -134,6 +138,9 @@ function setup(
   const clock = new FakeClock(opts.frameMs);
   const calls: Call[] = [];
   const renderer: StimulusRenderer = {
+    cue(stimulus) {
+      calls.push({ op: 'cue', at: clock.now, stimulus });
+    },
     show(stimulus) {
       calls.push({ op: 'show', at: clock.now, stimulus });
       opts.onShow?.(clock.now);
@@ -590,6 +597,103 @@ describe('ReactionBlockRunner: rdo', () => {
   });
 });
 
+describe('ReactionBlockRunner: cue before the stimulus', () => {
+  it('shows the cue cueLeadMs before onset', async () => {
+    const specs = [cuedTrial(1000, 300), cuedTrial(1000, 300)];
+    const ref = setup([pressTrial(1000), pressTrial(1000)]);
+    ref.clock.runOut();
+    const refTl = await timelineOf(ref);
+
+    const h = setup(specs);
+    h.clock.runOut();
+    const tl = await timelineOf(h);
+    const t0 = h.clock.frames[0] as number;
+    const end0 = (tl.onsets[0] as number) + 1000;
+    expect(h.ops()).toEqual(['cue', 'show', 'hide', 'cue', 'show', 'hide']);
+    expect(h.at('cue')).toEqual([h.clock.firstFrameAtOrAfter(t0 + 700), h.clock.firstFrameAtOrAfter(end0 + 700)]);
+    expect(h.at('show')).toEqual([h.clock.firstFrameAtOrAfter(t0 + 1000), h.clock.firstFrameAtOrAfter(end0 + 1000)]);
+    expect(h.calls[0]).toEqual({ op: 'cue', at: h.at('cue')[0], stimulus: circle });
+    // The onset is still the stimulus frame: the cue changes no timing.
+    expect(tl.onsets).toEqual(h.at('show'));
+    expect(tl.onsets).toEqual(refTl.onsets);
+    expect(tl.droppedOnset).toEqual(refTl.droppedOnset);
+  });
+
+  it('a cue longer than the ISI appears in the first waiting frame', async () => {
+    const h = setup([cuedTrial(200, 300, 300), cuedTrial(100, 300)]);
+    h.clock.runOut();
+    const tl = await timelineOf(h);
+    const t0 = h.clock.frames[0] as number;
+    const hide0 = h.at('hide')[0] as number;
+    expect(h.ops()).toEqual(['cue', 'show', 'hide', 'cue', 'show', 'hide']);
+    // Trial 0: the first frame of the block; trial 1: the frame that hides trial 0, after the hide.
+    expect(h.at('cue')).toEqual([t0, hide0]);
+    expect(hide0).toBe(h.clock.firstFrameAtOrAfter((tl.onsets[0] as number) + 300));
+    expect(tl.onsets).toEqual([h.clock.firstFrameAtOrAfter(t0 + 200), h.clock.firstFrameAtOrAfter((tl.onsets[0] as number) + 300 + 100)]);
+  });
+
+  it('no cue without cueLeadMs', async () => {
+    const h = setup([pressTrial(500), cuedTrial(500, 0)]);
+    h.clock.runOut();
+    await timelineOf(h);
+    expect(h.ops()).toEqual(['show', 'hide', 'show', 'hide']);
+  });
+
+  it('a press during the cue is a false start', async () => {
+    const specs = [cuedTrial(1000, 300), cuedTrial(1000, 300)];
+    const h = setup(specs);
+    const t0 = FRAME; // the first frame after start()
+    h.pressAt(t0 + 800);
+    h.clock.runOut();
+    const tl = await timelineOf(h);
+    expect(h.at('cue')[0]).toBeLessThan(t0 + 800);
+    expect(tl.onsets[0]).toBeGreaterThan(t0 + 800);
+    const [first] = resolveBlock(specs, tl);
+    expect(first?.outcome).toBe('false_start');
+  });
+
+  it('an abort from inside renderer.cue stays aborted and shows nothing', async () => {
+    const clock = new FakeClock();
+    const shows: number[] = [];
+    const renderer: StimulusRenderer = {
+      cue() {
+        runner.abort('user');
+      },
+      show() {
+        shows.push(clock.now);
+      },
+      hide() {},
+      tick() {},
+    };
+    // ISI 0: the cue and the onset are due in the same frame.
+    const runner = new ReactionBlockRunner({ specs: [cuedTrial(0, 300)], clock, renderer, nominalFrameMs: FRAME });
+    const done = runner.start();
+    clock.step();
+    expect(await done).toEqual({ kind: 'aborted', reason: 'user' });
+    expect(shows).toEqual([]);
+    expect(clock.hasPending).toBe(false);
+  });
+
+  it('a renderer without cue plays a cued block normally', async () => {
+    const clock = new FakeClock();
+    const ops: string[] = [];
+    const renderer: StimulusRenderer = {
+      show() {
+        ops.push('show');
+      },
+      hide() {
+        ops.push('hide');
+      },
+      tick() {},
+    };
+    const runner = new ReactionBlockRunner({ specs: [cuedTrial(500, 300)], clock, renderer, nominalFrameMs: FRAME });
+    const done = runner.start();
+    clock.runOut();
+    expect((await done).kind).toBe('done');
+    expect(ops).toEqual(['show', 'hide']);
+  });
+});
+
 describe('ReactionBlockRunner: end of block', () => {
   it('late presses within 300 ms after the last trial are captured, later ones are not', async () => {
     expect(LATE_GRACE_MS).toBe(300);
@@ -811,6 +915,10 @@ describe('ReactionBlockRunner: validation', () => {
 
   it.each([0, -5, Number.NaN, Number.POSITIVE_INFINITY])('rejects windowMs %s', (w) => {
     expect(() => make([pressTrial(100, w)])).toThrow(RangeError);
+  });
+
+  it.each([-1, Number.NaN, Number.POSITIVE_INFINITY])('rejects cueLeadMs %s', (lead) => {
+    expect(() => make([pressTrial(100), cuedTrial(100, lead)])).toThrow(RangeError);
   });
 
   it.each([-1, Number.NaN, Number.POSITIVE_INFINITY])('rejects presentationLeadMs %s', (lead) => {

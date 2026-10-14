@@ -392,6 +392,28 @@ describe('SessionController — levels and persistence', () => {
     ]);
   });
 
+  it('taskswitch block shows the switch cost', async () => {
+    const h = await begin(planFree('taskswitch', 4));
+    const slowerOnSwitch: Respond = (spec, idx) => {
+      const r = perfectPlayer(spec, idx);
+      return r !== null && spec.cond === 'switch' ? { ...r, rtMs: r.rtMs + 150 } : r;
+    };
+    const { view } = await playReaction(h, slowerOnSwitch);
+    expect(view.title).toBe('Переключение правил');
+    expect(view.lines).toContain('Ошибки: 0');
+    expect(view.lines.slice(-3)).toEqual(['Правило повторяется: 300 мс', 'Правило сменилось: 450 мс', 'Цена переключения: +150 мс']);
+    const [row] = await h.repo.listBlocks();
+    // L = 0: 20 trials, the first without a condition, round(0.2 · 19) = 4 switches.
+    expect((JSON.parse(row?.summaryJson ?? '{}') as { conditions?: unknown }).conditions).toEqual({
+      repeat: { n: 15, errors: 0, medianRt: 300 },
+      switch: { n: 4, errors: 0, medianRt: 450 },
+    });
+    const trials = await h.repo.listTrials(row?.id ?? '');
+    const first = JSON.parse(trials[0]?.stimulusJson ?? '{}') as { cueLeadMs?: unknown; cond?: unknown };
+    expect(first).toMatchObject({ cueLeadMs: 900 });
+    expect(first).not.toHaveProperty('cond');
+  });
+
   it('reaction blocks without conditions store an empty conditions object and no condition lines', async () => {
     const h = await begin(planFree('pzmr', 1));
     const { view } = await playReaction(h);

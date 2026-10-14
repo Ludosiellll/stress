@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { TrialResult, TrialSpec } from '../engine/reaction/types';
+import type { Stimulus, TrialResult, TrialSpec } from '../engine/reaction/types';
 import type { FrameClock } from '../runtime/frameClock';
 import type { StimulusRenderer } from '../runtime/reactionRunner';
 import { e2eHooks, installE2eHooks, instrumentBlock, type E2eHost } from './e2eHooks';
@@ -131,5 +131,21 @@ describe('instrumentBlock', () => {
     expect(b.tick).toHaveBeenCalledWith(5);
     expect(b.hide).toHaveBeenCalledTimes(1);
     expect(b.cancel).toHaveBeenCalledWith(7);
+  });
+
+  it('instrumentBlock forwards cue without emitting a stimulus event', () => {
+    const b = base();
+    const cue = vi.fn<NonNullable<StimulusRenderer['cue']>>();
+    const h = host('?e2e=1');
+    const hooks = installE2eHooks(h);
+    const seen: unknown[] = [];
+    h.__trainer?.onStimulus((e) => seen.push(e));
+    const stimulus: Stimulus = { kind: 'switch', rule: 'color', color: 'red', shape: 'circle', size: 'large' };
+    const out = instrumentBlock(hooks, 'taskswitch', [spec('KeyF')], { clock: b.clock, renderer: { ...b.renderer, cue } });
+    out.renderer.cue?.(stimulus);
+    expect(cue).toHaveBeenCalledWith(stimulus);
+    expect(seen).toEqual([]);
+    // A renderer without cue: forwarding is a no-op.
+    expect(() => instrumentBlock(hooks, 'pzmr', [spec('Space')], b).renderer.cue?.(stimulus)).not.toThrow();
   });
 });

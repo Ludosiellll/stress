@@ -5,6 +5,7 @@ import { pzmr } from './reaction/pzmr';
 import { rdo } from './reaction/rdo';
 import { stroop } from './reaction/stroop';
 import { szmr } from './reaction/szmr';
+import { taskswitch } from './reaction/taskswitch';
 
 export { L_NORM as lNorm } from '../engine/planner';
 export type { ReactionModule } from './reaction/common';
@@ -15,6 +16,7 @@ export const reactionModules: Record<ReactionModuleId, ReactionModule<unknown>> 
   gonogo,
   rdo,
   stroop,
+  taskswitch,
 };
 
 export const moduleTitles: Record<ModuleId, string> = {
@@ -25,5 +27,6 @@ export const moduleTitles: Record<ModuleId, string> = {
   gorbov: 'Красно-чёрные таблицы Горбова',
   schulte: 'Таблицы Шульте',
   stroop: stroop.title,
+  taskswitch: taskswitch.title,
   numseries: 'Числовые ряды',
 };
