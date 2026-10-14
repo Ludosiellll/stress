@@ -1,3 +1,4 @@
+import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import type { Outcome, ReactionSummary } from '../engine/reaction/types';
 import {
@@ -120,6 +121,20 @@ describe('Струп', () => {
     ]);
     expect(conditionLines('stroop', stats(530.4, 500.2)).at(-1)).toBe('Интерференция: −30 мс');
     expect(conditionLines('stroop', stats(500.2, 500.4)).at(-1)).toBe('Интерференция: 0 мс');
+  });
+
+  it('conditionLines: the difference shown is that of the medians shown, whatever the rounding', () => {
+    // 610 − 520,5 = 89,5 would round to 90, but the lines read 521 and 610.
+    expect(conditionLines('stroop', stats(520.5, 610))).toEqual(['Цвет совпадает со словом: 521 мс', 'Не совпадает: 610 мс', 'Интерференция: +89 мс']);
+    const shown = (line: string | undefined): number => Number((line ?? '').replace(/^.*: /, '').replace(' мс', '').replace('−', '-'));
+    const half = fc.integer({ min: 300, max: 2000 }).chain((x) => fc.constantFrom(x, x + 0.5, x + 0.25));
+    fc.assert(
+      fc.property(half, half, (fast, slow) => {
+        const [f, sl, cost] = conditionLines('stroop', stats(fast, slow));
+        expect(shown(cost)).toBe(shown(sl) - shown(f));
+      }),
+      { numRuns: 1000 },
+    );
   });
 
   it('conditionLines: a line only for a value that is not null', () => {

@@ -1,7 +1,7 @@
 import type { DiagnosticResults } from '../engine/diagnostic';
 import { BASE_ITEM_LIMIT_MS } from '../engine/itemLimit';
-import { condCost, condPairOf, type ConditionStats } from '../engine/reaction/conditions';
-import type { Outcome, ReactionSummary, TrialSpec } from '../engine/reaction/types';
+import { condPairOf, type ConditionStats } from '../engine/reaction/conditions';
+import type { Outcome, ReactionSummary, TrialCond, TrialSpec } from '../engine/reaction/types';
 import type { BlockFlag, InputKey, LayoutId, ModuleId, ReactionModuleId, TableModuleId } from '../engine/types';
 import type { ParamChange } from '../modules/describe';
 import type { MemoryTrial } from '../modules/memory/generate';
@@ -192,21 +192,24 @@ const COND_LABELS: Partial<Record<ReactionModuleId, { fast: string; slow: string
   pomeh: { fast: 'Без помех', slow: 'С помехами', cost: 'Разница' },
 };
 
-/** «Цвет совпадает со словом: 520 мс», «Не совпадает: 610 мс», «Интерференция: +90 мс»; a line only for a known value. */
+/**
+ * «Цвет совпадает со словом: 520 мс», «Не совпадает: 610 мс», «Интерференция: +90 мс»; a line only for a known value.
+ * The difference is taken between the medians as shown (whole ms), so the three lines always agree.
+ */
 export function conditionLines(module: ReactionModuleId, stats: ConditionStats): string[] {
   const pair = condPairOf(module);
   const labels = COND_LABELS[module];
   if (pair === null || labels === undefined) return [];
-  const lines: string[] = [];
-  for (const [cond, label] of [
-    [pair.fast, labels.fast],
-    [pair.slow, labels.slow],
-  ] as const) {
+  const shown = (cond: TrialCond): number | null => {
     const rt = stats[cond]?.medianRt ?? null;
-    if (rt !== null) lines.push(`${label}: ${String(whole(rt))} мс`);
-  }
-  const cost = condCost(stats, pair.slow, pair.fast);
-  if (cost !== null) lines.push(`${labels.cost}: ${signedMs(cost)} мс`);
+    return rt === null ? null : whole(rt);
+  };
+  const fast = shown(pair.fast);
+  const slow = shown(pair.slow);
+  const lines: string[] = [];
+  if (fast !== null) lines.push(`${labels.fast}: ${String(fast)} мс`);
+  if (slow !== null) lines.push(`${labels.slow}: ${String(slow)} мс`);
+  if (fast !== null && slow !== null) lines.push(`${labels.cost}: ${signedMs(slow - fast)} мс`);
   return lines;
 }
 
