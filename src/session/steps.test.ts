@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Outcome, ReactionSummary } from '../engine/reaction/types';
-import { reactionLines, seriesLines, tableLines } from './steps';
+import { plural, reactionLines, seriesDiagnosticInstruction, seriesLines, tableLines } from './steps';
 
 const NO_COUNTS: Record<Outcome, number> = {
   hit: 0,
@@ -96,5 +96,38 @@ describe('tableLines', () => {
 describe('seriesLines', () => {
   it('correct count and mean time in whole seconds', () => {
     expect(seriesLines(7, 10, 14_400)).toEqual(['Верно: 7 из 10', 'Среднее время: 14 с']);
+  });
+});
+
+describe('Russian plurals and the series diagnostic instruction', () => {
+  it('plural forms', () => {
+    const f = (n: number): string => plural(n, 'задача', 'задачи', 'задач');
+    expect([1, 2, 4, 5, 11, 12, 14, 20, 21, 22, 25, 101, 111, 112, 122].map(f)).toEqual([
+      'задача',
+      'задачи',
+      'задачи',
+      'задач',
+      'задач',
+      'задач',
+      'задач',
+      'задач',
+      'задача',
+      'задачи',
+      'задач',
+      'задача',
+      'задач',
+      'задач',
+      'задачи',
+    ]);
+  });
+
+  it('built from the item count and the total limit', () => {
+    expect(seriesDiagnosticInstruction(20, 600_000)).toBe('20 задач, общее время — 10 минут. Найди закономерность и введи следующее число.');
+    expect(seriesDiagnosticInstruction(3, 12_000)).toBe('3 задачи, общее время — 12 секунд. Найди закономерность и введи следующее число.');
+    expect(seriesDiagnosticInstruction(21, 60_000)).toBe('21 задача, общее время — 1 минута. Найди закономерность и введи следующее число.');
+    expect(seriesDiagnosticInstruction(2, 122_000)).toBe('2 задачи, общее время — 122 секунды. Найди закономерность и введи следующее число.');
+    expect(seriesDiagnosticInstruction(5, 180_000)).toBe('5 задач, общее время — 3 минуты. Найди закономерность и введи следующее число.');
+    expect(seriesDiagnosticInstruction(1, 1000)).toBe('1 задача, общее время — 1 секунда. Найди закономерность и введи следующее число.');
+    expect(seriesDiagnosticInstruction(4, null)).toBe('4 задачи. Найди закономерность и введи следующее число.');
   });
 });

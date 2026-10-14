@@ -1,43 +1,40 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { Repository } from '../data/repository';
-import type { BlockRow, LogicItemRow, SessionRow, TrialRow, WellbeingRow } from '../data/rows';
+import type { LogicItemRow, TrialRow, WellbeingRow } from '../data/rows';
 import { detectFatigue, nextLevel, startLevel } from '../engine/adaptive';
 import { daysBetween } from '../engine/dates';
 import { deriveModuleStates } from '../engine/derive';
-import { diagnosticSegmentSeed, diagnosticSeriesSchedule, type DiagnosticResults } from '../engine/diagnostic';
-import { R0, updateRating, type Rating } from '../engine/elo';
-import { keyLabel, layoutKeys } from '../engine/layouts';
+import type { DiagnosticResults } from '../engine/diagnostic';
+import type { Rating } from '../engine/elo';
 import type { ModuleState, Segment, SessionPlan } from '../engine/planner';
-import { resolveBlock } from '../engine/reaction/resolve';
-import { summarize } from '../engine/reaction/summary';
-import type { BlockTimeline, ReactionSummary, TrialResult } from '../engine/reaction/types';
-import { createRng, deriveSeed } from '../engine/rng';
-import { mean } from '../engine/stats';
-import type { BlockFlag, FamilyId, InputKey, LayoutId, ModuleId, ReactionModuleId, TableModuleId } from '../engine/types';
+import type { BlockTimeline } from '../engine/reaction/types';
+import type { BlockFlag, FamilyId, LayoutId, ModuleId } from '../engine/types';
 import { describeChanges } from '../modules/describe';
-import { generateBlockItems, generateItem, ITEM_TIME_LIMIT_MS, type SeriesItem } from '../modules/numseries/generate';
-import type { SzmrParams } from '../modules/reaction/szmr';
 import { moduleTitles, reactionModules } from '../modules/registry';
-import {
-  generateGorbovTable,
-  gorbovMetrics,
-  gorbovParams,
-  gorbovTaskForRun,
-  tableInstruction,
-  type TableParams,
-  type TableTaskId,
-} from '../modules/tables/gorbov';
-import { generateSchulteTable, schulteParams } from '../modules/tables/schulte';
+import type { TableTaskId } from '../modules/tables/gorbov';
 import { scoreTableRun, type TableRun } from '../modules/tables/score';
 import {
+  blockInstruction,
+  buildBlock,
+  diagnosticBlockSeed,
+  diagnosticResults,
+  isReaction,
+  planBlock,
+  scoreReaction,
+  scoreSeries,
+  trainingBlockSeed,
+  updatedRatings,
+  type BlockPlan,
+  type DiagnosticPart,
+  type PlanContext,
+} from './blocks';
+import { blockRow, errorLogRow, logicItemRows, sessionRow, trialRows, wellbeingRow } from './rowsBuild';
+import { SaveQueue, type SaveOutcome, type Write } from './saveQueue';
+import {
   reactionLines,
+  saveErrorMessage,
   seriesLines,
-  SERIES_INSTRUCTION_DIAGNOSTIC,
-  SERIES_INSTRUCTION_TRAINING,
-  SERIES_KEYS_HINT,
-  TABLE_KEYS_HINT,
   tableLines,
-  type BlockSummaryView,
   type SeriesAnswer,
   type Step,
   type StepOf,
@@ -51,7 +48,7 @@ export interface SessionStartOptions {
   /** Wall clock: session/block dates and segment budgets (never trial timing). */
   now: () => Date;
   appVersion: string;
-  /** e2e only (Task 15): budgets × scale, block sizes and item counts max(3, round(n·scale)). Default 1. */
+  /** e2e only (Task 15): budgets and the series total limit × scale, block sizes and item counts max(3, round(n·scale)). */
   scale?: number;
   /** Pause between save attempts; tests inject an instant one. Default: setTimeout. */
   sleep?: (ms: number) => Promise<void>;
@@ -59,20 +56,8 @@ export interface SessionStartOptions {
 
 export type DiscardReason = 'focus_lost' | 'error';
 
-const PHASE = 'w1';
-/** Pauses between the 3 save attempts. */
-const SAVE_RETRY_DELAYS_MS: readonly number[] = [100, 500];
-const SERIES_BLOCK_ITEMS = 10;
-/** Floor for scaled block sizes and item counts (e2e). */
-const MIN_SCALED = 3;
 /** First 3 blocks of a module ever are calibration blocks (g = 2). */
 const CALIBRATION_BLOCKS = 3;
-
-/** The next block of the segment, decided before its instruction: level, parameters, task and keys are fixed. */
-type BlockPlan =
-  | { kind: 'reaction'; module: ReactionModuleId; L: number; params: unknown; keys: InputKey[]; layout: LayoutId }
-  | { kind: 'table'; module: TableModuleId; L: number; task: TableTaskId; params: TableParams }
-  | { kind: 'numseries' };
 
 /** The block on screen. A discard rebuilds it from the same plan with the next attempt's seed. */
 interface ActiveBlock {
@@ -104,67 +89,33 @@ interface SessionBlock {
   hitRts: number[];
 }
 
-interface PendingSave {
-  writes: Array<{ run: () => Promise<void>; done: boolean }>;
+/** What a submitted block brings to completeBlock. */
+interface FinishedBlock {
+  module: ModuleId;
+  L: number;
+  score: number;
+  /** Staircase inputs; null for number series (no level). */
+  level: { cvRt: number | null; cvMax: number | null; timingUnreliable: boolean } | null;
+  hitRts: number[];
+  summaryJson: string;
+  lines: string[];
+  task?: TableTaskId;
+  rows: (blockId: string) => { trials: TrialRow[]; items: LogicItemRow[] };
+  /** In-memory effects beyond the level (diagnostic metrics, ratings), applied once the block is stored. */
+  onCommit?: () => void;
+  /** Cache writes after the module state (ratings). */
+  extraWrites?: Write[];
+}
+
+/** What follows the writes on screen: success, or giving up on them (null: cannot be skipped). */
+interface SaveContext {
+  what: string;
   onSaved: () => void | Promise<void>;
+  onAbandon: (() => void | Promise<void>) | null;
+  error: unknown;
 }
 
-const isReaction = (m: ModuleId): m is ReactionModuleId => m === 'pzmr' || m === 'szmr' || m === 'gonogo' || m === 'rdo';
-const isTable = (m: ModuleId): m is TableModuleId => m === 'gorbov' || m === 'schulte';
-
-/** Keys a reaction block uses: СЗМР has nKeys, the other modules one. */
-function keyCount(module: ReactionModuleId, params: unknown): number {
-  return module === 'szmr' ? (params as SzmrParams).nKeys : 1;
-}
-
-/** Local calendar date YYYY-MM-DD. */
-function localDate(d: Date): string {
-  const pad = (n: number): string => String(n).padStart(2, '0');
-  return `${String(d.getFullYear())}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-function saveErrorMessage(e: unknown): string {
-  const detail = e instanceof Error ? e.message : String(e);
-  return `Не удалось сохранить результаты. Они пока в памяти: не закрывай программу и повтори сохранение. Ошибка: ${detail}`;
-}
-
-function trialRow(blockId: string, step: StepOf<'reaction_block'>, tl: BlockTimeline, r: TrialResult): TrialRow {
-  const onset = tl.onsets[r.idx] ?? null;
-  return {
-    id: uuidv4(),
-    blockId,
-    idx: r.idx,
-    stimulusJson: JSON.stringify(step.specs[r.idx] ?? null),
-    responseJson: JSON.stringify({
-      key: r.key,
-      rtMs: r.rtMs,
-      errorMs: r.errorMs,
-      outcome: r.outcome,
-      practice: r.practice,
-      kind: r.kind,
-    }),
-    onsetTs: onset,
-    responseTs: onset !== null && r.rtMs !== null ? onset + r.rtMs : null,
-    rtMs: r.rtMs,
-    outcome: r.outcome,
-    frameDropped: r.frameDropped,
-  };
-}
-
-/** Answers paired with the block's items; they must match one to one, in order. */
-function pairAnswers(
-  items: readonly SeriesItem[],
-  answers: readonly SeriesAnswer[],
-): Array<{ item: SeriesItem; answer: SeriesAnswer }> {
-  if (answers.length !== items.length) {
-    throw new RangeError(`submitNumSeries: ${String(answers.length)} answers for ${String(items.length)} items`);
-  }
-  return items.map((item, i) => {
-    const answer = answers[i];
-    if (answer?.itemId !== item.id) throw new RangeError(`submitNumSeries: answer ${String(i)} is not for item ${item.id}`);
-    return { item, answer };
-  });
-}
+const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /**
  * Runs one session plan step by step (instruction → blocks → summary → … → wellbeing → done) and stores
@@ -172,13 +123,14 @@ function pairAnswers(
  *
  * - Levels: a segment starts at startLevel(L_saved, days since last training) (diagnostics: fixedL) and moves
  *   by nextLevel after every block. Diagnostics never change levels, module states or ratings.
- * - After each block: addBlock (with its trials / logic items), then for training and free sessions the module
- *   state re-derived from history and, for number series, the ratings. Writes are tried 3 times (pauses
- *   100 and 500 ms); then `save_error` keeps everything in memory until `retrySave` succeeds.
- * - A new block starts only while the segment budget (from the first instruction ack) is not used up;
- *   diagnostic segments (budgetMs 0) have a fixed volume instead.
- * - An instruction comes before the first block of a segment and again whenever its text changes
- *   (every Gorbov run, СЗМР / Go/No-Go / Шульте rule changes as the level moves).
+ * - After each block: addBlock (with its trials / logic items); then the block's in-memory effects; then for
+ *   training and free sessions the module state derived from the module's history (listBlockLevels) and, for
+ *   number series, the ratings. Writes are tried 3 times (pauses 100 and 500 ms), then `save_error` keeps
+ *   everything in memory until `retrySave` succeeds or `abandonPending` gives up on it.
+ * - Training and free segments start a new block only while the budget (from the first instruction ack) is
+ *   not used up; diagnostic segments play a fixed number of blocks (`runs`, default 1).
+ * - An instruction comes before the first block of a segment, before every Gorbov run, and again whenever
+ *   its text or keys change (СЗМР / Go/No-Go / Шульте rules move with the level).
  */
 export class SessionController {
   readonly sessionId = uuidv4();
@@ -188,8 +140,8 @@ export class SessionController {
   private readonly layout: LayoutId;
   private readonly now: () => Date;
   private readonly scale: number;
-  private readonly sleep: (ms: number) => Promise<void>;
-  /** Training and free sessions move levels; diagnostics do not. */
+  private readonly queue: SaveQueue;
+  /** Training and free sessions move levels; diagnostics do not (the one "is diagnostic" predicate). */
   private readonly counted: boolean;
   /** Module states as of session start (L_saved, last training, lifetime blocks). */
   private readonly states: Record<ModuleId, ModuleState>;
@@ -201,7 +153,7 @@ export class SessionController {
   /** The block the instruction on screen introduces. */
   private next: BlockPlan | null = null;
   private active: ActiveBlock | null = null;
-  private pending: PendingSave | null = null;
+  private saving: SaveContext | null = null;
   private busy = false;
 
   private readonly sessionBlocks: SessionBlock[] = [];
@@ -212,15 +164,8 @@ export class SessionController {
   private readonly fatigueContinued = new Set<ModuleId>();
   private readonly discardLog: Array<{ module: ModuleId; reason: DiscardReason }> = [];
 
-  private readonly diag: Omit<DiagnosticResults, 'gorbov'> = {
-    pzmrMedianRt: null,
-    szmrMedianRt: null,
-    gonogoScore: null,
-    rdoMeanAbsErrorMs: null,
-    numseriesCorrect: null,
-  };
-  /** Diagnostic Gorbov run times in seconds by run index; null = not finished in time. */
-  private readonly gorbovSeconds: Array<number | null> = [];
+  /** What the stored diagnostic blocks add to DiagnosticResults. */
+  private readonly diagParts: DiagnosticPart[] = [];
 
   private constructor(
     o: SessionStartOptions,
@@ -233,7 +178,7 @@ export class SessionController {
     this.layout = o.layout;
     this.now = o.now;
     this.scale = scale;
-    this.sleep = o.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.queue = new SaveQueue(o.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))));
     this.counted = o.plan.kind !== 'diagnostic';
     this.states = states;
     this.ratings = ratings;
@@ -248,15 +193,11 @@ export class SessionController {
     }
     const [states, ratings] = await Promise.all([o.repo.getModuleStates(), o.repo.getRatings()]);
     const c = new SessionController(o, scale, states, ratings);
-    const row: SessionRow = {
-      id: c.sessionId,
-      startedAt: o.now().toISOString(),
-      endedAt: null,
-      kind: o.plan.kind,
-      phase: PHASE,
-      appVersion: o.appVersion,
-    };
-    await c.save([() => o.repo.createSession(row)], () => c.enterSegment(0));
+    const row = sessionRow(c.sessionId, o.now().toISOString(), o.plan.kind, o.appVersion);
+    await c.save(
+      { what: 'session start', onSaved: () => c.enterSegment(0), onAbandon: null },
+      [{ label: 'createSession', run: () => o.repo.createSession(row) }],
+    );
     return c;
   }
 
@@ -282,36 +223,26 @@ export class SessionController {
     const step = this.take('reaction_block');
     await this.exclusive(async () => {
       const { module, L } = step;
-      const results = resolveBlock(step.specs, tl);
-      const summary = summarize(results);
-      if (summary.n === 0) {
+      const scored = scoreReaction(step.specs, tl);
+      if (scored === null) {
         // Nothing scored (cannot happen with real blocks): no write, play it again.
         this.restartBlock(module, 'error');
         return;
       }
-      const calibration = this.isCalibration(module);
-      const lAfter = this.counted
-        ? nextLevel(L, {
-            score: summary.score,
-            calibration,
-            prevScoreSameSession: this.prevScore(module),
-            cvRt: summary.cvRt,
-            cvMax: reactionModules[module].cvMax(L),
-            timingUnreliable: summary.timingUnreliable,
-          })
-        : L;
-      const flags = this.flagsFor(module, calibration, summary.timingUnreliable);
-      const hitRts = results.flatMap((r) =>
-        !r.practice && r.kind === 'press' && r.outcome === 'hit' && r.rtMs !== null ? [r.rtMs] : [],
-      );
-      const active = this.block();
-      this.record({ module, score: summary.score, flags, hitRts }, lAfter);
-      if (!this.counted) this.collectDiagnostic(module, summary);
-
-      const row = this.blockRow(uuidv4(), module, L, lAfter, summary.score, flags, active, JSON.stringify(summary));
-      const trials = results.map((r) => trialRow(row.id, step, tl, r));
-      const view = this.view(module, L, lAfter, summary.score, flags, reactionLines(module, summary));
-      await this.persist(row, trials, [], view, null);
+      const { results, summary, hitRts } = scored;
+      await this.completeBlock({
+        module,
+        L,
+        score: summary.score,
+        level: { cvRt: summary.cvRt, cvMax: reactionModules[module].cvMax(L), timingUnreliable: summary.timingUnreliable },
+        hitRts,
+        summaryJson: JSON.stringify(summary),
+        lines: reactionLines(module, summary),
+        rows: (blockId) => ({ trials: trialRows(blockId, step.specs, tl, results), items: [] }),
+        onCommit: () => {
+          if (!this.counted) this.diagParts.push({ module, summary });
+        },
+      });
     });
   }
 
@@ -324,82 +255,56 @@ export class SessionController {
       );
     }
     await this.exclusive(async () => {
-      const { module, L } = step;
+      const { module } = step;
       const result = scoreTableRun(run);
-      const calibration = this.isCalibration(module);
-      const lAfter = this.counted
-        ? nextLevel(L, {
-            score: result.score,
-            calibration,
-            prevScoreSameSession: this.prevScore(module),
-            cvRt: null,
-            cvMax: null,
-            timingUnreliable: false,
-          })
-        : L;
-      const flags = this.flagsFor(module, calibration, false);
-      const active = this.block();
-      if (!this.counted && module === 'gorbov') {
-        this.gorbovSeconds[this.segment().blocksDone] = result.timeMs === null ? null : result.timeMs / 1000;
-      }
-      this.record({ module, score: result.score, flags, hitRts: [] }, lAfter);
-
-      const summaryJson = JSON.stringify({ ...result, task: run.task, startTs: run.startTs, clicks: run.clicks });
-      const row = this.blockRow(uuidv4(), module, L, lAfter, result.score, flags, active, summaryJson);
-      const view = this.view(module, L, lAfter, result.score, flags, tableLines(result), step.task);
-      await this.persist(row, [], [], view, null);
+      const runIndex = this.segment().blocksDone;
+      await this.completeBlock({
+        module,
+        L: step.L,
+        score: result.score,
+        level: { cvRt: null, cvMax: null, timingUnreliable: false },
+        hitRts: [],
+        summaryJson: JSON.stringify({ ...result, task: run.task, startTs: run.startTs, clicks: run.clicks }),
+        lines: tableLines(result),
+        task: step.task,
+        rows: () => ({ trials: [], items: [] }),
+        onCommit: () => {
+          if (!this.counted && module === 'gorbov') {
+            this.diagParts.push({ module, run: runIndex, seconds: result.timeMs === null ? null : result.timeMs / 1000 });
+          }
+        },
+      });
     });
   }
 
   async submitNumSeries(answers: readonly SeriesAnswer[]): Promise<void> {
     const step = this.take('numseries_block');
-    const pairs = pairAnswers(step.items, answers);
+    const outcomes = scoreSeries(step, answers);
     await this.exclusive(async () => {
-      const active = this.block();
-      const blockId = uuidv4();
+      const successes = outcomes.filter((o) => o.success).length;
+      const total = outcomes.length;
+      const ratings = this.counted ? updatedRatings(this.ratings, outcomes) : null;
       const at = this.now().toISOString();
-      const ratings = new Map(this.ratings);
-      const items: LogicItemRow[] = [];
-      let elapsed = 0;
-      let successes = 0;
-      for (const { item, answer } of pairs) {
-        const correct = answer.given === item.answer;
-        elapsed += answer.timeMs;
-        const inTime =
-          (step.perItemLimitMs === null || answer.timeMs <= step.perItemLimitMs) &&
-          (step.totalLimitMs === null || elapsed <= step.totalLimitMs);
-        const success = correct && inTime;
-        if (success) successes++;
-        if (this.counted) {
-          ratings.set(item.family, updateRating(ratings.get(item.family) ?? { rating: R0, n: 0 }, item.difficulty, success));
-        }
-        items.push({
-          id: uuidv4(),
-          blockId,
-          family: item.family,
-          seed: item.seed,
-          difficulty: item.difficulty,
-          answer: item.answer,
-          given: answer.given,
-          correct,
-          timeMs: answer.timeMs,
-          at,
-        });
-      }
-      const score = successes / pairs.length;
-      this.record({ module: 'numseries', score, flags: [], hitRts: [] }, 0);
-      if (this.counted) this.ratings = ratings;
-      else this.diag.numseriesCorrect = successes;
-
-      const summaryJson = JSON.stringify({
-        correct: successes,
-        total: pairs.length,
-        items: pairs.map(({ item, answer }) => ({ itemId: item.id, answer: item.answer, given: answer.given, timeMs: answer.timeMs })),
+      const meanTimeMs = outcomes.reduce((sum, o) => sum + o.answer.timeMs, 0) / total;
+      await this.completeBlock({
+        module: 'numseries',
+        L: 0,
+        score: successes / total,
+        level: null,
+        hitRts: [],
+        summaryJson: JSON.stringify({
+          correct: successes,
+          total,
+          items: outcomes.map((o) => ({ itemId: o.item.id, answer: o.item.answer, given: o.answer.given, timeMs: o.answer.timeMs })),
+        }),
+        lines: seriesLines(successes, total, meanTimeMs),
+        rows: (blockId) => ({ trials: [], items: logicItemRows(blockId, outcomes, at) }),
+        onCommit: () => {
+          if (ratings !== null) this.ratings = ratings;
+          else this.diagParts.push({ module: 'numseries', correct: successes });
+        },
+        extraWrites: ratings === null ? [] : [{ label: 'saveRatings', run: () => this.repo.saveRatings(ratings) }],
       });
-      const row = this.blockRow(blockId, 'numseries', 0, 0, score, [], active, summaryJson);
-      const meanTime = mean(pairs.map((p) => p.answer.timeMs));
-      const view = this.view('numseries', 0, 0, score, [], seriesLines(successes, pairs.length, meanTime));
-      await this.persist(row, [], items, view, this.counted ? ratings : null);
     });
   }
 
@@ -415,31 +320,19 @@ export class SessionController {
 
   async continueAfterSummary(): Promise<void> {
     this.take('summary');
-    await this.exclusive(async () => {
-      const seg = this.segment();
-      if (!this.anotherBlock(seg)) {
-        await this.enterSegment(seg.index + 1);
-        return;
-      }
-      const module = seg.segment.module;
-      if (this.fatigueDetected.has(module) && !this.fatiguePrompted.has(module)) {
-        this.fatiguePrompted.add(module);
-        this.current = { kind: 'fatigue_prompt', module };
-        return;
-      }
-      this.presentNext();
-    });
+    await this.exclusive(() => this.advance());
   }
 
-  /** stop: skip the rest of the segment; otherwise keep going with later blocks of the module flagged `fatigued`. */
+  /** stop: skip the rest of the segment; otherwise keep going (while the budget lasts) with later blocks `fatigued`. */
   async answerFatigue(stop: boolean): Promise<void> {
     const step = this.take('fatigue_prompt');
     await this.exclusive(async () => {
-      if (stop) {
-        await this.enterSegment(this.segment().index + 1);
+      const seg = this.segment();
+      if (!stop) this.fatigueContinued.add(step.module);
+      if (stop || !this.anotherBlock(seg)) {
+        await this.enterSegment(seg.index + 1);
         return;
       }
-      this.fatigueContinued.add(step.module);
       this.presentNext();
     });
   }
@@ -447,27 +340,47 @@ export class SessionController {
   /** Repeats the writes that have not succeeded yet (3 attempts again). */
   async retrySave(): Promise<void> {
     this.take('save_error');
-    await this.exclusive(() => this.flush());
+    await this.exclusive(async () => {
+      await this.settle(await this.queue.flush());
+    });
+  }
+
+  /**
+   * Gives up on the writes behind `save_error` and moves on (Ruling R27). A block that never reached the
+   * database leaves no trace: the level stays, the next block or segment follows. If only the cache writes
+   * failed, the stored block keeps its effect. The drop goes to the log when the log can be written.
+   */
+  async abandonPending(): Promise<void> {
+    this.take('save_error');
+    const ctx = this.saveContext();
+    const { onAbandon } = ctx;
+    if (onAbandon === null) throw new Error(`SessionController: the ${ctx.what} write cannot be skipped`);
+    await this.exclusive(async () => {
+      const dropped = this.queue.drop();
+      this.saving = null;
+      const detail = { sessionId: this.sessionId, dropped, error: errorText(ctx.error) };
+      try {
+        await this.repo.appendLog(errorLogRow(this.now().toISOString(), `session: unsaved ${ctx.what} skipped`, detail));
+      } catch {
+        // The database is failing already; the drop simply goes unlogged.
+      }
+      await onAbandon();
+    });
   }
 
   async submitWellbeing(w: Omit<WellbeingRow, 'id' | 'date'> | null): Promise<void> {
     this.take('wellbeing');
     await this.exclusive(async () => {
-      const writes: Array<() => Promise<void>> = [];
+      const writes: Write[] = [];
       if (w !== null) {
-        const row: WellbeingRow = {
-          id: uuidv4(),
-          date: localDate(this.now()),
-          sleepH: w.sleepH,
-          caffeine: w.caffeine,
-          mood: w.mood,
-        };
-        writes.push(() => this.repo.addWellbeing(row));
+        const row = wellbeingRow(w, this.now());
+        writes.push({ label: 'addWellbeing', run: () => this.repo.addWellbeing(row) });
       }
       writes.push(this.finishWrite());
-      await this.save(writes, () => {
+      const done = (): void => {
         this.done(null);
-      });
+      };
+      await this.save({ what: 'session end', onSaved: done, onAbandon: done }, writes);
     });
   }
 
@@ -482,15 +395,7 @@ export class SessionController {
       await this.finish();
       return;
     }
-    this.seg = {
-      index,
-      segment,
-      L: this.segmentLevel(segment),
-      clockStart: null,
-      blocksDone: 0,
-      attempt: 0,
-      lastInstruction: null,
-    };
+    this.seg = { index, segment, L: this.segmentLevel(segment), clockStart: null, blocksDone: 0, attempt: 0, lastInstruction: null };
     this.presentNext();
   }
 
@@ -505,11 +410,28 @@ export class SessionController {
     return startLevel(st.lSaved, daysBetween(st.lastTrainedAt ?? today, today));
   }
 
+  /** After a block: the next block (fatigue prompt first, if due) or the next segment. */
+  private async advance(): Promise<void> {
+    const seg = this.segment();
+    if (!this.anotherBlock(seg)) {
+      await this.enterSegment(seg.index + 1);
+      return;
+    }
+    const module = seg.segment.module;
+    if (this.fatigueDetected.has(module) && !this.fatiguePrompted.has(module)) {
+      this.fatiguePrompted.add(module);
+      this.current = { kind: 'fatigue_prompt', module };
+      return;
+    }
+    this.presentNext();
+  }
+
   /** Instruction first if the segment just started, for every Gorbov run, or when the rules changed. */
   private presentNext(): void {
     const seg = this.segment();
-    const plan = this.planBlock(seg);
-    const { text, keysHint } = this.instructionFor(plan);
+    const ctx: PlanContext = { layout: this.layout, scale: this.scale, diagnostic: !this.counted };
+    const plan = planBlock(seg.segment, seg.L, seg.blocksDone, ctx);
+    const { text, keysHint } = blockInstruction(plan, this.layout);
     if (seg.segment.module === 'gorbov' || text + '\n' + keysHint !== seg.lastInstruction) {
       this.next = plan;
       this.current = { kind: 'instruction', module: seg.segment.module, text, keysHint };
@@ -518,10 +440,10 @@ export class SessionController {
     }
   }
 
-  /** Training/free: a block may start while the budget lasts; diagnostics: fixed number of blocks / runs. */
+  /** Training/free: a block may start while the budget lasts. Diagnostics: a fixed number of blocks (runs, default 1). */
   private anotherBlock(seg: SegmentRun): boolean {
     const { segment } = seg;
-    if (segment.budgetMs === 0) return seg.blocksDone < (isTable(segment.module) ? (segment.runs ?? 1) : 1);
+    if (!this.counted) return seg.blocksDone < (segment.runs ?? 1);
     const nowMs = this.now().getTime();
     return nowMs - (seg.clockStart ?? nowMs) < segment.budgetMs * this.scale;
   }
@@ -531,10 +453,10 @@ export class SessionController {
       this.current = { kind: 'wellbeing' };
       return;
     }
-    const writes: Array<() => Promise<void>> = [];
+    const writes: Write[] = [];
     let diagnostic: DiagnosticResults | null = null;
-    if (this.plan.kind === 'diagnostic') {
-      const results = this.diagnosticResults();
+    if (!this.counted) {
+      const results = diagnosticResults(this.diagParts);
       diagnostic = results;
       const row = {
         id: uuidv4(),
@@ -543,17 +465,18 @@ export class SessionController {
         at: this.now().toISOString(),
         resultsJson: JSON.stringify(results),
       };
-      writes.push(() => this.repo.addDiagnostic(row));
+      writes.push({ label: 'addDiagnostic', run: () => this.repo.addDiagnostic(row) });
     }
     writes.push(this.finishWrite());
-    await this.save(writes, () => {
+    const done = (): void => {
       this.done(diagnostic);
-    });
+    };
+    await this.save({ what: 'session end', onSaved: done, onAbandon: done }, writes);
   }
 
-  private finishWrite(): () => Promise<void> {
+  private finishWrite(): Write {
     const endedAt = this.now().toISOString();
-    return () => this.repo.finishSession(this.sessionId, endedAt);
+    return { label: 'finishSession', run: () => this.repo.finishSession(this.sessionId, endedAt) };
   }
 
   private done(diagnostic: DiagnosticResults | null): void {
@@ -562,126 +485,98 @@ export class SessionController {
 
   // ---------- blocks ----------
 
-  private planBlock(seg: SegmentRun): BlockPlan {
-    const { module } = seg.segment;
-    const L = seg.L;
-    if (isReaction(module)) {
-      const params = reactionModules[module].params(L);
-      const { keys, effectiveLayout } = layoutKeys(this.layout, keyCount(module, params));
-      return { kind: 'reaction', module, L, params, keys, layout: effectiveLayout };
-    }
-    if (module === 'gorbov') {
-      const task = gorbovTaskForRun(seg.blocksDone);
-      return { kind: 'table', module, L, task, params: gorbovParams(L, task) };
-    }
-    if (module === 'schulte') return { kind: 'table', module, L, task: 'schulte', params: schulteParams(L) };
-    return { kind: 'numseries' };
-  }
-
-  private instructionFor(plan: BlockPlan): { text: string; keysHint: string } {
-    switch (plan.kind) {
-      case 'reaction':
-        return {
-          text: reactionModules[plan.module].instruction(this.layout, plan.params),
-          keysHint: plan.keys.map(keyLabel).join(', '),
-        };
-      case 'table':
-        return { text: tableInstruction(plan.task, plan.params.size), keysHint: TABLE_KEYS_HINT };
-      case 'numseries':
-        return {
-          text: this.counted ? SERIES_INSTRUCTION_TRAINING : SERIES_INSTRUCTION_DIAGNOSTIC,
-          keysHint: SERIES_KEYS_HINT,
-        };
-    }
-  }
-
   private startBlock(plan: BlockPlan): void {
     const seg = this.segment();
-    const seed = this.blockSeed(seg);
-    const startedAt = this.now().toISOString();
+    const seed = this.counted
+      ? trainingBlockSeed(this.plan.seed, seg.index, seg.blocksDone, seg.attempt)
+      : diagnosticBlockSeed(this.diagnosticNumber(), seg.segment.module, seg.blocksDone, seg.attempt);
+    const { step, paramsJson } = buildBlock(plan, seed, this.layout, this.ratings);
     this.next = null;
-    switch (plan.kind) {
-      case 'reaction': {
-        const mod = reactionModules[plan.module];
-        const size = this.scaled(seg.segment.trialCount ?? mod.blockSize);
-        const practiceCount = this.scaledPractice(seg.segment.practiceTrials ?? 0);
-        const practice =
-          practiceCount > 0
-            ? mod
-                .generateBlock(plan.params, createRng(deriveSeed(seed, 'practice')), this.layout, practiceCount)
-                .map((t) => ({ ...t, practice: true }))
-            : [];
-        const specs = [...practice, ...mod.generateBlock(plan.params, createRng(seed), this.layout, size)];
-        this.active = { plan, startedAt, paramsJson: JSON.stringify(plan.params) };
-        this.current = { kind: 'reaction_block', module: plan.module, L: plan.L, specs, keys: plan.keys, layout: plan.layout };
-        return;
-      }
-      case 'table': {
-        const rng = createRng(seed);
-        const cells = plan.module === 'gorbov' ? generateGorbovTable(rng) : generateSchulteTable(plan.params.size, rng);
-        this.active = { plan, startedAt, paramsJson: JSON.stringify({ task: plan.task, ...plan.params }) };
-        this.current = { kind: 'table_block', module: plan.module, L: plan.L, task: plan.task, cells, params: plan.params, seed };
-        return;
-      }
-      case 'numseries': {
-        const step = this.seriesStep(seed, seg.segment);
-        this.active = {
-          plan,
-          startedAt,
-          paramsJson: JSON.stringify({ items: step.items.length, perItemLimitMs: step.perItemLimitMs, totalLimitMs: step.totalLimitMs }),
-        };
-        this.current = step;
-        return;
-      }
-    }
-  }
-
-  private seriesStep(seed: number, segment: Segment): StepOf<'numseries_block'> {
-    if (!this.counted) {
-      const schedule = diagnosticSeriesSchedule();
-      const items = schedule
-        .slice(0, this.scaled(segment.items ?? schedule.length))
-        .map((e, i) => generateItem(e.family, e.targetD, deriveSeed(seed, 'item:' + String(i))));
-      return { kind: 'numseries_block', items, perItemLimitMs: null, totalLimitMs: segment.totalTimeLimitMs ?? null };
-    }
-    const ratings = new Map([...this.ratings].map(([family, r]) => [family, r.rating]));
-    const items = generateBlockItems(ratings, this.scaled(SERIES_BLOCK_ITEMS), createRng(seed));
-    return { kind: 'numseries_block', items, perItemLimitMs: ITEM_TIME_LIMIT_MS, totalLimitMs: null };
-  }
-
-  /**
-   * Training/free: deriveSeed(plan.seed, `segment:block:attempt`). Diagnostics: the segment seed for the
-   * first block (runs 1, 2: derived from it), so diagnostic n always gets the same blocks; a discarded block
-   * gets a derived seed.
-   */
-  private blockSeed(seg: SegmentRun): number {
-    if (this.counted) {
-      return deriveSeed(this.plan.seed, `${String(seg.index)}:${String(seg.blocksDone)}:${String(seg.attempt)}`);
-    }
-    const segSeed = diagnosticSegmentSeed(this.diagnosticNumber(), seg.segment.module);
-    const base = seg.blocksDone === 0 ? segSeed : deriveSeed(segSeed, 'run:' + String(seg.blocksDone));
-    return seg.attempt === 0 ? base : deriveSeed(base, 'retry:' + String(seg.attempt));
-  }
-
-  /** Block size or item count under the e2e scale: max(3, round(n·scale)). */
-  private scaled(n: number): number {
-    return Math.max(MIN_SCALED, Math.round(n * this.scale));
-  }
-
-  /** Practice trials stay as planned unless the e2e scale shrinks them: max(1, round(n·scale)). */
-  private scaledPractice(n: number): number {
-    return n > 0 && this.scale < 1 ? Math.max(1, Math.round(n * this.scale)) : n;
+    this.active = { plan, startedAt: this.now().toISOString(), paramsJson };
+    this.current = step;
   }
 
   private restartBlock(module: ModuleId, reason: DiscardReason): void {
-    const seg = this.segment();
     const { plan } = this.block();
     this.discardLog.push({ module, reason });
-    seg.attempt++;
+    this.segment().attempt++;
     this.startBlock(plan);
   }
 
-  /** Book-keeping for a finished block; the level of the next block becomes lAfter. */
+  /**
+   * Level step, flags, rows and summary of a finished block, then its writes. The block's in-memory effects
+   * (level, session history, fatigue, `onCommit`) apply right after addBlock succeeds.
+   */
+  private async completeBlock(b: FinishedBlock): Promise<void> {
+    const seg = this.segment();
+    const active = this.block();
+    const calibration = b.level !== null && this.isCalibration(b.module);
+    const lAfter =
+      this.counted && b.level !== null
+        ? nextLevel(b.L, { score: b.score, calibration, prevScoreSameSession: this.prevScore(b.module), ...b.level })
+        : b.L;
+    const flags: BlockFlag[] = [];
+    if (calibration) flags.push('calibration');
+    if (b.level?.timingUnreliable === true) flags.push('timing_unreliable');
+    if (this.fatigueContinued.has(b.module)) flags.push('fatigued');
+
+    const id = uuidv4();
+    const row = blockRow(id, this.sessionId, { module: b.module, lBefore: b.L, lAfter, score: b.score, flags }, active, b.summaryJson);
+    const { trials, items } = b.rows(id);
+    const view = {
+      module: b.module,
+      title: moduleTitles[b.module],
+      lBefore: b.L,
+      lAfter,
+      changes: describeChanges(b.module, b.L, lAfter, b.task),
+      score: b.score,
+      lines: b.lines,
+      flags,
+    };
+
+    let committed = false;
+    const writes: Write[] = [
+      { label: 'addBlock', run: () => this.repo.addBlock(row, trials, items) },
+      {
+        label: 'commit',
+        run: () => {
+          committed = true;
+          this.record({ module: b.module, score: b.score, flags, hitRts: b.hitRts }, lAfter);
+          b.onCommit?.();
+          return Promise.resolve();
+        },
+      },
+    ];
+    if (this.counted) {
+      writes.push({
+        label: 'saveModuleState',
+        run: async () => {
+          const [sessions, blocks] = await Promise.all([this.repo.listSessions(), this.repo.listBlockLevels(b.module)]);
+          await this.repo.saveModuleState(deriveModuleStates(sessions, blocks)[b.module]);
+        },
+      });
+      writes.push(...(b.extraWrites ?? []));
+    }
+    await this.save(
+      {
+        what: `${b.module} block`,
+        onSaved: () => {
+          this.current = { kind: 'summary', view };
+        },
+        onAbandon: () => {
+          if (!committed) {
+            seg.blocksDone++;
+            seg.attempt = 0;
+            this.active = null;
+          }
+          return this.advance();
+        },
+      },
+      writes,
+    );
+  }
+
+  /** Book-keeping for a stored block; the level of the next block becomes lAfter. */
   private record(b: SessionBlock, lAfter: number): void {
     const seg = this.segment();
     this.sessionBlocks.push(b);
@@ -713,141 +608,23 @@ export class SessionController {
     return null;
   }
 
-  private flagsFor(module: ModuleId, calibration: boolean, timingUnreliable: boolean): BlockFlag[] {
-    const flags: BlockFlag[] = [];
-    if (calibration) flags.push('calibration');
-    if (timingUnreliable) flags.push('timing_unreliable');
-    if (this.fatigueContinued.has(module)) flags.push('fatigued');
-    return flags;
-  }
-
-  private collectDiagnostic(module: ReactionModuleId, s: ReactionSummary): void {
-    switch (module) {
-      case 'pzmr':
-        this.diag.pzmrMedianRt = s.medianRt;
-        break;
-      case 'szmr':
-        this.diag.szmrMedianRt = s.medianRt;
-        break;
-      case 'gonogo':
-        this.diag.gonogoScore = s.score * 100; // percent (Ruling R18)
-        break;
-      case 'rdo':
-        this.diag.rdoMeanAbsErrorMs = s.meanAbsErrorMs;
-        break;
-    }
-  }
-
-  private diagnosticResults(): DiagnosticResults {
-    const [t1, t2, t3] = this.gorbovSeconds;
-    const finished = (t: number | null | undefined): t is number => typeof t === 'number';
-    const gorbov = finished(t1) && finished(t2) && finished(t3) ? gorbovMetrics(t1, t2, t3) : null;
-    return {
-      pzmrMedianRt: this.diag.pzmrMedianRt,
-      szmrMedianRt: this.diag.szmrMedianRt,
-      gonogoScore: this.diag.gonogoScore,
-      rdoMeanAbsErrorMs: this.diag.rdoMeanAbsErrorMs,
-      gorbov,
-      numseriesCorrect: this.diag.numseriesCorrect,
-    };
-  }
-
-  private blockRow(
-    id: string,
-    module: ModuleId,
-    lBefore: number,
-    lAfter: number,
-    score: number,
-    flags: BlockFlag[],
-    active: ActiveBlock,
-    summaryJson: string,
-  ): BlockRow {
-    return {
-      id,
-      sessionId: this.sessionId,
-      module,
-      lBefore,
-      lAfter,
-      paramsJson: active.paramsJson,
-      score,
-      flags,
-      startedAt: active.startedAt,
-      summaryJson,
-    };
-  }
-
-  private view(
-    module: ModuleId,
-    lBefore: number,
-    lAfter: number,
-    score: number,
-    flags: BlockFlag[],
-    lines: string[],
-    task?: TableTaskId,
-  ): BlockSummaryView {
-    return {
-      module,
-      title: moduleTitles[module],
-      lBefore,
-      lAfter,
-      changes: describeChanges(module, lBefore, lAfter, task),
-      score,
-      lines,
-      flags,
-    };
-  }
-
   // ---------- persistence ----------
 
-  /** addBlock, then (training/free) the module state from history and the ratings; then the summary. */
-  private async persist(
-    row: BlockRow,
-    trials: readonly TrialRow[],
-    items: readonly LogicItemRow[],
-    view: BlockSummaryView,
-    ratings: ReadonlyMap<FamilyId, Rating> | null,
-  ): Promise<void> {
-    const writes: Array<() => Promise<void>> = [() => this.repo.addBlock(row, trials, items)];
-    if (this.counted) {
-      writes.push(async () => {
-        const states = deriveModuleStates(await this.repo.listSessions(), await this.repo.listBlocks());
-        await this.repo.saveModuleState(states[row.module]);
-      });
-      if (ratings !== null) writes.push(() => this.repo.saveRatings(ratings));
-    }
-    await this.save(writes, () => {
-      this.current = { kind: 'summary', view };
-    });
+  private async save(ctx: Omit<SaveContext, 'error'>, writes: readonly Write[]): Promise<void> {
+    this.saving = { ...ctx, error: null };
+    await this.settle(await this.queue.save(writes));
   }
 
-  private async save(writes: ReadonlyArray<() => Promise<void>>, onSaved: () => void | Promise<void>): Promise<void> {
-    this.pending = { writes: writes.map((run) => ({ run, done: false })), onSaved };
-    await this.flush();
-  }
-
-  /** Up to 3 attempts at the writes not done yet; success → onSaved, failure → `save_error`. */
-  private async flush(): Promise<void> {
-    const pending = this.pending;
-    if (pending === null) throw new Error('SessionController: nothing to save');
-    let error: unknown = null;
-    for (let attempt = 0; attempt <= SAVE_RETRY_DELAYS_MS.length; attempt++) {
-      const delay = SAVE_RETRY_DELAYS_MS[attempt - 1];
-      if (delay !== undefined) await this.sleep(delay);
-      try {
-        for (const w of pending.writes) {
-          if (w.done) continue;
-          await w.run();
-          w.done = true;
-        }
-      } catch (e) {
-        error = e;
-        continue;
-      }
-      this.pending = null;
-      await pending.onSaved();
+  /** Success → what follows the writes; failure → `save_error`. */
+  private async settle(outcome: SaveOutcome): Promise<void> {
+    const ctx = this.saveContext();
+    if (outcome.ok) {
+      this.saving = null;
+      await ctx.onSaved();
       return;
     }
-    this.current = { kind: 'save_error', message: saveErrorMessage(error) };
+    ctx.error = outcome.error;
+    this.current = { kind: 'save_error', message: saveErrorMessage(outcome.error), canAbandon: ctx.onAbandon !== null };
   }
 
   // ---------- guards ----------
@@ -877,6 +654,11 @@ export class SessionController {
   private block(): ActiveBlock {
     if (this.active === null) throw new Error('SessionController: no block is running');
     return this.active;
+  }
+
+  private saveContext(): SaveContext {
+    if (this.saving === null) throw new Error('SessionController: no save is pending');
+    return this.saving;
   }
 
   private diagnosticNumber(): number {

@@ -32,7 +32,8 @@ export type Step =
   | { kind: 'numseries_block'; items: SeriesItem[]; perItemLimitMs: number | null; totalLimitMs: number | null }
   | { kind: 'summary'; view: BlockSummaryView }
   | { kind: 'fatigue_prompt'; module: ModuleId }
-  | { kind: 'save_error'; message: string }
+  /** canAbandon: abandonPending() may drop the unsaved writes (not for the session row itself). */
+  | { kind: 'save_error'; message: string; canAbandon: boolean }
   | { kind: 'wellbeing' }
   | { kind: 'done'; sessionId: string; diagnostic: DiagnosticResults | null };
 
@@ -59,9 +60,37 @@ export interface SeriesAnswer {
 }
 
 export const SERIES_INSTRUCTION_TRAINING = 'Найди закономерность и введи следующее число. На каждую задачу — 40 секунд.';
-export const SERIES_INSTRUCTION_DIAGNOSTIC = '20 задач, общее время — 10 минут. Найди закономерность и введи следующее число.';
 export const TABLE_KEYS_HINT = 'Мышь';
 export const SERIES_KEYS_HINT = 'Цифры и Enter';
+
+/** Text of the `save_error` step. */
+export function saveErrorMessage(e: unknown): string {
+  const detail = e instanceof Error ? e.message : String(e);
+  return `Не удалось сохранить результаты. Они пока в памяти: не закрывай программу и повтори сохранение. Ошибка: ${detail}`;
+}
+
+/** Russian noun form for n: plural(n, 'задача', 'задачи', 'задач'). */
+export function plural(n: number, one: string, few: string, many: string): string {
+  const d = n % 10;
+  const dd = n % 100;
+  if (d === 1 && dd !== 11) return one;
+  if (d >= 2 && d <= 4 && (dd < 12 || dd > 14)) return few;
+  return many;
+}
+
+/** «10 минут» for whole minutes, otherwise «12 секунд». */
+function durationText(ms: number): string {
+  const s = Math.round(ms / 1000);
+  if (s > 0 && s % 60 === 0) return `${String(s / 60)} ${plural(s / 60, 'минута', 'минуты', 'минут')}`;
+  return `${String(s)} ${plural(s, 'секунда', 'секунды', 'секунд')}`;
+}
+
+/** «20 задач, общее время — 10 минут. Найди закономерность…» from the segment's item count and total limit. */
+export function seriesDiagnosticInstruction(count: number, totalLimitMs: number | null): string {
+  const tasks = `${String(count)} ${plural(count, 'задача', 'задачи', 'задач')}`;
+  const head = totalLimitMs === null ? `${tasks}.` : `${tasks}, общее время — ${durationText(totalLimitMs)}.`;
+  return `${head} Найди закономерность и введи следующее число.`;
+}
 
 /** Rounded to a whole number; never «-0». */
 const whole = (x: number): number => Math.round(x) + 0;

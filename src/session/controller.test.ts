@@ -1,10 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { MemoryRepository } from '../data/memoryRepository';
 import type { Repository } from '../data/repository';
-import type { WellbeingRow } from '../data/rows';
-import { deriveRatings, defaultModuleState } from '../engine/derive';
+import type { BlockRow, WellbeingRow } from '../data/rows';
+import { deriveModuleStates, deriveRatings, defaultModuleState } from '../engine/derive';
 import { diagnosticSegmentSeed, diagnosticSeriesSchedule, planDiagnostic, type DiagnosticResults } from '../engine/diagnostic';
-import { planFree, planTraining, type ModuleState, type SessionPlan } from '../engine/planner';
+import { planFree, planTraining, type ModuleState, type Segment, type SessionPlan } from '../engine/planner';
 import { createRng, deriveSeed } from '../engine/rng';
 import type { LayoutId, ModuleId } from '../engine/types';
 import { FAMILIES } from '../modules/numseries/families';
@@ -497,6 +497,47 @@ describe('SessionController — levels and persistence', () => {
     expect(next.view.lAfter).toBeCloseTo(8 + (14 / 15 - 0.8) / 0.2, 9);
   });
 
+  it('state writes read the module levels, never the whole block history (R26); caches equal a rebuild', async () => {
+    class SpyRepo extends MemoryRepository {
+      listBlocksCalls = 0;
+      override listBlocks(): Promise<BlockRow[]> {
+        this.listBlocksCalls++;
+        return super.listBlocks();
+      }
+    }
+    const repo = new SpyRepo();
+    const clock = new Clock();
+    for (let day = 0; day < 2; day++) {
+      const plan = planTraining(await repo.getModuleStates(), clock.now().toISOString(), 42 + day);
+      await drive(await begin(plan, { repo, clock }), { blockMs: 150_000 });
+      clock.advance(DAY);
+    }
+    expect(repo.listBlocksCalls).toBe(0);
+    expect(await repo.getModuleStates()).toEqual(deriveModuleStates(await repo.listSessions(), await repo.listBlocks()));
+    expect(await repo.getRatings()).toEqual(deriveRatings(await repo.listLogicItems()));
+  });
+
+  it('a block with nothing to score is played again without a write (summary.n === 0)', async () => {
+    const real = pzmr.generateBlock.bind(pzmr);
+    const spy = vi
+      .spyOn(pzmr, 'generateBlock')
+      .mockImplementationOnce((p, rng, layout, size) => real(p, rng, layout, size).map((t) => ({ ...t, practice: true })));
+    try {
+      const h = await begin(planFree('pzmr', 1));
+      h.c.ackInstruction();
+      const onlyPractice = expectStep(h.c, 'reaction_block');
+      expect(onlyPractice.specs.every((t) => t.practice === true)).toBe(true);
+      await h.c.submitReaction(playTimeline(onlyPractice.specs, perfectPlayer));
+      const again = expectStep(h.c, 'reaction_block');
+      expect(again.L).toBe(0);
+      expect(again.specs).toEqual(real(pzmr.params(0), createRng(deriveSeed(1, '0:0:1')), 'keyboard', 15));
+      expect(h.c.discards).toEqual([{ module: 'pzmr', reason: 'error' }]);
+      expect(await h.repo.listBlocks()).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('two consecutive start() calls in the same day are independent sessions; state reflects both', async () => {
     const repo = new MemoryRepository();
     const clock = new Clock();
@@ -595,15 +636,41 @@ describe('SessionController — fatigue', () => {
     expect(expectStep(h.c, 'instruction').module).toBe('gorbov');
   });
 
-  it('diagnostics never prompt for fatigue', async () => {
-    const h = await begin(planDiagnostic(2), { scale: 0.02 });
+  it('continue re-checks the budget: a long pause on the prompt ends the segment', async () => {
+    const h = await begin(plan);
+    await playUntilPrompt(h, tiring());
+    expectStep(h.c, 'fatigue_prompt');
+    h.clock.advance(5 * MIN);
+    await h.c.answerFatigue(false);
+    expect(expectStep(h.c, 'instruction').module).toBe('gorbov');
+  });
+
+  it('a diagnostic segment of several blocks never prompts or flags fatigue', async () => {
+    // Same tiring player as above (which prompts after block 4 of a free plan), 6 fixed blocks.
+    const diag: SessionPlan = {
+      kind: 'diagnostic',
+      seed: 1,
+      diagnosticNumber: 9,
+      segments: [{ module: 'szmr', budgetMs: 0, purpose: 'diagnostic', fixedL: 0, trialCount: 20, runs: 6 }],
+    };
+    const h = await begin(diag);
     const seen = await drive(h, { respond: tiring() });
-    expect(seen).not.toContain('fatigue_prompt:pzmr');
+    expect(seen.filter((x) => x === 'reaction_block:szmr')).toHaveLength(6);
+    expect(seen.filter((x) => x.startsWith('fatigue_prompt'))).toEqual([]);
+    expect((await h.repo.listBlocks()).flatMap((b) => b.flags)).toEqual([]);
   });
 });
 
 describe('SessionController — save errors', () => {
-  type Op = 'createSession' | 'addBlock' | 'saveModuleState' | 'saveRatings' | 'finishSession' | 'addDiagnostic' | 'addWellbeing';
+  type Op =
+    | 'createSession'
+    | 'addBlock'
+    | 'saveModuleState'
+    | 'saveRatings'
+    | 'finishSession'
+    | 'addDiagnostic'
+    | 'addWellbeing'
+    | 'appendLog';
 
   class FlakyRepo extends MemoryRepository {
     readonly failures: Partial<Record<Op, number>> = {};
@@ -644,7 +711,106 @@ describe('SessionController — save errors', () => {
       this.check('addWellbeing');
       await super.addWellbeing(...a);
     }
+    override async appendLog(...a: Parameters<MemoryRepository['appendLog']>): Promise<void> {
+      this.check('appendLog');
+      await super.appendLog(...a);
+    }
   }
+
+  it('abandonPending drops an unsaved block: no row, level unchanged, the next block follows; logged (R27)', async () => {
+    const repo = new FlakyRepo();
+    const h = await begin(planFree('pzmr', 1), { repo });
+    await playReaction(h); // block 1 stored: L 0 → 2
+    await h.c.continueAfterSummary();
+    const second = expectStep(h.c, 'reaction_block');
+    repo.failures.addBlock = 3;
+    await h.c.submitReaction(playTimeline(second.specs, perfectPlayer));
+    expect(expectStep(h.c, 'save_error').canAbandon).toBe(true);
+    await h.c.abandonPending();
+
+    const third = expectStep(h.c, 'reaction_block');
+    expect(third.L).toBe(2);
+    expect(third.specs).toEqual(pzmr.generateBlock(pzmr.params(2), createRng(deriveSeed(1, '0:2:0')), 'keyboard', 15));
+    expect(await repo.listBlocks()).toHaveLength(1);
+    const [log] = await repo.listLog(10);
+    expect(log).toMatchObject({ level: 'error', message: 'session: unsaved pzmr block skipped' });
+    expect(JSON.parse(log?.detail ?? '')).toEqual({
+      sessionId: h.c.sessionId,
+      dropped: ['addBlock', 'commit', 'saveModuleState'],
+      error: 'addBlock: disk I/O error',
+    });
+
+    // The dropped block left no trace: block 4 is still calibration (lifetime 0 + blocks 1 and 3 < 3).
+    await h.c.submitReaction(playTimeline(third.specs, perfectPlayer));
+    await h.c.continueAfterSummary();
+    const fourth = await playReaction(h);
+    expect(fourth.view.flags).toEqual(['calibration']);
+    expect((await repo.getModuleStates()).pzmr.lifetimeBlocks).toBe(3);
+  });
+
+  it('abandonPending after the block was stored keeps it; the next state write catches the cache up', async () => {
+    const repo = new FlakyRepo();
+    const h = await begin(planFree('pzmr', 1), { repo });
+    h.c.ackInstruction();
+    repo.failures.saveModuleState = 3;
+    await h.c.submitReaction(playTimeline(expectStep(h.c, 'reaction_block').specs, perfectPlayer));
+    expectStep(h.c, 'save_error');
+    await h.c.abandonPending();
+    const next = expectStep(h.c, 'reaction_block');
+    expect(next.L).toBe(2); // the stored block counts, and the next block has the next index
+    expect(next.specs).toEqual(pzmr.generateBlock(pzmr.params(2), createRng(deriveSeed(1, '0:1:0')), 'keyboard', 15));
+    expect(await repo.listBlocks()).toHaveLength(1);
+    expect((await repo.getModuleStates()).pzmr.lifetimeBlocks).toBe(0);
+    expect(JSON.parse((await repo.listLog(1))[0]?.detail ?? '')).toMatchObject({ dropped: ['saveModuleState'] });
+    await h.c.submitReaction(playTimeline(next.specs, perfectPlayer));
+    expect((await repo.getModuleStates()).pzmr.lifetimeBlocks).toBe(2);
+  });
+
+  it('abandonPending still moves on when the log cannot be written', async () => {
+    const repo = new FlakyRepo();
+    const h = await begin(planFree('pzmr', 1), { repo });
+    h.c.ackInstruction();
+    repo.failures.addBlock = 3;
+    repo.failures.appendLog = 1;
+    await h.c.submitReaction(playTimeline(expectStep(h.c, 'reaction_block').specs, perfectPlayer));
+    await h.c.abandonPending();
+    expect(expectStep(h.c, 'reaction_block').L).toBe(0);
+    expect(await repo.listLog(10)).toEqual([]);
+  });
+
+  it('the session row cannot be skipped', async () => {
+    const repo = new FlakyRepo();
+    repo.failures.createSession = 3;
+    const h = await begin(planFree('pzmr', 1), { repo });
+    expect(expectStep(h.c, 'save_error').canAbandon).toBe(false);
+    await expect(h.c.abandonPending()).rejects.toThrow(/session start/);
+    expectStep(h.c, 'save_error');
+    await expect(h.c.abandonPending.call(h.c)).rejects.toThrow();
+  });
+
+  it('skipping the session end writes still reaches done', async () => {
+    const repo = new FlakyRepo();
+    const h = await begin(planFree('pzmr', 1), { repo });
+    repo.failures.finishSession = 3;
+    await drive(h, { blockMs: 6 * MIN }).catch(() => undefined);
+    expectStep(h.c, 'save_error');
+    await h.c.abandonPending();
+    expectStep(h.c, 'done');
+    expect((await repo.listSessions())[0]?.endedAt).toBeNull();
+  });
+
+  it('a diagnostic block that cannot be saved is skipped: next segment, its metric stays null', async () => {
+    const repo = new FlakyRepo();
+    const h = await begin(planDiagnostic(1), { repo, scale: 0.02 });
+    h.c.ackInstruction();
+    repo.failures.addBlock = 3;
+    await h.c.submitReaction(playTimeline(expectStep(h.c, 'reaction_block').specs, perfectPlayer));
+    await h.c.abandonPending();
+    expect(expectStep(h.c, 'instruction').module).toBe('szmr');
+    await drive(h);
+    const done = expectStep(h.c, 'done');
+    expect(done.diagnostic).toMatchObject({ pzmrMedianRt: null, szmrMedianRt: 300 });
+  });
 
   it('save error retries then shows save_error, retrySave succeeds', async () => {
     const repo = new FlakyRepo();
@@ -960,14 +1126,50 @@ describe('SessionController — diagnostics', () => {
         if (run++ === 1) r.clicks.pop(); // red_down not finished
         await h.c.submitTable(r);
       } else if (s.kind === 'numseries_block') {
-        // 3 items (scale): the third answer ends after the 600 s limit.
-        await h.c.submitNumSeries(perfectSeriesAnswers(s.items).map((a, idx) => ({ ...a, timeMs: idx === 2 ? 591_001 : 4500 })));
+        // 3 items, 600 s × 0.02 = 12 s in total: the third answer ends after the limit.
+        expect(s.totalLimitMs).toBe(12_000);
+        await h.c.submitNumSeries(perfectSeriesAnswers(s.items).map((a, idx) => ({ ...a, timeMs: idx === 2 ? 3001 : 4500 })));
       } else if (s.kind === 'summary') await h.c.continueAfterSummary();
       else throw new Error(`unexpected ${s.kind}`);
     }
     const done = expectStep(h.c, 'done');
     expect(done.diagnostic?.gorbov).toBeNull();
     expect(done.diagnostic?.numseriesCorrect).toBe(2);
+  });
+
+  it('the three diagnostic Gorbov tables come from different seeds', async () => {
+    const plan: SessionPlan = { ...planDiagnostic(4), segments: [planDiagnostic(4).segments[4] as Segment] };
+    const h = await begin(plan);
+    const seeds: number[] = [];
+    const tables = new Set<string>();
+    for (let i = 0; i < 20 && h.c.step.kind !== 'done'; i++) {
+      const s = h.c.step;
+      if (s.kind === 'instruction') h.c.ackInstruction();
+      else if (s.kind === 'table_block') {
+        seeds.push(s.seed);
+        tables.add(JSON.stringify(s.cells));
+        await h.c.submitTable(perfectTableRun(s));
+      } else await h.c.continueAfterSummary();
+    }
+    const seg = diagnosticSegmentSeed(4, 'gorbov');
+    expect(seeds).toEqual([seg, deriveSeed(seg, 'run:1'), deriveSeed(seg, 'run:2')]);
+    expect(tables.size).toBe(3);
+  });
+
+  it('a discarded diagnostic block is replaced by one from a derived seed, same L', async () => {
+    const h = await begin(planDiagnostic(1));
+    h.c.ackInstruction();
+    const first = expectStep(h.c, 'reaction_block');
+    h.c.discardBlock('focus_lost');
+    const again = expectStep(h.c, 'reaction_block');
+    const seed = deriveSeed(diagnosticSegmentSeed(1, 'pzmr'), 'retry:1');
+    const p = pzmr.params(0);
+    expect(again.L).toBe(0);
+    expect(again.specs).not.toEqual(first.specs);
+    expect(again.specs.slice(5)).toEqual(pzmr.generateBlock(p, createRng(seed), 'keyboard', 50));
+    expect(again.specs.slice(0, 5)).toEqual(
+      pzmr.generateBlock(p, createRng(deriveSeed(seed, 'practice')), 'keyboard', 5).map((t) => ({ ...t, practice: true })),
+    );
   });
 
   it('a diagnostic plan needs its number', async () => {
@@ -993,6 +1195,13 @@ describe('SessionController — scale (e2e)', () => {
     const n = await begin(planFree('numseries', 1), { scale: 0.02 });
     n.c.ackInstruction();
     expect(expectStep(n.c, 'numseries_block').items).toHaveLength(3);
+
+    const series: SessionPlan = { ...planDiagnostic(1), segments: [planDiagnostic(1).segments[5] as Segment] };
+    const ds = await begin(series, { scale: 0.02 });
+    expect(expectStep(ds.c, 'instruction').text).toBe('3 задачи, общее время — 12 секунд. Найди закономерность и введи следующее число.');
+    ds.c.ackInstruction();
+    expect(expectStep(ds.c, 'numseries_block')).toMatchObject({ perItemLimitMs: null, totalLimitMs: 12_000 });
+    expect(expectStep(ds.c, 'numseries_block').items).toHaveLength(3);
 
     const d = await begin(planDiagnostic(1), { scale: 0.02 });
     d.c.ackInstruction();
