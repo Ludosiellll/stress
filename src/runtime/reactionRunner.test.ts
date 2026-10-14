@@ -207,6 +207,19 @@ describe('ReactionBlockRunner: block frame interval (R37)', () => {
   });
 
   it.each([
+    [100, true],
+    [150, false],
+  ])('with fewer than 10 deltas a 200 ms onset frame is judged against nominalFrameMs %s (dropped: %s)', async (nominalFrameMs, dropped) => {
+    const h = setup([pressTrial(200, 100)], { nominalFrameMs, frameMs: 200 });
+    h.clock.runOut();
+    const tl = await timelineOf(h);
+    expect(h.clock.frames.length - 1).toBeLessThan(MIN_FRAME_SAMPLES);
+    expect(tl.onsets).toEqual([h.clock.frames[1]]); // the onset frame's own delta is 200 ms
+    expect(tl.frameMs).toBe(nominalFrameMs);
+    expect(tl.droppedOnset).toEqual([dropped]); // limit 1.5 · 100 = 150 < 200 ≤ 225 = 1.5 · 150
+  });
+
+  it.each([
     [100, 9, FRAME],
     [150, 10, 50],
   ])('a %s ms window at 50 ms frames gives %s frame deltas and frameMs %s', async (windowMs, deltas, frameMs) => {
