@@ -1,11 +1,11 @@
 import type { Repository } from '../data/repository';
 import type { DiagnosticRow, SessionRow } from '../data/rows';
-import type { DiagnosticMetrics, DiagnosticResults } from '../engine/diagnostic';
+import { parseResults, type DiagnosticMetrics, type DiagnosticResults } from '../engine/diagnostic';
 import { L_NORM } from '../engine/planner';
 import { MODULE_IDS, type ModuleId, type ReactionModuleId, type SessionKind } from '../engine/types';
 import { moduleTitles } from '../modules/registry';
 import type { ChartDomain, ChartPoint, ChartSeries } from './charts/LineChart';
-import { parseResults, readinessOf, type HomeModel } from './homeModel';
+import { readinessOf, type HomeModel } from './homeModel';
 
 export interface ChartSpec {
   id: string;

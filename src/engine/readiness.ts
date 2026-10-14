@@ -48,6 +48,35 @@ export function diffScore(v: number, v0: number, scaleMs: number): number {
   return Math.min(100, Math.max(0, raw));
 }
 
+/** Baseline per metric (M2): the first non-null value across the diagnostics, in order. */
+export function mergedBaseline(results: readonly DiagnosticMetrics[]): DiagnosticMetrics {
+  const first = <K extends keyof DiagnosticMetrics>(k: K): DiagnosticMetrics[K] => {
+    for (const r of results) {
+      const v = r[k];
+      if (v !== null) return v;
+    }
+    return null;
+  };
+  return {
+    pzmrMedianRt: first('pzmrMedianRt'),
+    szmrMedianRt: first('szmrMedianRt'),
+    gonogoScore: first('gonogoScore'),
+    rdoMeanAbsErrorMs: first('rdoMeanAbsErrorMs'),
+    gorbov: first('gorbov'),
+    numseriesCorrect: first('numseriesCorrect'),
+    pomehQuietRt: first('pomehQuietRt'),
+    pomehNoisyRt: first('pomehNoisyRt'),
+    pomehDeltaMs: first('pomehDeltaMs'),
+    stroopCongruentRt: first('stroopCongruentRt'),
+    stroopIncongruentRt: first('stroopIncongruentRt'),
+    stroopInterferenceMs: first('stroopInterferenceMs'),
+    switchRepeatRt: first('switchRepeatRt'),
+    switchSwitchRt: first('switchSwitchRt'),
+    switchCostMs: first('switchCostMs'),
+    memorySpan: first('memorySpan'),
+  };
+}
+
 function avg(scores: readonly number[]): number | null {
   return scores.length === 0 ? null : mean(scores);
 }

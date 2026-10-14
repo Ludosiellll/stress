@@ -8,9 +8,10 @@ import {
   baselineScore,
   bandScore,
   diffScore,
+  mergedBaseline,
   readiness,
 } from './readiness';
-import { EMPTY_METRICS, type DiagnosticMetrics } from './diagnostic';
+import { EMPTY_METRICS, type DiagnosticMetrics, type DiagnosticResults } from './diagnostic';
 
 /** A 0.1.0 diagnostic: the W2 metrics are null. */
 const full = (over: Partial<DiagnosticMetrics> = {}): DiagnosticMetrics => ({
@@ -288,5 +289,55 @@ describe('readiness', () => {
       }),
       { numRuns: 1000 },
     );
+  });
+});
+
+const EMPTY: DiagnosticResults = { ...EMPTY_METRICS, unreliable: [] };
+
+describe('mergedBaseline (M2)', () => {
+  it('takes every metric from the first diagnostic that has it', () => {
+    const merged = mergedBaseline([
+      { ...EMPTY, pzmrMedianRt: 320 },
+      { ...EMPTY, pzmrMedianRt: 300, rdoMeanAbsErrorMs: 40, gorbov: { V: 40, P: 80, Pi: 20 } },
+      { ...EMPTY, pzmrMedianRt: 280, rdoMeanAbsErrorMs: 30, numseriesCorrect: 12 },
+    ]);
+    expect(merged).toEqual({
+      ...EMPTY_METRICS,
+      pzmrMedianRt: 320,
+      szmrMedianRt: null,
+      gonogoScore: null,
+      rdoMeanAbsErrorMs: 40,
+      gorbov: { V: 40, P: 80, Pi: 20 },
+      numseriesCorrect: 12,
+    });
+  });
+
+  it('takes every W2 metric from the first diagnostic that has it (a 0.1.0 one has none)', () => {
+    const w2 = {
+      pomehQuietRt: 300,
+      pomehNoisyRt: 340,
+      pomehDeltaMs: 40,
+      stroopCongruentRt: 500,
+      stroopIncongruentRt: 600,
+      stroopInterferenceMs: 100,
+      switchRepeatRt: 550,
+      switchSwitchRt: 640,
+      switchCostMs: 90,
+      memorySpan: 6,
+    };
+    const merged = mergedBaseline([
+      { ...EMPTY, pzmrMedianRt: 320 },
+      { ...EMPTY, ...w2, stroopInterferenceMs: null, stroopIncongruentRt: null, memorySpan: 0 },
+      { ...EMPTY, ...w2, pomehDeltaMs: -5, stroopInterferenceMs: 70, stroopIncongruentRt: 570, memorySpan: 8 },
+    ]);
+    expect(merged).toEqual({
+      ...EMPTY_METRICS,
+      pzmrMedianRt: 320,
+      ...w2,
+      stroopIncongruentRt: 570,
+      stroopInterferenceMs: 70,
+      // 0 is a value (a span of 0), not a missing one.
+      memorySpan: 0,
+    });
   });
 });

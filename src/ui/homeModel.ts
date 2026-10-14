@@ -2,7 +2,7 @@ import type { Repository } from '../data/repository';
 import type { DiagnosticRow, SessionRow } from '../data/rows';
 import { localDayNumber } from '../engine/dates';
 import { MODULE_IDS } from '../engine/derive';
-import { EMPTY_METRICS, planDiagnostic, type DiagnosticMetrics, type DiagnosticResults } from '../engine/diagnostic';
+import { parseResults, planDiagnostic } from '../engine/diagnostic';
 import { BASE_DAYS, CALIBRATION_BLOCKS, currentPhase, type PhaseId, type PhaseInfo } from '../engine/phases';
 import {
   OVERLOAD_REACTION_MINUTES,
@@ -13,10 +13,10 @@ import {
   type Segment,
   type SessionPlan,
 } from '../engine/planner';
-import { readiness, type Ability } from '../engine/readiness';
+import { mergedBaseline, readiness, type Ability } from '../engine/readiness';
 import { hashString } from '../engine/rng';
 import { computeStreak, daysUntil } from '../engine/streak';
-import { REACTION_MODULE_IDS, type ReactionModuleId } from '../engine/types';
+import type { ReactionModuleId } from '../engine/types';
 import { moduleTitles } from '../modules/registry';
 import { budgetMinutes } from './format';
 
@@ -39,55 +39,6 @@ export interface HomeModel {
 }
 
 const NO_ABILITIES: Record<Ability, number | null> = { reaction: null, attention: null, switching: null, memory: null, logic: null };
-
-const REACTION_IDS: readonly string[] = REACTION_MODULE_IDS;
-const isReactionId = (v: unknown): v is ReactionModuleId => typeof v === 'string' && REACTION_IDS.includes(v);
-
-/**
- * The stored results of a diagnostic, or null when the row does not hold a JSON object. A missing metric
- * reads as null (the W2 metrics of a 0.1.0 row: missing, never 0); rows written before `unreliable` existed
- * read as reliable (I1); unknown entries are dropped.
- */
-export function parseResults(row: DiagnosticRow): DiagnosticResults | null {
-  try {
-    const value = JSON.parse(row.resultsJson) as unknown;
-    if (typeof value !== 'object' || value === null) return null;
-    const r = value as Partial<DiagnosticResults>;
-    const unreliable = Array.isArray(r.unreliable) ? (r.unreliable as unknown[]).filter(isReactionId) : [];
-    return { ...EMPTY_METRICS, ...r, unreliable };
-  } catch {
-    return null;
-  }
-}
-
-/** Baseline per metric (M2): the first non-null value across the diagnostics, in order. */
-export function mergedBaseline(results: readonly DiagnosticResults[]): DiagnosticMetrics {
-  const first = <K extends keyof DiagnosticMetrics>(k: K): DiagnosticMetrics[K] => {
-    for (const r of results) {
-      const v = r[k];
-      if (v !== null) return v;
-    }
-    return null;
-  };
-  return {
-    pzmrMedianRt: first('pzmrMedianRt'),
-    szmrMedianRt: first('szmrMedianRt'),
-    gonogoScore: first('gonogoScore'),
-    rdoMeanAbsErrorMs: first('rdoMeanAbsErrorMs'),
-    gorbov: first('gorbov'),
-    numseriesCorrect: first('numseriesCorrect'),
-    pomehQuietRt: first('pomehQuietRt'),
-    pomehNoisyRt: first('pomehNoisyRt'),
-    pomehDeltaMs: first('pomehDeltaMs'),
-    stroopCongruentRt: first('stroopCongruentRt'),
-    stroopIncongruentRt: first('stroopIncongruentRt'),
-    stroopInterferenceMs: first('stroopInterferenceMs'),
-    switchRepeatRt: first('switchRepeatRt'),
-    switchSwitchRt: first('switchSwitchRt'),
-    switchCostMs: first('switchCostMs'),
-    memorySpan: first('memorySpan'),
-  };
-}
 
 /**
  * Readiness of the latest diagnostic against the merged baseline (each metric from the first diagnostic that

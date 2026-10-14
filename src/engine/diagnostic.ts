@@ -1,5 +1,5 @@
 import { hashString } from './rng';
-import type { FamilyId, ModuleId, ReactionModuleId } from './types';
+import { REACTION_MODULE_IDS, type FamilyId, type ModuleId, type ReactionModuleId } from './types';
 import type { Segment, SessionPlan } from './planner';
 
 /**
@@ -57,6 +57,26 @@ export interface DiagnosticResults extends DiagnosticMetrics {
    * used by readiness, but every screen marks them «замер ненадёжен». Rows stored before 0.1.0 lack it: read as [].
    */
   unreliable: ReactionModuleId[];
+}
+
+const REACTION_IDS: readonly string[] = REACTION_MODULE_IDS;
+const isReactionId = (v: unknown): v is ReactionModuleId => typeof v === 'string' && REACTION_IDS.includes(v);
+
+/**
+ * The stored results of a diagnostic, or null when the row does not hold a JSON object. A missing metric
+ * reads as null (the W2 metrics of a 0.1.0 row: missing, never 0); rows written before `unreliable` existed
+ * read as reliable (I1); unknown entries are dropped. Structural: DiagnosticRow fits.
+ */
+export function parseResults(row: { readonly resultsJson: string }): DiagnosticResults | null {
+  try {
+    const value = JSON.parse(row.resultsJson) as unknown;
+    if (typeof value !== 'object' || value === null) return null;
+    const r = value as Partial<DiagnosticResults>;
+    const unreliable = Array.isArray(r.unreliable) ? (r.unreliable as unknown[]).filter(isReactionId) : [];
+    return { ...EMPTY_METRICS, ...r, unreliable };
+  } catch {
+    return null;
+  }
 }
 
 /** Family order of the number-series diagnostic; mirrors the module's FAMILIES (engine must not import src/modules). */

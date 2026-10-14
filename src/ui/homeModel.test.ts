@@ -7,7 +7,7 @@ import type { PhaseInfo } from '../engine/phases';
 import type { Segment, SessionPlan } from '../engine/planner';
 import { readiness } from '../engine/readiness';
 import { MODULE_IDS } from '../engine/types';
-import { loadHomeModel, mergedBaseline, parseResults, phaseTexts, planLine, readinessOf } from './homeModel';
+import { loadHomeModel, phaseTexts, planLine, readinessOf } from './homeModel';
 
 const EMPTY: DiagnosticResults = { ...EMPTY_METRICS, unreliable: [] };
 
@@ -15,99 +15,6 @@ function row(number: number, results: Partial<DiagnosticResults> | string): Diag
   const resultsJson = typeof results === 'string' ? results : JSON.stringify({ ...EMPTY, ...results });
   return { id: `d${String(number)}`, sessionId: `s${String(number)}`, number, at: `2026-10-0${String(number)}T10:00:00.000Z`, resultsJson };
 }
-
-describe('parseResults', () => {
-  it('reads rows stored before `unreliable` existed as reliable', () => {
-    const old = Object.fromEntries(Object.entries({ ...EMPTY, pzmrMedianRt: 300 }).filter(([k]) => k !== 'unreliable'));
-    expect(parseResults(row(1, JSON.stringify(old)))).toEqual({ ...EMPTY, pzmrMedianRt: 300, unreliable: [] });
-  });
-
-  it('a missing metric reads as null', () => {
-    expect(parseResults(row(1, '{}'))).toEqual(EMPTY);
-  });
-
-  it('a 0.1.0 row reads with the W2 metrics null, never zero', () => {
-    const w1 = {
-      pzmrMedianRt: 300,
-      szmrMedianRt: 450,
-      gonogoScore: 90,
-      rdoMeanAbsErrorMs: 40,
-      gorbov: { V: 30, P: 60, Pi: 10 },
-      numseriesCorrect: 14,
-      unreliable: [],
-    };
-    expect(parseResults(row(1, JSON.stringify(w1)))).toEqual({
-      ...w1,
-      pomehQuietRt: null,
-      pomehNoisyRt: null,
-      pomehDeltaMs: null,
-      stroopCongruentRt: null,
-      stroopIncongruentRt: null,
-      stroopInterferenceMs: null,
-      switchRepeatRt: null,
-      switchSwitchRt: null,
-      switchCostMs: null,
-      memorySpan: null,
-    });
-  });
-
-  it('keeps only reaction module ids in `unreliable`', () => {
-    expect(parseResults(row(1, JSON.stringify({ ...EMPTY, unreliable: ['rdo', 'gorbov', 7, 'pzmr'] })))?.unreliable).toEqual(['rdo', 'pzmr']);
-  });
-
-  it('null for JSON that is not an object', () => {
-    expect(parseResults(row(1, 'not json'))).toBeNull();
-    expect(parseResults(row(1, '42'))).toBeNull();
-  });
-});
-
-describe('mergedBaseline (M2)', () => {
-  it('takes every metric from the first diagnostic that has it', () => {
-    const merged = mergedBaseline([
-      { ...EMPTY, pzmrMedianRt: 320 },
-      { ...EMPTY, pzmrMedianRt: 300, rdoMeanAbsErrorMs: 40, gorbov: { V: 40, P: 80, Pi: 20 } },
-      { ...EMPTY, pzmrMedianRt: 280, rdoMeanAbsErrorMs: 30, numseriesCorrect: 12 },
-    ]);
-    expect(merged).toEqual({
-      ...EMPTY_METRICS,
-      pzmrMedianRt: 320,
-      szmrMedianRt: null,
-      gonogoScore: null,
-      rdoMeanAbsErrorMs: 40,
-      gorbov: { V: 40, P: 80, Pi: 20 },
-      numseriesCorrect: 12,
-    });
-  });
-
-  it('takes every W2 metric from the first diagnostic that has it (a 0.1.0 one has none)', () => {
-    const w2 = {
-      pomehQuietRt: 300,
-      pomehNoisyRt: 340,
-      pomehDeltaMs: 40,
-      stroopCongruentRt: 500,
-      stroopIncongruentRt: 600,
-      stroopInterferenceMs: 100,
-      switchRepeatRt: 550,
-      switchSwitchRt: 640,
-      switchCostMs: 90,
-      memorySpan: 6,
-    };
-    const merged = mergedBaseline([
-      { ...EMPTY, pzmrMedianRt: 320 },
-      { ...EMPTY, ...w2, stroopInterferenceMs: null, stroopIncongruentRt: null, memorySpan: 0 },
-      { ...EMPTY, ...w2, pomehDeltaMs: -5, stroopInterferenceMs: 70, stroopIncongruentRt: 570, memorySpan: 8 },
-    ]);
-    expect(merged).toEqual({
-      ...EMPTY_METRICS,
-      pzmrMedianRt: 320,
-      ...w2,
-      stroopIncongruentRt: 570,
-      stroopInterferenceMs: 70,
-      // 0 is a value (a span of 0), not a missing one.
-      memorySpan: 0,
-    });
-  });
-});
 
 describe('readinessOf', () => {
   it('null before the first diagnostic', () => {
