@@ -13,13 +13,20 @@ import type {
   WellbeingRow,
 } from './rows';
 
+/** History tables whose ids a restore compares with the file (merge by id). */
+export type HistoryTable = 'sessions' | 'blocks' | 'diagnostics' | 'wellbeing';
+
 /**
  * Local store (§8.1). History rows are append-only: inserting an existing id rejects.
  * Lists are ordered by the documented key, ties in insertion order. Returned values are
  * copies: mutating them never changes what is stored.
+ * The single-row inserts (createSession, addDiagnostic, addWellbeing) are batches of one (W2-R13).
  */
 export interface Repository {
+  /** addSessions([s]). */
   createSession(s: SessionRow): Promise<void>;
+  /** One transaction; rejects and writes nothing when an id is already stored or repeats in the batch. */
+  addSessions(rows: readonly SessionRow[]): Promise<void>;
   /** Sets endedAt; an unknown id is a no-op. */
   finishSession(id: string, endedAt: string): Promise<void>;
   /**
@@ -29,9 +36,16 @@ export interface Repository {
   addBlock(b: BlockRow, trials: readonly TrialRow[], items: readonly LogicItemRow[]): Promise<void>;
   /** Whether a block with this id is stored (an addBlock retry after a lost reply checks it first, M8). */
   hasBlock(id: string): Promise<boolean>;
-  /** Rejects when the session is unknown. */
+  /** addDiagnostics([d]): rejects when the session is unknown. */
   addDiagnostic(d: DiagnosticRow): Promise<void>;
+  /** One transaction; rejects and writes nothing when an id is already stored or repeats, or a session is unknown. */
+  addDiagnostics(rows: readonly DiagnosticRow[]): Promise<void>;
+  /** addWellbeingRows([w]). */
   addWellbeing(w: WellbeingRow): Promise<void>;
+  /** One transaction; rejects and writes nothing when an id is already stored or repeats in the batch. */
+  addWellbeingRows(rows: readonly WellbeingRow[]): Promise<void>;
+  /** Every stored id of a history table. */
+  listIds(table: HistoryTable): Promise<Set<string>>;
   /** By startedAt. */
   listSessions(): Promise<SessionRow[]>;
   /** By startedAt. */
@@ -59,6 +73,8 @@ export interface Repository {
   getSettings(): Promise<Settings>;
   /** Writes only the given keys. */
   saveSettings(p: Partial<Settings>): Promise<void>;
+  /** Settings keys saved at least once (getSettings fills the others with defaults). */
+  storedSettingKeys(): Promise<Set<keyof Settings>>;
   /** Keeps the newest LOG_LIMIT entries (by insertion). Rejects an id already in the log. */
   appendLog(e: LogRow): Promise<void>;
   /** Newest first, at most `limit` entries. */

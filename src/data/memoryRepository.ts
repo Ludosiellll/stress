@@ -2,7 +2,7 @@ import { defaultModuleState, MODULE_IDS } from '../engine/derive';
 import type { Rating } from '../engine/elo';
 import type { ModuleState } from '../engine/planner';
 import type { FamilyId, ModuleId } from '../engine/types';
-import { assertBlockPayload, DEFAULT_SETTINGS, LOG_LIMIT, SETTINGS_KEYS, type Repository } from './repository';
+import { assertBlockPayload, DEFAULT_SETTINGS, LOG_LIMIT, SETTINGS_KEYS, type HistoryTable, type Repository } from './repository';
 import type {
   BlockLevelRow,
   BlockRow,
@@ -26,8 +26,13 @@ function sortedCopies<T>(rows: readonly T[], key: (r: T) => string | number): T[
   });
 }
 
-function assertNew(ids: ReadonlySet<string>, id: string, what: string): void {
-  if (ids.has(id)) throw new Error(`${what} ${id} already exists`);
+/** Every id of `rows` is new to `stored` and to the rows before it in the batch. */
+function assertAllNew(stored: readonly { id: string }[], rows: readonly { id: string }[], what: string): void {
+  const ids = new Set(stored.map((x) => x.id));
+  for (const r of rows) {
+    if (ids.has(r.id)) throw new Error(`${what} ${r.id} already exists`);
+    ids.add(r.id);
+  }
 }
 
 /** In-memory Repository with the same contract as SqliteRepository (tests, web preview). */
@@ -44,9 +49,13 @@ export class MemoryRepository implements Repository {
   private log: LogRow[] = [];
 
   createSession(s: SessionRow): Promise<void> {
+    return this.addSessions([s]);
+  }
+
+  addSessions(rows: readonly SessionRow[]): Promise<void> {
     return this.run(() => {
-      assertNew(new Set(this.sessions.map((x) => x.id)), s.id, 'session');
-      this.sessions.push(copy(s));
+      assertAllNew(this.sessions, rows, 'session');
+      this.sessions.push(...rows.map(copy));
     });
   }
 
@@ -61,17 +70,9 @@ export class MemoryRepository implements Repository {
       // Validate everything first, then write: all or nothing.
       assertBlockPayload(b, trials, items);
       if (!this.sessions.some((s) => s.id === b.sessionId)) throw new Error(`session ${b.sessionId} not found`);
-      assertNew(new Set(this.blocks.map((x) => x.id)), b.id, 'block');
-      const trialIds = new Set(this.trials.map((x) => x.id));
-      for (const t of trials) {
-        assertNew(trialIds, t.id, 'trial');
-        trialIds.add(t.id);
-      }
-      const itemIds = new Set(this.items.map((x) => x.id));
-      for (const i of items) {
-        assertNew(itemIds, i.id, 'logic item');
-        itemIds.add(i.id);
-      }
+      assertAllNew(this.blocks, [b], 'block');
+      assertAllNew(this.trials, trials, 'trial');
+      assertAllNew(this.items, items, 'logic item');
       this.blocks.push(copy(b));
       this.trials.push(...trials.map(copy));
       this.items.push(...items.map(copy));
@@ -83,18 +84,39 @@ export class MemoryRepository implements Repository {
   }
 
   addDiagnostic(d: DiagnosticRow): Promise<void> {
+    return this.addDiagnostics([d]);
+  }
+
+  addDiagnostics(rows: readonly DiagnosticRow[]): Promise<void> {
     return this.run(() => {
-      if (!this.sessions.some((s) => s.id === d.sessionId)) throw new Error(`session ${d.sessionId} not found`);
-      assertNew(new Set(this.diagnostics.map((x) => x.id)), d.id, 'diagnostic');
-      this.diagnostics.push(copy(d));
+      const sessions = new Set(this.sessions.map((s) => s.id));
+      for (const d of rows) {
+        if (!sessions.has(d.sessionId)) throw new Error(`session ${d.sessionId} not found`);
+      }
+      assertAllNew(this.diagnostics, rows, 'diagnostic');
+      this.diagnostics.push(...rows.map(copy));
     });
   }
 
   addWellbeing(w: WellbeingRow): Promise<void> {
+    return this.addWellbeingRows([w]);
+  }
+
+  addWellbeingRows(rows: readonly WellbeingRow[]): Promise<void> {
     return this.run(() => {
-      assertNew(new Set(this.wellbeing.map((x) => x.id)), w.id, 'wellbeing');
-      this.wellbeing.push(copy(w));
+      assertAllNew(this.wellbeing, rows, 'wellbeing');
+      this.wellbeing.push(...rows.map(copy));
     });
+  }
+
+  listIds(table: HistoryTable): Promise<Set<string>> {
+    const rows: Record<HistoryTable, readonly { id: string }[]> = {
+      sessions: this.sessions,
+      blocks: this.blocks,
+      diagnostics: this.diagnostics,
+      wellbeing: this.wellbeing,
+    };
+    return Promise.resolve(new Set(rows[table].map((r) => r.id)));
   }
 
   listSessions(): Promise<SessionRow[]> {
@@ -173,9 +195,13 @@ export class MemoryRepository implements Repository {
     return Promise.resolve();
   }
 
+  storedSettingKeys(): Promise<Set<keyof Settings>> {
+    return Promise.resolve(new Set(this.settings.keys()));
+  }
+
   appendLog(e: LogRow): Promise<void> {
     return this.run(() => {
-      assertNew(new Set(this.log.map((x) => x.id)), e.id, 'log entry');
+      assertAllNew(this.log, [e], 'log entry');
       this.log.push(copy(e));
       if (this.log.length > LOG_LIMIT) this.log = this.log.slice(-LOG_LIMIT);
     });

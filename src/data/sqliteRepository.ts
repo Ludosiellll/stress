@@ -2,7 +2,7 @@ import { defaultModuleState, MODULE_IDS } from '../engine/derive';
 import type { Rating } from '../engine/elo';
 import type { ModuleState } from '../engine/planner';
 import type { BlockFlag, FamilyId, ModuleId, SessionKind } from '../engine/types';
-import { assertBlockPayload, DEFAULT_SETTINGS, LOG_LIMIT, SETTINGS_KEYS, type Repository } from './repository';
+import { assertBlockPayload, DEFAULT_SETTINGS, LOG_LIMIT, SETTINGS_KEYS, type HistoryTable, type Repository } from './repository';
 import type {
   BlockLevelRow,
   BlockRow,
@@ -14,7 +14,7 @@ import type {
   TrialRow,
   WellbeingRow,
 } from './rows';
-import type { SqlExecutor } from './sqlExecutor';
+import type { SqlExecutor, SqlStatement } from './sqlExecutor';
 
 // Raw rows as SELECT returns them (column names from src-tauri/migrations/*.sql).
 interface SessionDb {
@@ -120,6 +120,15 @@ function toTrial(r: TrialDb): TrialRow {
   };
 }
 
+const INSERT_SESSION = 'INSERT INTO sessions (id, started_at, ended_at, kind, phase, app_version) VALUES (?, ?, ?, ?, ?, ?)';
+const INSERT_DIAGNOSTIC = 'INSERT INTO diagnostics (id, session_id, number, at, results_json) VALUES (?, ?, ?, ?, ?)';
+const INSERT_WELLBEING = 'INSERT INTO wellbeing (id, date, sleep_h, caffeine, mood) VALUES (?, ?, ?, ?, ?)';
+const SELECT_IDS: Readonly<Record<HistoryTable, string>> = {
+  sessions: 'SELECT id FROM sessions',
+  blocks: 'SELECT id FROM blocks',
+  diagnostics: 'SELECT id FROM diagnostics',
+  wellbeing: 'SELECT id FROM wellbeing',
+};
 const INSERT_BLOCK = `INSERT INTO blocks (id, session_id, module, l_before, l_after, params_json, score, flags_json, started_at, summary_json)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 const INSERT_TRIAL = `INSERT INTO trials (id, block_id, idx, stimulus_json, response_json, onset_ts, response_ts, rt_ms, outcome, frame_dropped)
@@ -132,10 +141,11 @@ export class SqliteRepository implements Repository {
   constructor(private readonly db: SqlExecutor) {}
 
   async createSession(s: SessionRow): Promise<void> {
-    await this.db.execute(
-      'INSERT INTO sessions (id, started_at, ended_at, kind, phase, app_version) VALUES (?, ?, ?, ?, ?, ?)',
-      [s.id, s.startedAt, s.endedAt, s.kind, s.phase, s.appVersion],
-    );
+    await this.addSessions([s]);
+  }
+
+  async addSessions(rows: readonly SessionRow[]): Promise<void> {
+    await this.insertAll(rows, (s) => ({ sql: INSERT_SESSION, params: [s.id, s.startedAt, s.endedAt, s.kind, s.phase, s.appVersion] }));
   }
 
   async finishSession(id: string, endedAt: string): Promise<void> {
@@ -195,23 +205,34 @@ export class SqliteRepository implements Repository {
   }
 
   async addDiagnostic(d: DiagnosticRow): Promise<void> {
-    await this.db.execute('INSERT INTO diagnostics (id, session_id, number, at, results_json) VALUES (?, ?, ?, ?, ?)', [
-      d.id,
-      d.sessionId,
-      d.number,
-      d.at,
-      d.resultsJson,
-    ]);
+    await this.addDiagnostics([d]);
+  }
+
+  /** An unknown session fails the foreign key of diagnostics.session_id. */
+  async addDiagnostics(rows: readonly DiagnosticRow[]): Promise<void> {
+    await this.insertAll(rows, (d) => ({ sql: INSERT_DIAGNOSTIC, params: [d.id, d.sessionId, d.number, d.at, d.resultsJson] }));
   }
 
   async addWellbeing(w: WellbeingRow): Promise<void> {
-    await this.db.execute('INSERT INTO wellbeing (id, date, sleep_h, caffeine, mood) VALUES (?, ?, ?, ?, ?)', [
-      w.id,
-      w.date,
-      w.sleepH,
-      bool(w.caffeine),
-      w.mood,
-    ]);
+    await this.addWellbeingRows([w]);
+  }
+
+  async addWellbeingRows(rows: readonly WellbeingRow[]): Promise<void> {
+    await this.insertAll(rows, (w) => ({ sql: INSERT_WELLBEING, params: [w.id, w.date, w.sleepH, bool(w.caffeine), w.mood] }));
+  }
+
+  async listIds(table: HistoryTable): Promise<Set<string>> {
+    const rows = await this.db.select<{ id: string }>(SELECT_IDS[table]);
+    return new Set(rows.map((r) => r.id));
+  }
+
+  /** One transaction with an INSERT per row (a primary-key or foreign-key failure rolls back the batch); none for no rows. */
+  private async insertAll<T>(rows: readonly T[], insert: (row: T) => SqlStatement): Promise<void> {
+    if (rows.length === 0) return;
+    const statements = rows.map(insert);
+    await this.db.transaction(async (tx) => {
+      for (const { sql, params } of statements) await tx.execute(sql, params);
+    });
   }
 
   async listSessions(): Promise<SessionRow[]> {
@@ -384,6 +405,12 @@ export class SqliteRepository implements Repository {
         ]);
       }
     });
+  }
+
+  async storedSettingKeys(): Promise<Set<keyof Settings>> {
+    const rows = await this.db.select<Pick<SettingDb, 'key'>>('SELECT key FROM settings');
+    const known: readonly string[] = SETTINGS_KEYS;
+    return new Set(rows.flatMap((r) => (known.includes(r.key) ? [r.key as keyof Settings] : [])));
   }
 
   async appendLog(e: LogRow): Promise<void> {

@@ -299,6 +299,75 @@ export function repositoryContract(make: () => Promise<Repository>): void {
     });
   });
 
+  describe('batch inserts and ids (restore)', () => {
+    const diag = (id: string, sessionId: string, number: number): DiagnosticRow => ({ id, sessionId, number, at: T2, resultsJson: '{}' });
+    const well = (id: string, date: string): WellbeingRow => ({ id, date, sleepH: 6.5, caffeine: true, mood: 2 });
+
+    it('listIds returns the stored ids of each history table', async () => {
+      const repo = await make();
+      for (const table of ['sessions', 'blocks', 'diagnostics', 'wellbeing'] as const) expect(await repo.listIds(table)).toEqual(new Set());
+      await repo.addSessions([session('s1', T1), session('s2', T2, { kind: 'diagnostic' })]);
+      await repo.addBlock(block('b1', 's1', T1), [trial('t1', 'b1', 0)], []);
+      await repo.addBlock(block('b2', 's1', T2), [], []);
+      await repo.addDiagnostics([diag('d1', 's2', 1)]);
+      await repo.addWellbeingRows([well('w1', '2026-10-01'), well('w2', '2026-10-02')]);
+      expect(await repo.listIds('sessions')).toEqual(new Set(['s1', 's2']));
+      expect(await repo.listIds('blocks')).toEqual(new Set(['b1', 'b2']));
+      expect(await repo.listIds('diagnostics')).toEqual(new Set(['d1']));
+      expect(await repo.listIds('wellbeing')).toEqual(new Set(['w1', 'w2']));
+    });
+
+    it('addSessions stores a batch; createSession is a batch of one', async () => {
+      const repo = await make();
+      await repo.addSessions([session('s2', T2), session('s1', T1, { endedAt: T3, kind: 'free' })]);
+      await repo.createSession(session('s3', T3));
+      await repo.addSessions([]);
+      expect(await repo.listSessions()).toEqual([session('s1', T1, { endedAt: T3, kind: 'free' }), session('s2', T2), session('s3', T3)]);
+    });
+
+    it('addSessions is atomic: a batch with one stored session writes nothing', async () => {
+      const repo = await make();
+      await repo.createSession(session('s1', T1));
+      await expect(repo.addSessions([session('s2', T2), session('s1', T3), session('s3', T3)])).rejects.toThrow();
+      expect(await repo.listSessions()).toEqual([session('s1', T1)]);
+    });
+
+    it('addSessions is atomic: an id twice in the batch writes nothing', async () => {
+      const repo = await make();
+      await expect(repo.addSessions([session('s1', T1), session('s2', T2), session('s1', T3)])).rejects.toThrow();
+      expect(await repo.listSessions()).toEqual([]);
+    });
+
+    it('addDiagnostics stores a batch; one with an unknown session writes nothing', async () => {
+      const repo = await make();
+      await repo.addSessions([session('s1', T1, { kind: 'diagnostic' })]);
+      await expect(repo.addDiagnostics([diag('d1', 's1', 1), diag('d2', 'ghost', 2)])).rejects.toThrow();
+      expect(await repo.listDiagnostics()).toEqual([]);
+      await repo.addDiagnostics([diag('d2', 's1', 2), diag('d1', 's1', 1)]);
+      expect(await repo.listDiagnostics()).toEqual([diag('d1', 's1', 1), diag('d2', 's1', 2)]);
+      await expect(repo.addDiagnostics([diag('d3', 's1', 3), diag('d1', 's1', 1)])).rejects.toThrow();
+      expect((await repo.listDiagnostics()).map((d) => d.id)).toEqual(['d1', 'd2']);
+    });
+
+    it('addWellbeingRows stores a batch; a stored id rejects the whole batch', async () => {
+      const repo = await make();
+      await repo.addWellbeingRows([well('w2', '2026-10-02'), well('w1', '2026-10-01')]);
+      expect(await repo.listWellbeing()).toEqual([well('w1', '2026-10-01'), well('w2', '2026-10-02')]);
+      await expect(repo.addWellbeingRows([well('w3', '2026-10-03'), well('w2', '2026-10-04')])).rejects.toThrow();
+      expect((await repo.listWellbeing()).map((w) => w.id)).toEqual(['w1', 'w2']);
+    });
+
+    it('storedSettingKeys: none in a new database, then only the keys ever saved', async () => {
+      const repo = await make();
+      expect(await repo.storedSettingKeys()).toEqual(new Set());
+      await repo.saveSettings({ layout: 'pult' });
+      expect(await repo.storedSettingKeys()).toEqual(new Set(['layout']));
+      // Saving a value equal to the default still counts as saved.
+      await repo.saveSettings({ testDate: null });
+      expect(await repo.storedSettingKeys()).toEqual(new Set(['layout', 'testDate']));
+    });
+  });
+
   describe('caches', () => {
     it('returns defaults for every module of the catalogue, then saved states', async () => {
       const repo = await make();
