@@ -2,7 +2,7 @@
 //! run anywhere (`cargo test --manifest-path src-tauri/backup/Cargo.toml`).
 
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 /// How many backup copies are kept (spec §8.1).
@@ -93,17 +93,22 @@ fn tmp_path(path: &Path) -> PathBuf {
     companion(path, ".tmp")
 }
 
+// Syncing needs a writable handle: on Windows `sync_all` is FlushFileBuffers, which fails
+// with "Access is denied" on a handle opened read-only (`File::open`).
+
 fn copy_atomic(from: &Path, to: &Path) -> io::Result<()> {
     let tmp = tmp_path(to);
     fs::copy(from, &tmp)?;
-    fs::File::open(&tmp)?.sync_all()?;
+    fs::OpenOptions::new().write(true).open(&tmp)?.sync_all()?;
     fs::rename(&tmp, to)
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let tmp = tmp_path(path);
-    fs::write(&tmp, bytes)?;
-    fs::File::open(&tmp)?.sync_all()?;
+    let mut file = fs::File::create(&tmp)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
     fs::rename(&tmp, path)
 }
 
