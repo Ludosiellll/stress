@@ -3,7 +3,7 @@
  * these. New modules are inserted before 'numseries' in MODULE_IDS; reaction modules are also appended to
  * REACTION_MODULE_IDS.
  */
-export const REACTION_MODULE_IDS = ['pzmr', 'szmr', 'gonogo', 'rdo', 'stroop', 'taskswitch'] as const;
+export const REACTION_MODULE_IDS = ['pzmr', 'szmr', 'gonogo', 'rdo', 'stroop', 'taskswitch', 'pomeh'] as const;
 export type ReactionModuleId = (typeof REACTION_MODULE_IDS)[number];
 export const MODULE_IDS = [
   'pzmr',
@@ -14,6 +14,7 @@ export const MODULE_IDS = [
   'schulte',
   'stroop',
   'taskswitch',
+  'pomeh',
   'numseries',
 ] as const;
 export type ModuleId = (typeof MODULE_IDS)[number];

@@ -52,6 +52,12 @@ describe('describeChanges', () => {
     ]);
   });
 
+  it('pomeh: flicker at L = 8, choice and sound from L = 18–20', () => {
+    expect(describeChanges('pomeh', 7, 8)).toContainEqual({ label: 'Мерцание фона', from: 'нет', to: 'да' });
+    expect(describeChanges('pomeh', 17, 18)).toContainEqual({ label: 'Звук', from: 'нет', to: 'гул' });
+    expect(describeChanges('pomeh', 19, 20)).toContainEqual({ label: 'Режим', from: 'простая реакция', to: 'выбор' });
+  });
+
   it('taskswitch: the size rule at L = 20', () => {
     expect(describeChanges('taskswitch', 19, 20)).toContainEqual({ label: 'Правил', from: '2', to: '3' });
   });

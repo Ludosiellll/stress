@@ -148,4 +148,15 @@ describe('instrumentBlock', () => {
     // A renderer without cue: forwarding is a no-op.
     expect(() => instrumentBlock(hooks, 'pzmr', [spec('Space')], b).renderer.cue?.(stimulus)).not.toThrow();
   });
+
+  it('instrumentBlock forwards frame', () => {
+    const b = base();
+    const frame = vi.fn<NonNullable<StimulusRenderer['frame']>>();
+    const hooks = installE2eHooks(host('?e2e=1'));
+    const out = instrumentBlock(hooks, 'pomeh', [spec('Space')], { clock: b.clock, renderer: { ...b.renderer, frame } });
+    out.renderer.frame?.(1234);
+    expect(frame).toHaveBeenCalledWith(1234);
+    // A renderer without frame: forwarding is a no-op.
+    expect(() => instrumentBlock(hooks, 'pzmr', [spec('Space')], b).renderer.frame?.(1)).not.toThrow();
+  });
 });

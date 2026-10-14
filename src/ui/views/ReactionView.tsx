@@ -1,13 +1,15 @@
 import { useEffect, useEffectEvent, useRef } from 'react';
+import { STRESSOR_LOOP_S } from '../../engine/audio/stressors';
 import { resolveBlock } from '../../engine/reaction/resolve';
 import type { BlockTimeline } from '../../engine/reaction/types';
-import { createCanvasRenderer } from '../../runtime/canvasRenderer';
+import { createCanvasRenderer, type CanvasRenderer } from '../../runtime/canvasRenderer';
 import { attachFocusGuard } from '../../runtime/focusGuard';
 import { browserFrameClock } from '../../runtime/frameClock';
 import { attachInput } from '../../runtime/input';
 import { ReactionBlockRunner, type AbortReason, type StimulusRenderer } from '../../runtime/reactionRunner';
 import type { StepOf } from '../../session/steps';
 import { e2eHooks, instrumentBlock } from '../../testing/e2eHooks';
+import { useApp } from '../AppContext';
 
 export interface ReactionViewProps {
   step: StepOf<'reaction_block'>;
@@ -28,15 +30,23 @@ function hideQuietly(renderer: StimulusRenderer): void {
   }
 }
 
+/** Where in the 20 s loop the block's sound starts, s: (seed mod 20 000) / 1000. */
+const loopOffsetS = (seed: number): number => (seed % (STRESSOR_LOOP_S * 1000)) / 1000;
+
 /**
  * Plays one reaction block on a full-screen canvas: no controls, hidden cursor, nothing but the stimulus
  * (and the module's key legend at the bottom, when the level shows one).
  *
- * Order (so that no event is lost or misattributed): renderer → runner → focus guard (may abort at once) →
- * Escape listener; then, in the next task — after the key event that opened the block has been fully
- * dispatched — input and `start()`. Everything is released when the block ends or the view unmounts.
+ * Order (so that no event is lost or misattributed): renderer → sound buffer → runner → focus guard (may abort at
+ * once) → Escape listener; then, in the next task — after the key event that opened the block has been fully
+ * dispatched — input, the sound loop (silent until a trial switches it on) and `start()`. Everything is released, and
+ * the sound faded out, when the block ends or the view unmounts.
+ *
+ * Stressors (`step.layers`): from the wait before trial i, the visual noise is on when trial i is `noisy` (W2-R10),
+ * the sound when the gate is 'all' or trial i is `noisy`. A block with sound reports whether it played.
  */
 export default function ReactionView({ step, nominalFrameMs, onDone, onAbort, onError }: ReactionViewProps) {
+  const { audio } = useApp();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const done = useEffectEvent(onDone);
   const aborted = useEffectEvent(onAbort);
@@ -46,11 +56,12 @@ export default function ReactionView({ step, nominalFrameMs, onDone, onAbort, on
     const canvas = canvasRef.current;
     if (canvas === null) return;
     const hooks = e2eHooks();
+    const { layers, specs } = step;
     let disposed = false;
 
-    let base: StimulusRenderer;
+    let base: CanvasRenderer;
     try {
-      base = createCanvasRenderer(canvas);
+      base = createCanvasRenderer(canvas, layers.noise === null ? {} : { noise: { params: layers.noise, seed: layers.seed } });
     } catch (e) {
       const timer = setTimeout(() => {
         failed(e);
@@ -59,8 +70,21 @@ export default function ReactionView({ step, nominalFrameMs, onDone, onAbort, on
         clearTimeout(timer);
       };
     }
-    const { clock, renderer } = instrumentBlock(hooks, step.module, step.specs, { clock: browserFrameClock, renderer: base });
-    const runner = new ReactionBlockRunner({ specs: step.specs, clock, renderer, nominalFrameMs });
+    // Synthesized here, before the runner exists: nothing is built or loaded while the block runs.
+    const sound = layers.audio === null ? null : audio.prepare(layers.audio, layers.seed);
+    let audioPlayed = false;
+    const noisy = (i: number): boolean => specs[i]?.cond === 'noisy';
+    const { clock, renderer } = instrumentBlock(hooks, step.module, specs, { clock: browserFrameClock, renderer: base });
+    const runner = new ReactionBlockRunner({
+      specs,
+      clock,
+      renderer,
+      nominalFrameMs,
+      onTrial: (i) => {
+        base.setNoiseActive(layers.noise !== null && noisy(i));
+        sound?.setActive(layers.gate === 'all' || noisy(i));
+      },
+    });
 
     let stopped = false;
     let offInput: (() => void) | null = null;
@@ -76,6 +100,7 @@ export default function ReactionView({ step, nominalFrameMs, onDone, onAbort, on
     };
     window.addEventListener('keydown', onEscape, { capture: true });
     const release = (): void => {
+      sound?.stop();
       offInput?.();
       offInput = null;
       offGuard();
@@ -87,6 +112,7 @@ export default function ReactionView({ step, nominalFrameMs, onDone, onAbort, on
         offInput = attachInput(window, step.layout, new Set(step.keys), (p) => {
           runner.press(p);
         });
+        audioPlayed = sound?.start(loopOffsetS(layers.seed)) ?? false;
       }
       runner.start().then(
         (end) => {
@@ -96,8 +122,8 @@ export default function ReactionView({ step, nominalFrameMs, onDone, onAbort, on
             aborted(end.reason);
             return;
           }
-          if (hooks.enabled) hooks.setLastResults(resolveBlock(step.specs, end.timeline));
-          done(end.timeline);
+          if (hooks.enabled) hooks.setLastResults(resolveBlock(specs, end.timeline));
+          done(layers.audio === null ? end.timeline : { ...end.timeline, audioPlayed });
         },
         (e: unknown) => {
           release();
@@ -113,7 +139,7 @@ export default function ReactionView({ step, nominalFrameMs, onDone, onAbort, on
       runner.abort('user');
       release();
     };
-  }, [step, nominalFrameMs]);
+  }, [step, nominalFrameMs, audio]);
 
   return (
     <div className="reaction">

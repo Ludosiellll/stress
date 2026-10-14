@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { NOISE_EXCLUSION_RADIUS, noiseFrame, type VisualNoiseParams } from '../engine/noise';
 import type { ColorId, ShapeId, Stimulus } from '../engine/reaction/types';
-import { BACKGROUND, COLORS, createCanvasRenderer, polarPoint, rdoAngleAt } from './canvasRenderer';
+import { BACKGROUND, COLORS, FLICKER_BACKGROUND, createCanvasRenderer, polarPoint, rdoAngleAt } from './canvasRenderer';
 
 interface Call {
   name: string;
@@ -40,7 +41,7 @@ interface FakeCanvas {
   height: number;
 }
 
-function setup(opts: { w?: number; h?: number; dpr?: number | null } = {}) {
+function setup(opts: { w?: number; h?: number; dpr?: number | null; noise?: { params: VisualNoiseParams; seed: number } } = {}) {
   const { ctx, calls } = mockContext();
   const dpr = opts.dpr === undefined ? 2 : opts.dpr;
   const fake: FakeCanvas & { getContext(kind: string): unknown; ownerDocument: unknown } = {
@@ -51,7 +52,8 @@ function setup(opts: { w?: number; h?: number; dpr?: number | null } = {}) {
     getContext: (kind: string) => (kind === '2d' ? ctx : null),
     ownerDocument: { defaultView: dpr === null ? null : { devicePixelRatio: dpr } },
   };
-  const renderer = createCanvasRenderer(fake as unknown as HTMLCanvasElement);
+  const canvas = fake as unknown as HTMLCanvasElement;
+  const renderer = opts.noise === undefined ? createCanvasRenderer(canvas) : createCanvasRenderer(canvas, { noise: opts.noise });
   return { renderer, calls, canvas: fake };
 }
 
@@ -266,6 +268,152 @@ describe('createCanvasRenderer', () => {
       calls.length = 0;
       renderer.show({ kind: 'shape', shape: 'circle', color: 'red' });
       expect(named(calls, 'fillText')).toEqual([]);
+    });
+  });
+
+  describe('visual noise', () => {
+    const NOISE: VisualNoiseParams = {
+      distractors: 5,
+      lifetimeMs: 1000,
+      flicker: false,
+      farOnly: false,
+      forbidden: [{ shape: 'circle', color: 'red' }],
+    };
+    const SEED = 11;
+    const RED_CIRCLE: Stimulus = { kind: 'shape', shape: 'circle', color: 'red' };
+    /** 800 × 600: the shorter side is 600, the box in side units is 0.667 × 0.5. */
+    const BOX = { halfW: 400 / 600, halfH: 0.5 };
+
+    it('draws distractors only while noise is active, under the stimulus', () => {
+      const { renderer, calls } = setup({ noise: { params: NOISE, seed: SEED } });
+      renderer.frame(1000);
+      calls.length = 0;
+      renderer.show(RED_CIRCLE);
+      expect(named(calls, 'fill').map((c) => c.fillStyle)).toEqual([COLORS.red]);
+
+      calls.length = 0;
+      renderer.setNoiseActive(true);
+      renderer.frame(1016);
+      const expected = noiseFrame(NOISE, SEED, 16, BOX).map((d) => COLORS[d.color]);
+      expect(expected).toHaveLength(5);
+      expect(named(calls, 'fill').map((c) => c.fillStyle)).toEqual([...expected, COLORS.red]);
+      expect(named(calls, 'fillRect')).toHaveLength(1);
+
+      calls.length = 0;
+      renderer.setNoiseActive(false);
+      renderer.frame(1032);
+      expect(named(calls, 'fill').map((c) => c.fillStyle)).toEqual([COLORS.red]);
+      // hide keeps the noise while it is active: the ISI before a noisy trial is noisy too.
+      renderer.setNoiseActive(true);
+      calls.length = 0;
+      renderer.hide();
+      expect(named(calls, 'fill')).toHaveLength(5);
+    });
+
+    it('draws the noise under the cue word', () => {
+      const { renderer, calls } = setup({ noise: { params: NOISE, seed: SEED } });
+      renderer.setNoiseActive(true);
+      calls.length = 0;
+      renderer.cue?.({ kind: 'switch', rule: 'color', color: 'red', shape: 'circle', size: 'large' });
+      expect(calls.map((c) => c.name).filter((n) => n === 'fill' || n === 'fillText')).toEqual([
+        ...Array<string>(5).fill('fill'),
+        'fillText',
+      ]);
+    });
+
+    it('does not redraw an unchanged noise frame', () => {
+      const { renderer, calls } = setup({ noise: { params: NOISE, seed: SEED } });
+      renderer.setNoiseActive(true);
+      renderer.frame(1000);
+      const drawn = named(calls, 'fillRect').length;
+      // 5 figures × 1000 ms: one of them changes every 200 ms, the first at 200 ms.
+      for (const ts of [1016, 1033, 1100, 1199]) renderer.frame(ts);
+      expect(named(calls, 'fillRect')).toHaveLength(drawn);
+      renderer.frame(1200);
+      expect(named(calls, 'fillRect')).toHaveLength(drawn + 1);
+      renderer.frame(1216);
+      expect(named(calls, 'fillRect')).toHaveLength(drawn + 1);
+    });
+
+    it('flicker switches the background colour #2b2b2b ↔ #3a3a3a while the noise is on', () => {
+      expect(FLICKER_BACKGROUND).toBe('#3a3a3a');
+      const { renderer, calls } = setup({ noise: { params: { ...NOISE, flicker: true }, seed: SEED } });
+      const background = (): unknown => named(calls, 'fillRect').at(-1)?.fillStyle;
+      renderer.setNoiseActive(true);
+      renderer.frame(1000);
+      expect(background()).toBe('#2b2b2b');
+      renderer.frame(1249);
+      expect(background()).toBe('#2b2b2b');
+      renderer.frame(1250);
+      expect(background()).toBe('#3a3a3a');
+      renderer.frame(1500);
+      expect(background()).toBe('#2b2b2b');
+      renderer.frame(1750);
+      expect(background()).toBe('#3a3a3a');
+      // Off: the plain background, whatever the flicker phase.
+      renderer.setNoiseActive(false);
+      renderer.frame(1760);
+      expect(background()).toBe(BACKGROUND);
+      renderer.frame(2250);
+      expect(background()).toBe(BACKGROUND);
+    });
+
+    it('each figure fits in its size around its centre, so none reaches into the central zone', () => {
+      const params: VisualNoiseParams = { ...NOISE, distractors: 14 };
+      const { renderer, calls } = setup({ w: 1000, h: 500, noise: { params, seed: 3 } });
+      const side = 500;
+      const seen = new Set<ShapeId>();
+      renderer.setNoiseActive(true);
+      for (let t = 0; t < 5000; t += 250) {
+        calls.length = 0;
+        renderer.frame(1000 + t);
+        const figures = noiseFrame(params, 3, t, { halfW: 1, halfH: 0.5 });
+        // One path per figure: beginPath … fill.
+        const paths: Call[][] = [];
+        for (const c of calls) {
+          if (c.name === 'beginPath') paths.push([]);
+          else paths.at(-1)?.push(c);
+        }
+        expect(paths).toHaveLength(figures.length);
+        figures.forEach((d, j) => {
+          seen.add(d.shape);
+          const cx = 500 + d.x * side;
+          const cy = 250 + d.y * side;
+          const limit = (d.size * side) / 2 + 1e-9;
+          let farthest = 0;
+          const reach = (px: number, py: number, extra = 0): void => {
+            farthest = Math.max(farthest, Math.hypot(px - cx, py - cy) + extra);
+          };
+          for (const c of paths[j] ?? []) {
+            const [x, y, a, b] = c.args as [number, number, number, number];
+            if (c.name === 'arc') reach(x, y, a); // centre and radius
+            if (c.name === 'rect') for (const [px, py] of [[x, y], [x + a, y], [x, y + b], [x + a, y + b]] as const) reach(px, py);
+            if (c.name === 'moveTo' || c.name === 'lineTo') reach(x, y);
+          }
+          expect(farthest).toBeGreaterThan(0);
+          expect(farthest).toBeLessThanOrEqual(limit);
+          expect(Math.hypot(cx - 500, cy - 250) - farthest).toBeGreaterThanOrEqual(NOISE_EXCLUSION_RADIUS * side - 1e-9);
+        });
+      }
+      expect([...seen].sort()).toEqual(['circle', 'diamond', 'hexagon', 'square', 'star', 'triangle']);
+    });
+
+    it('a canvas of zero size draws no noise; without noise options nothing changes', () => {
+      const empty = setup({ w: 0, h: 0, noise: { params: NOISE, seed: SEED } });
+      empty.renderer.setNoiseActive(true);
+      expect(() => {
+        empty.renderer.frame(1000);
+      }).not.toThrow();
+      expect(named(empty.calls, 'fill')).toEqual([]);
+
+      const plain = setup();
+      plain.renderer.setNoiseActive(true);
+      plain.calls.length = 0;
+      plain.renderer.frame(1000);
+      plain.renderer.frame(1300);
+      expect(plain.calls).toEqual([]);
+      plain.renderer.hide();
+      expect(named(plain.calls, 'fill')).toEqual([]);
     });
   });
 

@@ -1,10 +1,24 @@
-import { act, createEvent, fireEvent, render } from '@testing-library/react';
+import { act, createEvent, fireEvent } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { BlockTimeline, TrialSpec } from '../../engine/reaction/types';
+import { MemoryRepository } from '../../data/memoryRepository';
+import type { AudioStressorParams } from '../../engine/audio/stressors';
+import type { VisualNoiseParams } from '../../engine/noise';
+import type { BlockTimeline, TrialCond, TrialSpec } from '../../engine/reaction/types';
+import { NO_STRESSORS, type BlockStressors } from '../../modules/reaction/common';
+import type { AudioOut, StressorHandle } from '../../runtime/audio/audioOut';
+import { createCanvasRenderer, type CanvasRenderer } from '../../runtime/canvasRenderer';
 import type { StepOf } from '../../session/steps';
 import { manualFrames, mockCanvas, nextTask, stamped, type ManualFrames } from '../../testing/domFakes';
 import { installE2eHooks, type E2eHost } from '../../testing/e2eHooks';
+import { createFakePlatform } from '../../testing/fakePlatform';
+import { renderWithApp } from '../testUtils';
 import ReactionView from './ReactionView';
+
+// The real renderer, observed: tests read the instance the view made.
+vi.mock('../../runtime/canvasRenderer', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../runtime/canvasRenderer')>();
+  return { ...actual, createCanvasRenderer: vi.fn(actual.createCanvasRenderer) };
+});
 
 const TRIAL: TrialSpec = {
   isiMs: 100,
@@ -14,7 +28,29 @@ const TRIAL: TrialSpec = {
 };
 
 function step(over: Partial<StepOf<'reaction_block'>> = {}): StepOf<'reaction_block'> {
-  return { kind: 'reaction_block', module: 'pzmr', L: 0, specs: [TRIAL], keys: ['Space'], layout: 'keyboard', legend: null, ...over };
+  return {
+    kind: 'reaction_block',
+    module: 'pzmr',
+    L: 0,
+    specs: [TRIAL],
+    keys: ['Space'],
+    layout: 'keyboard',
+    legend: null,
+    layers: { ...NO_STRESSORS, seed: 1 },
+    ...over,
+  };
+}
+
+/** A sound output whose one handle records what the view does with it; `device: false` = no Web Audio. */
+function fakeAudio(o: { starts?: boolean; device?: boolean } = {}) {
+  const handle = {
+    start: vi.fn<StressorHandle['start']>(() => o.starts ?? true),
+    setActive: vi.fn<StressorHandle['setActive']>(),
+    stop: vi.fn<StressorHandle['stop']>(),
+  };
+  const prepare = vi.fn<AudioOut['prepare']>(() => (o.device === false ? null : { ...handle, playing: false }));
+  const audio: AudioOut = { unlock: () => Promise.resolve(), setVolume: () => undefined, prepare };
+  return { audio, prepare, handle };
 }
 
 let frames: ManualFrames;
@@ -30,10 +66,47 @@ afterEach(() => {
   installE2eHooks({ location: { search: '' } });
 });
 
-function renderView(s = step()) {
+function renderView(s = step(), audio: AudioOut = fakeAudio().audio) {
   const handlers = { onDone: vi.fn(), onAbort: vi.fn(), onError: vi.fn() };
-  const view = render(<ReactionView step={s} nominalFrameMs={16} {...handlers} />);
+  const view = renderWithApp(
+    <ReactionView step={s} nominalFrameMs={16} {...handlers} />,
+    createFakePlatform(),
+    new MemoryRepository(),
+    audio,
+  );
   return { ...handlers, ...view };
+}
+
+/** The renderer the view made last, with its noise switch recorded. */
+function noiseSwitch() {
+  const renderer = vi.mocked(createCanvasRenderer).mock.results.at(-1)?.value as CanvasRenderer;
+  return vi.spyOn(renderer, 'setNoiseActive');
+}
+
+const NOISE: VisualNoiseParams = { distractors: 3, lifetimeMs: 1000, flicker: false, farOnly: true, forbidden: [{ shape: 'circle', color: 'red' }] };
+const HUM: AudioStressorParams = { layers: ['hum'], gain: 0.5 };
+const LAYERS_SEED = 123_456;
+
+/** Trials with these conditions, ISI 100, window 200, nobody presses. */
+function stressedStep(conds: readonly TrialCond[], gate: BlockStressors['gate'] = 'noisy'): StepOf<'reaction_block'> {
+  return step({
+    module: 'pomeh',
+    specs: conds.map((cond) => ({ ...TRIAL, windowMs: 200, cond })),
+    layers: { noise: NOISE, audio: HUM, gate, seed: LAYERS_SEED },
+  });
+}
+
+/** Plays `n` unanswered trials of stressedStep from t0 = 1000 to the end of the block. */
+async function playUnanswered(n: number): Promise<void> {
+  frames.run(1000);
+  for (let i = 0; i < n; i++) {
+    frames.run(1100 + i * 300); // onset
+    frames.run(1300 + i * 300); // window over
+  }
+  frames.run(1300 + (n - 1) * 300 + 300 + 16); // late grace + one frame
+  await act(async () => {
+    await Promise.resolve();
+  });
 }
 
 function keyDown(code: string, ts: number): void {
@@ -78,13 +151,18 @@ describe('ReactionView', () => {
 
   it('plays the block and reports the timeline', async () => {
     mockCanvas();
-    const { onDone, onAbort } = renderView();
+    const { audio, prepare } = fakeAudio();
+    const { onDone, onAbort } = renderView(step(), audio);
     await nextTask();
     await playOneTrial();
     expect(onDone).toHaveBeenCalledTimes(1);
     const tl = onDone.mock.calls[0]?.[0] as BlockTimeline;
     expect(tl.onsets).toEqual([1100]);
     expect(tl.presses).toEqual([{ key: 'Space', ts: 1300 }]);
+    // A block without sound prepares none and says nothing about it.
+    expect(prepare).not.toHaveBeenCalled();
+    expect(tl).not.toHaveProperty('audioPlayed');
+    expect(vi.mocked(createCanvasRenderer).mock.lastCall?.[1]).toEqual({});
     expect(onAbort).not.toHaveBeenCalled();
     // Input is released when the block ends.
     keyDown('Space', 1700);
@@ -198,6 +276,85 @@ describe('ReactionView', () => {
     expect(onAbort).not.toHaveBeenCalled();
     expect(onDone).not.toHaveBeenCalled();
     expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('gates noise and sound by trial condition', async () => {
+    mockCanvas();
+    const { audio, prepare, handle } = fakeAudio();
+    const conds: TrialCond[] = ['quiet', 'noisy', 'noisy', 'quiet'];
+    const { onDone, container } = renderView(stressedStep(conds), audio);
+    // The sound is built before the block starts, and started with it.
+    expect(prepare).toHaveBeenCalledWith(HUM, LAYERS_SEED);
+    expect(handle.start).not.toHaveBeenCalled();
+    expect(vi.mocked(createCanvasRenderer).mock.lastCall).toEqual([
+      container.querySelector('canvas'),
+      { noise: { params: NOISE, seed: LAYERS_SEED } },
+    ]);
+    const noise = noiseSwitch();
+    await nextTask();
+    expect(handle.start).toHaveBeenCalledWith((LAYERS_SEED % 20000) / 1000);
+    await playUnanswered(conds.length);
+    expect(noise.mock.calls.map(([on]) => on)).toEqual([false, true, true, false]);
+    expect(handle.setActive.mock.calls.map(([on]) => on)).toEqual([false, true, true, false]);
+    expect(handle.stop).toHaveBeenCalledTimes(1);
+    expect(onDone).toHaveBeenCalledTimes(1);
+    expect(onDone.mock.calls[0]?.[0]).toMatchObject({ onsets: [1100, 1400, 1700, 2000], audioPlayed: true });
+  });
+
+  it('gate all (overload) plays the sound on every trial; the noise keeps to noisy trials (W2-R10)', async () => {
+    mockCanvas();
+    const { audio, handle } = fakeAudio();
+    const conds: TrialCond[] = ['quiet', 'noisy', 'quiet'];
+    renderView(stressedStep(conds, 'all'), audio);
+    const noise = noiseSwitch();
+    await nextTask();
+    await playUnanswered(conds.length);
+    expect(handle.setActive.mock.calls.map(([on]) => on)).toEqual([true, true, true]);
+    expect(noise.mock.calls.map(([on]) => on)).toEqual([false, true, false]);
+  });
+
+  it.each([
+    ['the context cannot start', { starts: false }],
+    ['there is no sound device', { device: false }],
+  ])('plays the block without sound when %s', async (_why, o) => {
+    mockCanvas();
+    const { audio } = fakeAudio(o);
+    const conds: TrialCond[] = ['noisy', 'quiet', 'noisy'];
+    const { onDone, onAbort, onError } = renderView(stressedStep(conds), audio);
+    await nextTask();
+    await playUnanswered(conds.length);
+    expect(onDone).toHaveBeenCalledTimes(1);
+    expect(onDone.mock.calls[0]?.[0]).toMatchObject({ onsets: [1100, 1400, 1700], audioPlayed: false });
+    expect(onAbort).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('stops the sound when the block is aborted or the view unmounts; an aborted start plays none', async () => {
+    mockCanvas();
+    const escaped = fakeAudio();
+    renderView(stressedStep(['noisy']), escaped.audio);
+    await nextTask();
+    frames.run(1000);
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' });
+      await Promise.resolve();
+    });
+    expect(escaped.handle.stop).toHaveBeenCalled();
+
+    const unmounted = fakeAudio();
+    const { unmount } = renderView(stressedStep(['noisy']), unmounted.audio);
+    await nextTask();
+    frames.run(1000);
+    unmount();
+    expect(unmounted.handle.stop).toHaveBeenCalled();
+
+    vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+    const unfocused = fakeAudio();
+    const { onAbort } = renderView(stressedStep(['noisy']), unfocused.audio);
+    await nextTask();
+    expect(onAbort).toHaveBeenCalledWith('focus_lost');
+    expect(unfocused.handle.start).not.toHaveBeenCalled();
+    expect(unfocused.handle.stop).toHaveBeenCalled();
   });
 
   it('in e2e mode emits each stimulus with its onset and keeps the resolved results', async () => {

@@ -18,6 +18,7 @@ import {
   type TableModuleId,
 } from '../engine/types';
 import { generateBlockItems, generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
+import { stressorsOf } from '../modules/reaction/common';
 import { reactionModules } from '../modules/registry';
 import {
   generateGorbovTable,
@@ -174,6 +175,7 @@ export function buildBlock(
           keys: plan.keys,
           layout: plan.layout,
           legend: mod.legend?.(layout, plan.params) ?? null,
+          layers: { ...stressorsOf(mod, plan.params), seed: deriveSeed(seed, 'layers') },
         },
         paramsJson: JSON.stringify(plan.params),
       };

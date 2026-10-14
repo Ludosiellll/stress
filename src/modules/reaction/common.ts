@@ -1,5 +1,7 @@
+import type { AudioStressorParams } from '../../engine/audio/stressors';
 import { keyLabel, layoutKeys } from '../../engine/layouts';
-import type { ColorId, ShapeId, TrialSpec } from '../../engine/reaction/types';
+import type { VisualNoiseParams } from '../../engine/noise';
+import { COLOR_IDS, SHAPE_IDS, type ColorId, type ShapeId, type TrialSpec } from '../../engine/reaction/types';
 import type { Rng } from '../../engine/rng';
 import type { InputKey, LayoutId, ReactionModuleId } from '../../engine/types';
 
@@ -19,11 +21,30 @@ export interface ReactionModule<P> {
   legend?(layout: LayoutId, p: P): string | null;
   /** Russian labels for the "what changed" view. */
   describeParams(p: P): Array<{ label: string; value: string }>;
+  /** Visual noise and sound of a block at these parameters; absent: none (read it with stressorsOf). */
+  stressors?(p: P): BlockStressors;
+}
+
+/** What plays around the stimuli of a reaction block. */
+export interface BlockStressors {
+  /** Distractors (and flicker) around the centre, on `noisy` trials only, whatever the gate (W2-R10). */
+  noise: VisualNoiseParams | null;
+  /** Sound loop in the headphones. */
+  audio: AudioStressorParams | null;
+  /** Trials the sound plays on: every trial, or the `noisy` ones. */
+  gate: 'all' | 'noisy';
+}
+
+export const NO_STRESSORS: BlockStressors = Object.freeze({ noise: null, audio: null, gate: 'all' });
+
+/** The module's stressors at these parameters; NO_STRESSORS for a module without any. */
+export function stressorsOf<P>(m: ReactionModule<P>, p: P): BlockStressors {
+  return m.stressors?.(p) ?? NO_STRESSORS;
 }
 
 /** Stimulus colors in the order the color → key mapping uses. */
-export const COLORS: readonly ColorId[] = ['red', 'green', 'yellow', 'blue', 'white', 'purple'];
-export const SHAPES: readonly ShapeId[] = ['circle', 'square', 'triangle', 'diamond', 'hexagon', 'star'];
+export const COLORS: readonly ColorId[] = COLOR_IDS;
+export const SHAPES: readonly ShapeId[] = SHAPE_IDS;
 
 export const COLOR_NAMES: Readonly<Record<ColorId, string>> = {
   red: 'красный',

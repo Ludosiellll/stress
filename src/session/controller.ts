@@ -30,6 +30,7 @@ import {
 import { blockRow, errorLogRow, logicItemRows, sessionRow, trialRows, wellbeingRow } from './rowsBuild';
 import { SaveQueue, type SaveOutcome, type Write } from './saveQueue';
 import {
+  AUDIO_NOT_PLAYED,
   conditionLines,
   reactionLines,
   saveErrorMessage,
@@ -254,8 +255,17 @@ export class SessionController {
         score: summary.score,
         level: { cvRt: summary.cvRt, cvMax: reactionModules[module].cvMax(L), timingUnreliable: summary.timingUnreliable },
         hitRts,
-        summaryJson: JSON.stringify({ ...summary, frameMs: tl.frameMs ?? null, conditions }),
-        lines: [...reactionLines(module, summary), ...conditionLines(module, conditions)],
+        summaryJson: JSON.stringify({
+          ...summary,
+          frameMs: tl.frameMs ?? null,
+          conditions,
+          ...(tl.audioPlayed === undefined ? {} : { audioPlayed: tl.audioPlayed }),
+        }),
+        lines: [
+          ...reactionLines(module, summary),
+          ...conditionLines(module, conditions),
+          ...(tl.audioPlayed === false ? [AUDIO_NOT_PLAYED] : []),
+        ],
         rows: (blockId) => ({ trials: trialRows(blockId, step.specs, tl, results), items: [] }),
         onCommit: () => {
           if (!this.counted) this.diagParts.push({ module, summary });

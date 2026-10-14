@@ -1,7 +1,10 @@
 import type { InputKey } from '../types';
 
-export type ColorId = 'red' | 'green' | 'yellow' | 'blue' | 'white' | 'purple';
-export type ShapeId = 'circle' | 'square' | 'triangle' | 'diamond' | 'hexagon' | 'star';
+/** Every stimulus colour, in the order the СЗМР colour → key mapping uses. */
+export const COLOR_IDS = ['red', 'green', 'yellow', 'blue', 'white', 'purple'] as const;
+export type ColorId = (typeof COLOR_IDS)[number];
+export const SHAPE_IDS = ['circle', 'square', 'triangle', 'diamond', 'hexagon', 'star'] as const;
+export type ShapeId = (typeof SHAPE_IDS)[number];
 /** Colours of the Stroop task (W2-R8). */
 export type StroopColor = 'red' | 'green' | 'blue' | 'yellow';
 /** Rules of the task-switching module: which feature of the figure the answer goes by. */
@@ -54,6 +57,8 @@ export interface BlockTimeline {
    * when the block had fewer than 10 of them. Absent on timelines not made by the runner.
    */
   frameMs?: number;
+  /** Set by ReactionView when the block had sound: whether it actually played (no device, a blocked context or volume 0: false). */
+  audioPlayed?: boolean;
 }
 
 export type Outcome =

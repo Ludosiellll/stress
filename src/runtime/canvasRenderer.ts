@@ -1,9 +1,12 @@
+import { flickerOn, noiseFrame, noiseSlots, type Distractor, type VisualNoiseParams } from '../engine/noise';
 import type { ColorId, ShapeId, Stimulus, SwitchRule } from '../engine/reaction/types';
 import { COLOR_WORDS } from '../modules/reaction/stroop';
 import { RULE_WORDS } from '../modules/reaction/taskswitch';
 import type { StimulusRenderer } from './reactionRunner';
 
 export const BACKGROUND = '#2b2b2b';
+/** The second shade of a flickering background: 15 grey levels above BACKGROUND. */
+export const FLICKER_BACKGROUND = '#3a3a3a';
 
 export const COLORS: Readonly<Record<ColorId, string>> = {
   red: '#e53935',
@@ -154,6 +157,14 @@ function drawSwitch(
   ctx.fill();
 }
 
+/** A distractor: the whole shape fits in the circle of diameter `size` around its centre (corners included). */
+function drawDistractor(ctx: CanvasRenderingContext2D, d: Distractor, cx: number, cy: number, side: number): void {
+  const r = (d.size * side) / 2 / extent(d.shape, 1);
+  shapePath(ctx, d.shape, cx + d.x * side, cy + d.y * side, r);
+  ctx.fillStyle = COLORS[d.color];
+  ctx.fill();
+}
+
 function drawRdo(
   ctx: CanvasRenderingContext2D,
   s: Extract<Stimulus, { kind: 'rdo' }>,
@@ -194,17 +205,51 @@ function drawRdo(
   ctx.fill();
 }
 
+export interface CanvasRenderer extends StimulusRenderer {
+  /** Visual noise on or off from the next draw; a renderer made without noise stays plain. */
+  setNoiseActive(on: boolean): void;
+  /** Once per frame: noise time moves on (counted from the first call); redraws only when the noise looks different. */
+  frame(ts: number): void;
+}
+
+export interface CanvasRendererOptions {
+  /** The block's visual noise: figures and their seed (BlockStressors.noise, layers.seed). */
+  noise?: { params: VisualNoiseParams; seed: number };
+}
+
+/** What the noise layer shows: the background shade and each figure's slot; null while off. */
+interface NoiseLook {
+  flicker: boolean;
+  slots: number[];
+}
+
+function sameLook(a: NoiseLook | null, b: NoiseLook | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.flicker === b.flicker && a.slots.length === b.slots.length && a.slots.every((s, j) => s === b.slots[j]);
+}
+
 /**
  * Draws stimuli on a canvas, outside React. The backing store follows the canvas's CSS size × devicePixelRatio
- * (checked on every draw); drawing coordinates are CSS pixels. Each call redraws the whole frame.
+ * (checked on every draw); drawing coordinates are CSS pixels. Each draw paints the whole frame: the background
+ * (flickering while the noise is on), the noise figures, then the stimulus or the cue.
  */
-export function createCanvasRenderer(canvas: HTMLCanvasElement): StimulusRenderer {
+export function createCanvasRenderer(canvas: HTMLCanvasElement, o: CanvasRendererOptions = {}): CanvasRenderer {
   const ctx = canvas.getContext('2d');
   if (ctx === null) throw new Error('createCanvasRenderer: 2D context is not available');
+  const noise = o.noise ?? null;
   let current: Stimulus | null = null;
   /** The rule word drawn alone before the figure (`cue`); the shown stimulus brings its own. */
   let cueRule: SwitchRule | null = null;
   let elapsedMs = 0;
+  let noiseOn = false;
+  /** Timestamp of the first `frame` call: noise time starts there. */
+  let noiseStart: number | null = null;
+  let noiseMs = 0;
+  /** The noise as the last draw painted it. */
+  let drawnLook: NoiseLook | null = null;
+
+  const noiseLook = (): NoiseLook | null =>
+    noise === null || !noiseOn ? null : { flicker: flickerOn(noise.params, noiseMs), slots: noiseSlots(noise.params, noiseMs) };
 
   const draw = (): void => {
     const dpr = canvas.ownerDocument.defaultView?.devicePixelRatio ?? 1;
@@ -215,9 +260,15 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): StimulusRendere
     if (canvas.width !== pw) canvas.width = pw;
     if (canvas.height !== ph) canvas.height = ph;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = BACKGROUND;
+    const look = noiseLook();
+    drawnLook = look;
+    ctx.fillStyle = look?.flicker === true ? FLICKER_BACKGROUND : BACKGROUND;
     ctx.fillRect(0, 0, w, h);
     const side = Math.min(w, h);
+    if (look !== null && noise !== null && side > 0) {
+      const box = { halfW: w / 2 / side, halfH: h / 2 / side };
+      for (const d of noiseFrame(noise.params, noise.seed, noiseMs, box)) drawDistractor(ctx, d, w / 2, h / 2, side);
+    }
     if (current === null) {
       if (cueRule !== null) drawRule(ctx, cueRule, w / 2, h / 2, side);
       return;
@@ -261,6 +312,14 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): StimulusRendere
       if (current?.kind !== 'rdo') return;
       elapsedMs = ms;
       draw();
+    },
+    setNoiseActive(on) {
+      noiseOn = on;
+    },
+    frame(ts) {
+      noiseStart ??= ts;
+      noiseMs = ts - noiseStart;
+      if (!sameLook(noiseLook(), drawnLook)) draw();
     },
   };
 }

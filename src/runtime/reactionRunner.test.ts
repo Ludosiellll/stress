@@ -694,6 +694,96 @@ describe('ReactionBlockRunner: cue before the stimulus', () => {
   });
 });
 
+describe('ReactionBlockRunner: per-trial and per-frame callbacks', () => {
+  it('calls onTrial when the wait for each trial begins', async () => {
+    const clock = new FakeClock();
+    const log: string[] = [];
+    const at: Record<string, number[]> = {};
+    const note = (op: string): void => {
+      log.push(op);
+      (at[op] ??= []).push(clock.now);
+    };
+    const renderer: StimulusRenderer = {
+      show: () => {
+        note('show');
+      },
+      hide: () => {
+        note('hide');
+      },
+      tick: () => undefined,
+    };
+    const specs = [pressTrial(500, 300), pressTrial(400, 300), pressTrial(600, 300)];
+    const runner = new ReactionBlockRunner({
+      specs,
+      clock,
+      renderer,
+      nominalFrameMs: FRAME,
+      onTrial: (i) => {
+        note(`trial ${String(i)}`);
+      },
+    });
+    const done = runner.start();
+    const pressTs = FRAME + 620; // trial 0 is shown about t0 + 500
+    clock.input(pressTs, () => {
+      runner.press({ key: 'Space', ts: pressTs });
+    });
+    clock.runOut();
+    const end = await done;
+    if (end.kind !== 'done') throw new Error('expected done');
+    // t0, then the frame that ends trial 0 (answered), then the frame that ends trial 1 (window over).
+    expect(log).toEqual(['trial 0', 'show', 'trial 1', 'hide', 'show', 'trial 2', 'hide', 'show', 'hide']);
+    const [t0] = clock.frames;
+    const [hide0, hide1] = at.hide ?? [];
+    expect(at['trial 0']).toEqual([t0]);
+    expect(at['trial 1']).toEqual([hide0]);
+    expect(at['trial 2']).toEqual([hide1]);
+    expect(hide1).toBe(clock.firstFrameAtOrAfter((end.timeline.onsets[1] as number) + 300));
+  });
+
+  it('calls renderer.frame on every frame, after that frame’s transitions', async () => {
+    const clock = new FakeClock();
+    const log: string[] = [];
+    const frames: number[] = [];
+    const renderer: StimulusRenderer = {
+      show: () => log.push('show'),
+      hide: () => log.push('hide'),
+      tick: () => undefined,
+      frame: (ts) => {
+        frames.push(ts);
+        log.push('frame');
+      },
+    };
+    const runner = new ReactionBlockRunner({ specs: [pressTrial(0, 300), pressTrial(200, 300)], clock, renderer, nominalFrameMs: FRAME });
+    const done = runner.start();
+    clock.runOut();
+    expect((await done).kind).toBe('done');
+    expect(frames).toEqual(clock.frames);
+    // ISI 0: the first frame shows the stimulus, then draws the frame.
+    expect(log.slice(0, 2)).toEqual(['show', 'frame']);
+    expect(log.filter((op) => op !== 'frame')).toEqual(['show', 'hide', 'show', 'hide']);
+  });
+
+  it('an abort from inside onTrial stays aborted', async () => {
+    const clock = new FakeClock();
+    const shows: number[] = [];
+    const renderer: StimulusRenderer = { show: () => shows.push(clock.now), hide: () => undefined, tick: () => undefined };
+    const runner = new ReactionBlockRunner({
+      specs: [pressTrial(0)],
+      clock,
+      renderer,
+      nominalFrameMs: FRAME,
+      onTrial: () => {
+        runner.abort('focus_lost');
+      },
+    });
+    const done = runner.start();
+    clock.step();
+    expect(await done).toEqual({ kind: 'aborted', reason: 'focus_lost' });
+    expect(shows).toEqual([]);
+    expect(clock.hasPending).toBe(false);
+  });
+});
+
 describe('ReactionBlockRunner: end of block', () => {
   it('late presses within 300 ms after the last trial are captured, later ones are not', async () => {
     expect(LATE_GRACE_MS).toBe(300);

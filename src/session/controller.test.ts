@@ -13,7 +13,7 @@ import { szmr } from '../modules/reaction/szmr';
 import { gorbovMetrics } from '../modules/tables/gorbov';
 import { perfectPlayer, perfectSeriesAnswers, perfectTableRun, playTimeline, type Respond } from '../testing/sessionPlayers';
 import { SessionController, type SessionStartOptions } from './controller';
-import type { Step, StepOf } from './steps';
+import { AUDIO_NOT_PLAYED, type Step, type StepOf } from './steps';
 
 const MIN = 60_000;
 const DAY = 86_400_000;
@@ -412,6 +412,48 @@ describe('SessionController — levels and persistence', () => {
     const first = JSON.parse(trials[0]?.stimulusJson ?? '{}') as { cueLeadMs?: unknown; cond?: unknown };
     expect(first).toMatchObject({ cueLeadMs: 900 });
     expect(first).not.toHaveProperty('cond');
+  });
+
+  it('pomeh block shows quiet and noisy medians', async () => {
+    const h = await begin(planFree('pomeh', 4));
+    const slowerOnNoisy: Respond = (spec, idx) => {
+      const r = perfectPlayer(spec, idx);
+      return r !== null && spec.cond === 'noisy' ? { ...r, rtMs: r.rtMs + 35 } : r;
+    };
+    const { view } = await playReaction(h, slowerOnNoisy);
+    expect(view.title).toBe('Помехоустойчивость');
+    expect(view.lines).toContain('Ошибки выбора: 0');
+    expect(view.lines.slice(-3)).toEqual(['Без помех: 300 мс', 'С помехами: 335 мс', 'Разница: +35 мс']);
+    expect(view.lines).not.toContain(AUDIO_NOT_PLAYED);
+    const [row] = await h.repo.listBlocks();
+    const summary = JSON.parse(row?.summaryJson ?? '{}') as { conditions?: Record<string, { n: number }> };
+    expect(summary.conditions).toMatchObject({ quiet: { errors: 0, medianRt: 300 }, noisy: { errors: 0, medianRt: 335 } });
+    expect((summary.conditions?.quiet?.n ?? 0) + (summary.conditions?.noisy?.n ?? 0)).toBe(20);
+    expect(summary).not.toHaveProperty('audioPlayed');
+  });
+
+  it('a block with sound that did not play says so', async () => {
+    const repo = new MemoryRepository();
+    await repo.saveModuleState(stateWith('pomeh', { lSaved: 20, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    const h = await begin(planFree('pomeh', 4), { repo });
+    h.c.ackInstruction();
+    const block = expectStep(h.c, 'reaction_block');
+    expect(block).toMatchObject({ L: 18, layers: { audio: { layers: ['hum'], gain: 0.5 }, gate: 'noisy' } });
+    await h.c.submitReaction({ ...playTimeline(block.specs, perfectPlayer), audioPlayed: false });
+    const { view } = expectStep(h.c, 'summary');
+    expect(view.lines.at(-1)).toBe(AUDIO_NOT_PLAYED);
+    // The level follows the visible task as usual.
+    expect(view.score).toBe(1);
+    expect(view.lAfter).toBeGreaterThan(view.lBefore);
+    const [row] = await h.repo.listBlocks();
+    expect(JSON.parse(row?.summaryJson ?? '{}')).toHaveProperty('audioPlayed', false);
+
+    await h.c.continueAfterSummary();
+    if (h.c.step.kind === 'instruction') h.c.ackInstruction();
+    const next = expectStep(h.c, 'reaction_block');
+    await h.c.submitReaction({ ...playTimeline(next.specs, perfectPlayer), audioPlayed: true });
+    expect(expectStep(h.c, 'summary').view.lines).not.toContain(AUDIO_NOT_PLAYED);
+    expect(JSON.parse((await h.repo.listBlocks())[1]?.summaryJson ?? '{}')).toHaveProperty('audioPlayed', true);
   });
 
   it('reaction blocks without conditions store an empty conditions object and no condition lines', async () => {

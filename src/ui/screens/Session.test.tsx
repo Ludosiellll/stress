@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import { MemoryRepository } from '../../data/memoryRepository';
 import type { DiagnosticResults } from '../../engine/diagnostic';
 import { planFree, type SessionPlan } from '../../engine/planner';
+import { NO_STRESSORS } from '../../modules/reaction/common';
 import { moduleTitles } from '../../modules/registry';
 import type { BlockTimeline, TrialSpec } from '../../engine/reaction/types';
 import type { SessionStartOptions } from '../../session/controller';
@@ -30,6 +31,7 @@ const REACTION: StepOf<'reaction_block'> = {
   keys: ['Space'],
   layout: 'keyboard',
   legend: null,
+  layers: { ...NO_STRESSORS, seed: 1 },
 };
 
 const INSTRUCTION: StepOf<'instruction'> = {

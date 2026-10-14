@@ -1,8 +1,13 @@
 import { useEffect, useState } from 'react';
+import { MemoryRepository } from '../data/memoryRepository';
 import type { TrialSpec } from '../engine/reaction/types';
 import { createRng } from '../engine/rng';
 import { measureRefresh } from '../engine/timing';
+import { NO_STRESSORS } from '../modules/reaction/common';
+import { createWebPlatform } from '../platform/web';
+import { createAudioOut } from '../runtime/audio/audioOut';
 import type { StepOf } from '../session/steps';
+import { AppContext, type AppServices } from '../ui/AppContext';
 import { collectFrameTimestamps, FALLBACK_FRAME_MS } from '../ui/frameSampler';
 import ReactionView from '../ui/views/ReactionView';
 
@@ -36,7 +41,11 @@ const STEP: StepOf<'reaction_block'> = {
   keys: ['Space'],
   layout: 'keyboard',
   legend: null,
+  layers: { ...NO_STRESSORS, seed: PROBE_SEED },
 };
+
+/** The probe page has no app around it: a browser host, an empty repository and no sound (the block has none). */
+const PROBE_APP: AppServices = { platform: createWebPlatform(), repo: new MemoryRepository(), audio: createAudioOut(null) };
 
 const sampleFrames = (): Promise<number[]> => collectFrameTimestamps(MEASURE_MS);
 
@@ -67,13 +76,15 @@ export default function ProbeHarness({ measureFrames = sampleFrames }: ProbeHarn
   if (frameMs === null) return <p>Замер кадра…</p>;
   if (status === 'running') {
     return (
-      <ReactionView
-        step={STEP}
-        nominalFrameMs={frameMs}
-        onDone={() => { setStatus('done'); }}
-        onAbort={() => { setStatus('aborted'); }}
-        onError={() => { setStatus('error'); }}
-      />
+      <AppContext.Provider value={PROBE_APP}>
+        <ReactionView
+          step={STEP}
+          nominalFrameMs={frameMs}
+          onDone={() => { setStatus('done'); }}
+          onAbort={() => { setStatus('aborted'); }}
+          onError={() => { setStatus('error'); }}
+        />
+      </AppContext.Provider>
     );
   }
   return (

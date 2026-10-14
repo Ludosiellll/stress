@@ -17,6 +17,8 @@ export interface StimulusRenderer {
    * be seen (frame ts − onset + presentation lead; the lead alone on the onset frame).
    */
   tick(elapsedMs: number): void;
+  /** Called once per frame of the block, after that frame's transitions (background animation: visual noise). */
+  frame?(ts: number): void;
 }
 
 export type AbortReason = 'focus_lost' | 'user';
@@ -46,6 +48,11 @@ export interface RunnerOptions {
    * included), fixed for the trial. Onsets and press timing are not affected.
    */
   presentationLeadMs?: number;
+  /**
+   * Called when the wait for trial i begins: in the first frame (t0) for i = 0, otherwise in the frame that ends
+   * trial i − 1, before its stimulus is hidden. Background layers switch here, so they cover the ISI too.
+   */
+  onTrial?: (i: number) => void;
 }
 
 type Phase =
@@ -112,6 +119,8 @@ function validate(o: RunnerOptions): void {
  *   onset frame is judged against it: dropped if its own delta is longer than 1.5 × frameMs. An onset in the first
  *   frame has no delta and is never dropped.
  * - RDO frames are drawn ahead by the presentation lead (see RunnerOptions); nothing else uses the lead.
+ * - Background layers (visual noise): `onTrial(i)` when the wait for trial i begins, `renderer.frame(ts)` in every
+ *   frame after its transitions. Neither changes an onset or a press time.
  * - `abort()` stops the loop and hides the stimulus; if the renderer throws, `start()` rejects with that error.
  * - No I/O: the timeline lives in memory until `start()` resolves.
  */
@@ -122,6 +131,7 @@ export class ReactionBlockRunner {
   private readonly nominalFrameMs: number;
   /** Set explicitly in the options; null = the block's frame interval at each onset. */
   private readonly presentationLeadMs: number | null;
+  private readonly onTrial: ((i: number) => void) | null;
 
   private phase: Phase = { kind: 'idle' };
   private started = false;
@@ -148,6 +158,7 @@ export class ReactionBlockRunner {
     this.renderer = o.renderer;
     this.nominalFrameMs = o.nominalFrameMs;
     this.presentationLeadMs = o.presentationLeadMs ?? null;
+    this.onTrial = o.onTrial ?? null;
   }
 
   start(): Promise<RunnerEnd> {
@@ -181,9 +192,14 @@ export class ReactionBlockRunner {
 
   private readonly onFrame = (ts: number): void => {
     this.frameId = null;
-    if (this.phase.kind !== 'finished') this.measureFrame(ts);
+    // A frame that still arrives after the block ended does nothing. (A local copy: the check must not narrow
+    // this.phase, which advance() changes.)
+    const before = this.phase;
+    if (before.kind === 'finished') return;
+    this.measureFrame(ts);
     try {
       this.advance(ts);
+      this.renderer.frame?.(ts);
     } catch (err) {
       this.phase = { kind: 'finished' };
       this.settle?.reject(err instanceof Error ? err : new Error(String(err)));
@@ -199,12 +215,9 @@ export class ReactionBlockRunner {
     this.prevFrameTs = ts;
   }
 
-  /**
-   * Runs every transition due at frame `ts` (more than one when an ISI of 0 follows an answered trial).
-   * A frame that arrives after the runner finished does nothing.
-   */
+  /** Runs every transition due at frame `ts` (more than one when an ISI of 0 follows an answered trial). */
   private advance(ts: number): void {
-    if (this.phase.kind === 'starting') this.phase = this.waitFor(0, ts);
+    if (this.phase.kind === 'starting') this.beginWait(0, ts);
     for (;;) {
       const ph = this.phase;
       switch (ph.kind) {
@@ -223,7 +236,8 @@ export class ReactionBlockRunner {
             if ((this.specs[ph.i] as TrialSpec).stimulus.kind === 'rdo') this.renderer.tick(ts - ph.onset + ph.leadMs);
             return;
           }
-          this.phase = ph.i + 1 < this.specs.length ? this.waitFor(ph.i + 1, end) : this.graceAfter(end);
+          if (ph.i + 1 < this.specs.length) this.beginWait(ph.i + 1, end);
+          else this.phase = this.graceAfter(end);
           this.renderer.hide();
           break;
         }
@@ -236,11 +250,13 @@ export class ReactionBlockRunner {
     }
   }
 
-  private waitFor(i: number, from: number): Phase {
+  /** Trial i is due isi_i after `from`; onTrial(i) sees the phase already waiting (an abort there sticks). */
+  private beginWait(i: number, from: number): void {
     const spec = this.specs[i] as TrialSpec;
     const onsetAt = from + spec.isiMs;
     const lead = spec.cueLeadMs ?? 0;
-    return { kind: 'waiting', i, onsetAt, cueAt: lead > 0 ? onsetAt - lead : null };
+    this.phase = { kind: 'waiting', i, onsetAt, cueAt: lead > 0 ? onsetAt - lead : null };
+    this.onTrial?.(i);
   }
 
   private graceAfter(end: number): Phase {

@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { Outcome, ReactionSummary } from '../engine/reaction/types';
-import { conditionLines, plural, reactionLines, seriesDiagnosticInstruction, seriesLines, tableLines } from './steps';
+import {
+  AUDIO_NOT_PLAYED,
+  conditionLines,
+  plural,
+  reactionLines,
+  seriesDiagnosticInstruction,
+  seriesLines,
+  tableLines,
+} from './steps';
 
 const NO_COUNTS: Record<Outcome, number> = {
   hit: 0,
@@ -138,6 +146,26 @@ describe('Переключение правил', () => {
       'Правило сменилось: 750 мс',
       'Цена переключения: +150 мс',
     ]);
+  });
+});
+
+describe('Помехоустойчивость', () => {
+  it('reactionLines: false starts, misses, choice errors', () => {
+    expect(reactionLines('pomeh', summary({}, { wrong: 1, false_start: 2, miss: 1 })).slice(-3)).toEqual([
+      'Фальстарты: 2',
+      'Пропуски: 1',
+      'Ошибки выбора: 1',
+    ]);
+  });
+
+  it('conditionLines: quiet and noisy medians and their difference', () => {
+    const stats = { quiet: { n: 10, errors: 0, medianRt: 300 }, noisy: { n: 10, errors: 1, medianRt: 335.2 } };
+    expect(conditionLines('pomeh', stats)).toEqual(['Без помех: 300 мс', 'С помехами: 335 мс', 'Разница: +35 мс']);
+    expect(conditionLines('pomeh', { quiet: stats.quiet, noisy: { n: 2, errors: 0, medianRt: null } })).toEqual(['Без помех: 300 мс']);
+  });
+
+  it('the line for a block whose sound did not play', () => {
+    expect(AUDIO_NOT_PLAYED).toBe('Звук не воспроизводился: проверь устройство вывода и громкость помех в настройках.');
   });
 });
 

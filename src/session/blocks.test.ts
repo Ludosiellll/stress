@@ -7,6 +7,8 @@ import type { Outcome, ReactionSummary } from '../engine/reaction/types';
 import type { FamilyId } from '../engine/types';
 import { createRng, deriveSeed } from '../engine/rng';
 import { generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
+import { NO_STRESSORS } from '../modules/reaction/common';
+import { pomeh } from '../modules/reaction/pomeh';
 import { pzmr } from '../modules/reaction/pzmr';
 import { gorbovMetrics } from '../modules/tables/gorbov';
 import { perfectPlayer, playTimeline } from '../testing/sessionPlayers';
@@ -108,6 +110,26 @@ describe('reaction blocks', () => {
     expect(build('stroop', 0, 'pult')).toMatchObject({ legend: 'красный — ← · зелёный — →' });
     expect(build('stroop', 12)).toMatchObject({ legend: null });
     expect(build('szmr', 0)).toMatchObject({ legend: null });
+  });
+
+  it('reaction step carries the module stressors and a layers seed', () => {
+    const build = (module: Segment['module'], L: number, seed: number) =>
+      buildBlock(planBlock(free(module), L, 0, ctx), seed, 'keyboard', new Map()).step;
+    expect(build('pomeh', 18, 7)).toMatchObject({
+      kind: 'reaction_block',
+      layers: {
+        noise: pomeh.params(18).noise,
+        audio: { layers: ['hum'], gain: 0.5 },
+        gate: 'noisy',
+        seed: deriveSeed(7, 'layers'),
+      },
+    });
+    expect(build('pomeh', 0, 7)).toMatchObject({ layers: { audio: null, gate: 'noisy' } });
+    expect(build('pzmr', 0, 7)).toMatchObject({ layers: { ...NO_STRESSORS, seed: deriveSeed(7, 'layers') } });
+    // The noise is visual only on noisy trials: the block has both kinds.
+    const step = build('pomeh', 18, 7);
+    if (step.kind !== 'reaction_block') throw new Error('expected a reaction block');
+    expect(new Set(step.specs.map((t) => t.cond))).toEqual(new Set(['quiet', 'noisy']));
   });
 
   it('scoreReaction adds the per-condition statistics', () => {

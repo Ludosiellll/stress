@@ -4,6 +4,7 @@ import { condCost, type ConditionStats } from '../engine/reaction/conditions';
 import type { Outcome, ReactionSummary, TrialCond, TrialSpec } from '../engine/reaction/types';
 import type { BlockFlag, InputKey, LayoutId, ModuleId, ReactionModuleId, TableModuleId } from '../engine/types';
 import type { ParamChange } from '../modules/describe';
+import type { BlockStressors } from '../modules/reaction/common';
 import type { TimedSeriesItem } from '../modules/numseries/generate';
 import type { TableCell, TableParams, TableTaskId } from '../modules/tables/gorbov';
 import type { TableRunResult } from '../modules/tables/score';
@@ -22,6 +23,8 @@ export type Step =
       layout: LayoutId;
       /** Key hint under the stimulus (ReactionModule.legend); null: none. */
       legend: string | null;
+      /** Noise and sound of the block (stressorsOf); `seed` = deriveSeed(block seed, 'layers') feeds both. */
+      layers: BlockStressors & { seed: number };
     }
   | {
       kind: 'table_block';
@@ -77,6 +80,8 @@ export interface SeriesAnswer {
 }
 
 export const UNRELIABLE_REPLAY_NOTICE = 'Замер ненадёжен (пропуски кадров). Блок будет повторён.';
+/** Summary line of a block that had sound which did not play (no device, a blocked context, volume 0). */
+export const AUDIO_NOT_PLAYED = 'Звук не воспроизводился: проверь устройство вывода и громкость помех в настройках.';
 export const SERIES_INSTRUCTION_TRAINING =
   'Найди закономерность и введи следующее число. На задачу до 40 секунд, на трудных уровнях меньше: остаток времени показывает полоса.';
 export const TABLE_KEYS_HINT = 'Мышь';
@@ -130,6 +135,7 @@ const COUNT_LINES: Record<ReactionModuleId, readonly CountLine[]> = {
   rdo: [FALSE_STARTS, MISSES],
   stroop: [FALSE_STARTS, MISSES, ['Ошибки', (c) => c.wrong]],
   taskswitch: [FALSE_STARTS, MISSES, ['Ошибки', (c) => c.wrong]],
+  pomeh: [FALSE_STARTS, MISSES, ['Ошибки выбора', (c) => c.wrong]],
 };
 
 function timingErrorLine(meanSignedErrorMs: number): string {
@@ -172,6 +178,7 @@ interface CondLines {
 const COND_LINES: Partial<Record<ReactionModuleId, CondLines>> = {
   stroop: { fast: ['congruent', 'Цвет совпадает со словом'], slow: ['incongruent', 'Не совпадает'], cost: 'Интерференция' },
   taskswitch: { fast: ['repeat', 'Правило повторяется'], slow: ['switch', 'Правило сменилось'], cost: 'Цена переключения' },
+  pomeh: { fast: ['quiet', 'Без помех'], slow: ['noisy', 'С помехами'], cost: 'Разница' },
 };
 
 /** «Цвет совпадает со словом: 520 мс», «Не совпадает: 610 мс», «Интерференция: +90 мс»; a line only for a known value. */

@@ -117,6 +117,19 @@ test('free training of Переключение правил reaches 100 %', asy
   await expect(page.getByRole('list', { name: 'Итог по модулям' })).toContainText('Переключение правил: блоков');
 });
 
+test('free training of Помехоустойчивость reaches 100 %', async ({ page }) => {
+  await openApp(page, E2E_URL);
+  await page.getByRole('button', { name: 'Свободная тренировка' }).click();
+  await page.getByRole('button', { name: 'Помехоустойчивость' }).click();
+  const titles: string[] = [];
+  const screens = await playSession(page, { onScreen: checkSummaries(page, titles) });
+  expect(screens).toContain('summary');
+  expect(new Set(titles)).toEqual(new Set(['Помехоустойчивость']));
+  const kinds = await page.evaluate(() => [...new Set(window.__bot?.stimuli.map((s) => `${s.module}:${s.kind}`))]);
+  expect(kinds).toEqual(['pomeh:press']);
+  await expect(page.getByRole('list', { name: 'Итог по модулям' })).toContainText('Помехоустойчивость: блоков');
+});
+
 test('settings layout pult changes key hints to arrows', async ({ page }) => {
   await openApp(page, E2E_URL);
   await page.getByRole('button', { name: 'Настройки' }).click();
