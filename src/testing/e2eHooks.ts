@@ -5,9 +5,13 @@ import type { StimulusRenderer } from '../runtime/reactionRunner';
 
 /**
  * Hooks for the Playwright tests (Task 17), active only with `?e2e=1` in the address. Then
- * `window.__trainer` lets a test follow the stimuli and read the last block's results, and `&scale=0.02`
- * shrinks segment budgets and block sizes. In normal use nothing is exposed and every call is a no-op.
+ * `window.__trainer` lets a test follow the stimuli and read the last block's results, `&scale=0.02`
+ * shrinks segment budgets and block sizes, and `&probe=pzmr` opens the timing probe instead of the app.
+ * In normal use nothing is exposed and every call is a no-op.
  */
+
+/** Timing probes a test can open with `&probe=`. */
+export type ProbeId = 'pzmr';
 
 export interface StimulusEvent {
   module: ReactionModuleId;
@@ -40,6 +44,8 @@ export interface E2eHooks {
   readonly enabled: boolean;
   /** SessionController scale; 1 unless e2e mode sets `scale=`. */
   readonly scale: number;
+  /** The timing probe to open instead of the app (e2e mode with `probe=pzmr`); null otherwise. */
+  readonly probe: ProbeId | null;
   emitStimulus(e: StimulusEvent): void;
   setLastResults(results: TrialResult[]): void;
 }
@@ -47,6 +53,7 @@ export interface E2eHooks {
 const DISABLED: E2eHooks = {
   enabled: false,
   scale: 1,
+  probe: null,
   emitStimulus: () => undefined,
   setLastResults: () => undefined,
 };
@@ -78,6 +85,7 @@ export function installE2eHooks(host: E2eHost): E2eHooks {
   active = {
     enabled: true,
     scale: trainer.scale,
+    probe: params.get('probe') === 'pzmr' ? 'pzmr' : null,
     emitStimulus(e) {
       for (const cb of listeners) {
         try {

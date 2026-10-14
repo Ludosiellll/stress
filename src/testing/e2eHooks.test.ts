@@ -22,6 +22,7 @@ describe('e2e hooks', () => {
     const hooks = installE2eHooks(window);
     expect(hooks.enabled).toBe(false);
     expect(hooks.scale).toBe(1);
+    expect(hooks.probe).toBeNull();
     expect(window.__trainer).toBeUndefined();
     expect(e2eHooks()).toBe(hooks);
     expect(() => {
@@ -61,6 +62,13 @@ describe('e2e hooks', () => {
     const results: TrialResult[] = [];
     hooks.setLastResults(results);
     expect(h.__trainer?.lastResults).toBe(results);
+  });
+
+  it('read the timing probe only in e2e mode and only for a known probe', () => {
+    expect(installE2eHooks(host('?e2e=1&probe=pzmr')).probe).toBe('pzmr');
+    expect(installE2eHooks(host('?e2e=1')).probe).toBeNull();
+    expect(installE2eHooks(host('?e2e=1&probe=rdo')).probe).toBeNull();
+    expect(installE2eHooks(host('?probe=pzmr')).probe).toBeNull();
   });
 
   it('remove __trainer when reinstalled without e2e', () => {
