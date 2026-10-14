@@ -4,13 +4,15 @@ import { MemoryRepository } from '../data/memoryRepository';
 import { block, item, session } from '../data/repository.contract';
 import { deriveRatings } from '../engine/derive';
 import { moduleTitles } from '../modules/registry';
+import { settleUntil } from '../testing/domFakes';
 import { createFakePlatform, type FakePlatformOptions } from '../testing/fakePlatform';
 import App from './App';
 
 async function renderApp(options: FakePlatformOptions = {}) {
   const platform = createFakePlatform(options);
   render(<App platform={platform} />);
-  await screen.findByRole('button', { name: 'Начать тренировку' });
+  // Not findByRole: Home must be idle, its Enter listener attached, before a test presses a key.
+  await settleUntil(() => screen.queryByRole('button', { name: 'Начать тренировку' }) !== null, 'Home');
   return platform;
 }
 

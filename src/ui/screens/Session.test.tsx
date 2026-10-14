@@ -8,7 +8,7 @@ import { moduleTitles } from '../../modules/registry';
 import type { BlockTimeline, TrialSpec } from '../../engine/reaction/types';
 import type { SessionStartOptions } from '../../session/controller';
 import type { BlockSummaryView, Step, StepOf } from '../../session/steps';
-import { frameStamps, manualFrames, mockCanvas, nextTask, stamped, type ManualFrames } from '../../testing/domFakes';
+import { frameStamps, manualFrames, mockCanvas, nextTask, settleUntil, stamped, type ManualFrames } from '../../testing/domFakes';
 import type { AudioOut } from '../../runtime/audio/audioOut';
 import { createFakePlatform, type FakePlatform } from '../../testing/fakePlatform';
 import { renderWithApp } from '../testUtils';
@@ -141,14 +141,12 @@ async function renderSession(
     repo,
     o.audio,
   );
+  // Not waitFor/findBy: the first step must be on screen with its key listeners attached before a test presses a key.
   if (o.charging === false) {
-    await screen.findByRole('button', { name: 'Назад' });
+    await settleUntil(() => screen.queryByRole('button', { name: 'Назад' }) !== null, 'the power warning');
   } else {
-    await waitFor(() => {
-      expect(startSession).toHaveBeenCalled();
-    });
+    await settleUntil(() => startSession.mock.calls.length > 0, 'the session start');
   }
-  await nextTask();
   return { platform, repo, onExit, startSession, unmount };
 }
 

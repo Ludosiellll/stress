@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRepository } from '../../data/memoryRepository';
 import { block, session, trial } from '../../data/repository.contract';
 import type { AudioOut, StressorHandle } from '../../runtime/audio/audioOut';
+import { settleUntil } from '../../testing/domFakes';
 import { createFakePlatform, type FakePlatformOptions } from '../../testing/fakePlatform';
 import { renderWithApp } from '../testUtils';
 import Settings from './Settings';
@@ -283,11 +284,12 @@ describe('Settings failures and cancellation', () => {
     const measureFrames = vi.fn(() => new Promise<number[]>((resolve) => { finish = resolve; }));
     const { onBack } = await renderSettings({}, measureFrames);
     fireEvent.click(screen.getByRole('button', { name: 'Проверить тайминги (3 с)' }));
-    await screen.findByText(/Идёт замер/);
+    // Not findByText: the screen must be idle, its Escape handling settled, before the key is pressed.
+    await settleUntil(() => screen.queryByText(/Идёт замер/) !== null, 'the measurement');
     fireEvent.keyDown(document.body, { key: 'Escape' });
     expect(onBack).not.toHaveBeenCalled();
     finish(frames(181, 1000 / 60));
-    await screen.findByText('Частота: 60 Гц');
+    await settleUntil(() => screen.queryByText('Частота: 60 Гц') !== null, 'the measurement result');
     fireEvent.keyDown(document.body, { key: 'Escape' });
     expect(onBack).toHaveBeenCalledTimes(1);
   });

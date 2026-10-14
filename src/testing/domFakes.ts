@@ -85,6 +85,21 @@ export async function nextTask(): Promise<void> {
   );
 }
 
+/**
+ * Waits until `ready()` holds, letting the app run one act()-wrapped task at a time, then lets the zero-delay
+ * timers of the last render fire (useKeyDown attaches its listener in one). waitFor and findBy run outside
+ * act, so the renders and effects they wait for go through React's scheduler, which on a busy machine may
+ * still be running effects (a key listener not attached yet) when the test takes its next step. Here every
+ * update is flushed by act, effects included, before `ready()` is checked: the app is idle when it returns.
+ */
+export async function settleUntil(ready: () => boolean, what: string, maxTasks = 1000): Promise<void> {
+  for (let i = 0; !ready(); i++) {
+    if (i === maxTasks) throw new Error(`settleUntil: ${what} did not happen in ${String(maxTasks)} tasks`);
+    await nextTask();
+  }
+  await nextTask();
+}
+
 /** `count` frame timestamps `step` ms apart, from 1000; every `hiccupEvery`-th interval is 3× longer. */
 export function frameStamps(count: number, step: number, hiccupEvery = 0): number[] {
   const out: number[] = [];

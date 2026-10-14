@@ -1,9 +1,10 @@
-import { act, fireEvent, screen, within } from '@testing-library/react';
+import { fireEvent, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DiagnosticResults } from '../../engine/diagnostic';
 import { MemoryRepository } from '../../data/memoryRepository';
 import { session } from '../../data/repository.contract';
 import { moduleTitles } from '../../modules/registry';
+import { settleUntil } from '../../testing/domFakes';
 import { createFakePlatform } from '../../testing/fakePlatform';
 import { localDate } from '../format';
 import { renderWithApp } from '../testUtils';
@@ -31,10 +32,9 @@ function daysFromNow(n: number): Date {
 async function renderHome(repo = new MemoryRepository()) {
   const handlers = { onStart: vi.fn(), onFree: vi.fn(), onProgress: vi.fn(), onSettings: vi.fn() };
   renderWithApp(<Home {...handlers} />, createFakePlatform({ repo }), repo);
-  await screen.findByRole('button', { name: 'Начать тренировку' });
-  // findByRole can resolve as soon as the DOM is committed, before React runs Home's passive keydown effect;
-  // leaving act flushes it, so a synchronous fireEvent right after always finds the handler.
-  await act(async () => {});
+  // Not findByRole + an empty act: findByRole can resolve as soon as the DOM is committed, while React's
+  // scheduler has yet to run Home's passive keydown effect, and an empty act does not flush that scheduler.
+  await settleUntil(() => screen.queryByRole('button', { name: 'Начать тренировку' }) !== null, 'Home');
   return { repo, ...handlers };
 }
 
