@@ -6,6 +6,8 @@ import { BASE_DIFFICULTY, FAMILIES, fitFamily, generateTerms, type FamilyId } fr
 export const ITEM_TIME_LIMIT_MS = 40000;
 
 const MAX_ABS_TERM = 100000;
+/** Constant and 2-cycle series are unique but trivial (R13). */
+const MIN_DISTINCT_VALUES = 3;
 /** A candidate this close to the target difficulty is taken at once. */
 const D_TOLERANCE = 150;
 const PREFERRED_ATTEMPTS = 200;
@@ -34,13 +36,13 @@ export function difficultyOf(family: FamilyId, shown: readonly number[], answer:
 }
 
 /**
- * Attempt `attempt` of generateItem: the candidate, or null when it is rejected
- * (a term beyond ±100000, its own family does not predict the answer, or the answer is not unique).
- * Exported for tests.
+ * The item for `terms` (the shown terms, then the answer), or null when it is rejected:
+ * a term beyond ±100000, fewer than 3 distinct values (R13), its own family does not continue
+ * the shown terms with the answer, or some family justifies another answer. Exported for tests.
  */
-export function attemptItem(family: FamilyId, seed: number, attempt: number): SeriesItem | null {
-  const terms = generateTerms(family, createRng(deriveSeed(seed, 'attempt:' + String(attempt))));
+export function candidateItem(family: FamilyId, seed: number, terms: readonly number[]): SeriesItem | null {
   if (terms.some((x) => Math.abs(x) > MAX_ABS_TERM)) return null;
+  if (new Set(terms).size < MIN_DISTINCT_VALUES) return null;
   const shown = terms.slice(0, -1);
   const answer = terms[terms.length - 1] as number;
   if (!fitFamily(family, shown).has(answer) || !isUnique(shown, answer)) return null;
@@ -52,6 +54,12 @@ export function attemptItem(family: FamilyId, seed: number, attempt: number): Se
     answer,
     difficulty: difficultyOf(family, shown, answer),
   };
+}
+
+/** Attempt `attempt` of generateItem: a fresh candidate from its own rng, or null. Exported for tests. */
+export function attemptItem(family: FamilyId, seed: number, attempt: number): SeriesItem | null {
+  const terms = generateTerms(family, createRng(deriveSeed(seed, 'attempt:' + String(attempt))));
+  return candidateItem(family, seed, terms);
 }
 
 /**
@@ -75,6 +83,8 @@ export function selectCandidate<T extends { difficulty: number }>(
         bestGap = gap;
       }
     }
+    // From attempt 200 on, the best so far wins. If the first 200 accepted nothing, this is
+    // the first accepted candidate of attempts 200..1999, however far its D is from targetD.
     if (best !== null && i + 1 >= PREFERRED_ATTEMPTS) return best;
   }
   throw new Error(`no acceptable series in ${String(MAX_ATTEMPTS)} attempts`);

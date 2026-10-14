@@ -21,9 +21,9 @@ describe('parseAnswer', () => {
   });
 
   it('drops no-break, thin and narrow no-break spaces inside the number', () => {
-    expect(parseAnswer('1 000')).toBe(1000);
-    expect(parseAnswer('12 345')).toBe(12345);
-    expect(parseAnswer(' -1 000 ')).toBe(-1000);
+    expect(parseAnswer('1\u00a0000')).toBe(1000);
+    expect(parseAnswer('12\u2009345')).toBe(12345);
+    expect(parseAnswer('\u202f-1\u202f000\u202f')).toBe(-1000);
     expect(parseAnswer('\t5\n')).toBe(5);
   });
 
@@ -36,7 +36,15 @@ describe('parseAnswer', () => {
     expect(Object.is(parseAnswer('−000'), 0)).toBe(true);
   });
 
-  it.each(['+5', '5-', '--5', '1,5', '1.000', '12a', '٣', '1e3', ' ', ' ', '0x10'])(
+  it('accepts safe integers only (R14)', () => {
+    expect(parseAnswer('9007199254740991')).toBe(Number.MAX_SAFE_INTEGER);
+    expect(parseAnswer('−9007199254740991')).toBe(-Number.MAX_SAFE_INTEGER);
+    expect(parseAnswer('9007199254740992')).toBeNull();
+    expect(parseAnswer('9007199254740993')).toBeNull();
+    expect(parseAnswer('9'.repeat(400))).toBeNull();
+  });
+
+  it.each(['+5', '5-', '--5', '1,5', '1.000', '12a', '٣', '1e3', ' ', '\u00a0', '0x10'])(
     'rejects %j',
     (raw) => {
       expect(parseAnswer(raw)).toBeNull();

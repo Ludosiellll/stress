@@ -1,12 +1,13 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { R0, targetDifficulty } from '../../engine/elo';
-import { createRng } from '../../engine/rng';
+import { createRng, deriveSeed } from '../../engine/rng';
 import { fitPredictions, isUnique } from './check';
-import { BASE_DIFFICULTY, FAMILIES, SHOWN_LENGTH, type FamilyId } from './families';
+import { BASE_DIFFICULTY, FAMILIES, SHOWN_LENGTH, generateTerms, type FamilyId } from './families';
 import {
   ITEM_TIME_LIMIT_MS,
   attemptItem,
+  candidateItem,
   difficultyOf,
   generateBlockItems,
   generateItem,
@@ -78,7 +79,7 @@ describe('selectCandidate', () => {
 });
 
 describe('generateItem', () => {
-  it('main property: unique, own family fits, bounded integers, family length, consistent difficulty', () => {
+  it('main property: unique, own family fits, bounded integers, ≥3 distinct values, family length, consistent difficulty', () => {
     fc.assert(
       fc.property(
         family,
@@ -96,6 +97,7 @@ describe('generateItem', () => {
             expect(Number.isInteger(x)).toBe(true);
             expect(Math.abs(x)).toBeLessThanOrEqual(100000);
           }
+          expect(new Set([...item.shown, item.answer]).size).toBeGreaterThanOrEqual(3);
           expect(item.difficulty).toBe(difficultyOf(f, item.shown, item.answer));
         },
       ),
@@ -155,7 +157,64 @@ describe('generateItem', () => {
   });
 });
 
+describe('candidateItem', () => {
+  // Under the reference ranges the generator never produces the out-of-range, own-fit-miss or
+  // non-unique cases, so they are checked here on hand-made series.
+  it('accepts a unique series of its own family', () => {
+    expect(candidateItem('arith', 7, [2, 4, 6, 8, 10, 12])).toEqual({
+      id: 'arith:7',
+      family: 'arith',
+      seed: 7,
+      shown: [2, 4, 6, 8, 10],
+      answer: 12,
+      difficulty: 800,
+    });
+  });
+
+  it('allows ±100000 and rejects anything beyond', () => {
+    expect(candidateItem('geom', 1, [1, 10, 100, 1000, 10000, 100000])?.answer).toBe(100000);
+    expect(candidateItem('geom', 1, [-1, -10, -100, -1000, -10000, -100000])?.answer).toBe(-100000);
+    expect(candidateItem('geom', 1, [5, 50, 500, 5000, 50000, 500000])).toBeNull();
+  });
+
+  it('rejects fewer than 3 distinct values (R13)', () => {
+    expect(candidateItem('fib', 1, [3, 3, 3, 3, 3, 3, 3])).toBeNull();
+    expect(candidateItem('fib', 1, [2, 1, 2, 1, 2, 1, 2])).toBeNull();
+  });
+
+  it('rejects a series its own family does not continue with the answer', () => {
+    // Unique (geom, linrec and fib give 32), but not arithmetic.
+    expect(isUnique([1, 2, 4, 8, 16], 32)).toBe(true);
+    expect(candidateItem('arith', 1, [1, 2, 4, 8, 16, 32])).toBeNull();
+  });
+
+  it('rejects a series with two justified answers', () => {
+    // [1, 2, 4, 7]: second → 11, fib (k=1, c=1) → 12.
+    expect(candidateItem('second', 1, [1, 2, 4, 7, 11])).toBeNull();
+    expect(candidateItem('fib', 1, [1, 2, 4, 7, 12])).toBeNull();
+  });
+});
+
 describe('attemptItem', () => {
+  it('rejects constant and 2-cycle series even though they are unique (R13)', () => {
+    /** Raw fib terms of attempt 0 for `seed`, as attemptItem draws them. */
+    const raw = (seed: number) => generateTerms('fib', createRng(deriveSeed(seed, 'attempt:0')));
+    const firstSeed = (pred: (t: number[]) => boolean): number => {
+      for (let seed = 0; seed < 20000; seed++) if (pred(raw(seed))) return seed;
+      throw new Error('no such seed');
+    };
+    const constant = firstSeed((t) => new Set(t).size === 1);
+    const twoCycle = firstSeed((t) => new Set(t).size === 2 && t.every((x, i) => x === t[i % 2]));
+    for (const seed of [constant, twoCycle]) {
+      const t = raw(seed);
+      const shown = t.slice(0, -1);
+      const answer = t[t.length - 1] as number;
+      expect(isUnique(shown, answer)).toBe(true);
+      expect(fitPredictions(shown).get('fib')?.has(answer)).toBe(true);
+      expect(attemptItem('fib', seed, 0)).toBeNull();
+    }
+  });
+
   it('is the candidate generateItem returns when it is close enough', () => {
     for (let seed = 0; seed < 50; seed++) {
       const first = attemptItem('geom', seed, 0);
