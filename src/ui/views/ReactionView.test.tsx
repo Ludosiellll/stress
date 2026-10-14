@@ -67,7 +67,7 @@ function fakeAudio(o: { starts?: boolean; device?: boolean; throws?: 'prepare' |
     return o.device === false ? null : { ...handle, playing: false };
   });
   const unlock = vi.fn<AudioOut['unlock']>(() => Promise.resolve());
-  const audio: AudioOut = { unlock, setVolume: () => undefined, prepare };
+  const audio: AudioOut = { available: o.device !== false, unlock, setVolume: () => undefined, prepare };
   return { audio, prepare, handle, unlock };
 }
 

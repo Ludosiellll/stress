@@ -7,7 +7,7 @@ import type { AudioOut, StressorHandle } from '../../runtime/audio/audioOut';
 import { settleUntil } from '../../testing/domFakes';
 import { createFakePlatform, type FakePlatformOptions } from '../../testing/fakePlatform';
 import { renderWithApp } from '../testUtils';
-import Settings from './Settings';
+import Settings, { SOUND_UNLOCK_WAIT_MS } from './Settings';
 
 const NOTE =
   'Клавиатура ноутбука добавляет задержку по сравнению с кнопкой прибора. Сравнивай результаты со своими прошлыми, а нормы считай ориентировочными.';
@@ -329,6 +329,7 @@ function spyAudio(started = true) {
     unlock: vi.fn<AudioOut['unlock']>(() => Promise.resolve()),
     setVolume: vi.fn<AudioOut['setVolume']>(),
     prepare: vi.fn<AudioOut['prepare']>(() => handle),
+    available: true,
   };
   return { audio, handle };
 }
@@ -402,11 +403,46 @@ describe('Settings sound', () => {
     expect(handle.stop).toHaveBeenCalledTimes(1);
   });
 
-  it('without Web Audio says the sound is unavailable', async () => {
+  it('without Web Audio says the sound is unavailable at once, before any click (B4)', async () => {
     await renderSettings();
-    expect(screen.queryByText('Звук недоступен на этом компьютере')).toBeNull();
+    expect(screen.getByText('Звук недоступен на этом компьютере')).toBeTruthy();
     await clickCheckSound();
     expect(screen.getByText('Звук недоступен на этом компьютере')).toBeTruthy();
+  });
+
+  it('with Web Audio says nothing until the check', async () => {
+    const { audio } = spyAudio();
+    await renderSettings({ audio });
+    expect(screen.queryByText('Звук недоступен на этом компьютере')).toBeNull();
+  });
+
+  it('a resume that never settles does not hold the check: the button comes back (B4)', async () => {
+    const { audio, handle } = spyAudio(false);
+    audio.unlock.mockImplementation(() => new Promise<void>(() => undefined));
+    await renderSettings({ audio });
+    vi.useFakeTimers();
+    await clickCheckSound();
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Проверить звук' }).disabled).toBe(true);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SOUND_UNLOCK_WAIT_MS);
+    });
+    expect(handle.start).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Звук не воспроизводился')).toBeTruthy();
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Проверить звук' }).disabled).toBe(false);
+  });
+
+  it('at volume 0 the check says the sound is off, not that it failed (B4)', async () => {
+    const repo = new MemoryRepository();
+    await repo.saveSettings({ stressVolume: 0 });
+    const { audio, handle } = spyAudio();
+    await renderSettings({ repo, audio });
+    await clickCheckSound();
+    expect(screen.getByText('Громкость помех — 0: звук выключен.')).toBeTruthy();
+    expect(screen.queryByText('Звук не воспроизводился')).toBeNull();
+    expect(handle.start).not.toHaveBeenCalled();
+    // Turning the volume up takes the note away.
+    fireEvent.change(screen.getByRole('slider', { name: 'Громкость помех' }), { target: { value: '50' } });
+    expect(screen.queryByText('Громкость помех — 0: звук выключен.')).toBeNull();
   });
 
   it('says so when the sound could not start', async () => {

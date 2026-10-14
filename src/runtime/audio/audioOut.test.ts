@@ -1,8 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AudioStressorParams } from '../../engine/audio/stressors';
 import { renderStressor } from '../../engine/audio/synth';
 import { FakeAudioContext, type FakeAudioOptions } from '../../testing/fakeAudio';
-import { browserAudioOut, createAudioOut } from './audioOut';
+import { IDLE_SUSPEND_MS, browserAudioOut, createAudioOut } from './audioOut';
 
 const HUM: AudioStressorParams = { layers: ['hum'], gain: 0.5 };
 
@@ -259,6 +259,105 @@ describe('createAudioOut', () => {
     expect(ctx.state).toBe('running');
     await out.unlock();
     expect(ctx.resumeCalls).toBe(1); // already running
+  });
+});
+
+describe('createAudioOut: the context sleeps when idle (B4)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** A running player with one loop playing. */
+  async function playing(o: FakeAudioOptions = {}) {
+    vi.useFakeTimers();
+    const t = setup(o);
+    await t.out.unlock();
+    t.out.setVolume(0.5);
+    const h = t.out.prepare(HUM, 1);
+    expect(h?.start(0)).toBe(true);
+    return { ...t, h };
+  }
+
+  it('reports whether Web Audio is there', () => {
+    expect(createAudioOut(null, tinySynth).available).toBe(false);
+    expect(setup().out.available).toBe(true);
+    const broken = createAudioOut(() => {
+      throw new Error('no device');
+    }, tinySynth);
+    broken.prepare(HUM, 1);
+    expect(broken.available).toBe(false);
+  });
+
+  it('suspends the context IDLE_SUSPEND_MS after the last loop stops, never while one plays', async () => {
+    const { ctx, out, h } = await playing();
+    const second = out.prepare(HUM, 2);
+    second?.start(0);
+    await vi.advanceTimersByTimeAsync(IDLE_SUSPEND_MS * 3);
+    expect(ctx.suspendCalls).toBe(0);
+    h?.stop();
+    await vi.advanceTimersByTimeAsync(IDLE_SUSPEND_MS * 3);
+    expect(ctx.suspendCalls).toBe(0);
+    second?.stop();
+    await vi.advanceTimersByTimeAsync(IDLE_SUSPEND_MS - 1);
+    expect(ctx.suspendCalls).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(ctx.suspendCalls).toBe(1);
+    expect(ctx.state).toBe('suspended');
+  });
+
+  it('the next unlock resumes it, and a loop started then plays', async () => {
+    const { ctx, out, h } = await playing();
+    h?.stop();
+    await vi.advanceTimersByTimeAsync(IDLE_SUSPEND_MS);
+    expect(ctx.state).toBe('suspended');
+    await out.unlock();
+    expect(ctx.state).toBe('running');
+    expect(ctx.resumeCalls).toBe(2);
+    expect(out.prepare(HUM, 1)?.start(0)).toBe(true);
+  });
+
+  it('an unlock (the context woken without a loop) also goes back to sleep', async () => {
+    vi.useFakeTimers();
+    const { ctx, out } = setup();
+    await out.unlock();
+    await vi.advanceTimersByTimeAsync(IDLE_SUSPEND_MS);
+    expect(ctx.state).toBe('suspended');
+  });
+
+  it('a loop started within IDLE_SUSPEND_MS keeps the context awake', async () => {
+    const { ctx, out, h } = await playing();
+    h?.stop();
+    await vi.advanceTimersByTimeAsync(IDLE_SUSPEND_MS - 1);
+    expect(out.prepare(HUM, 1)?.start(0)).toBe(true);
+    await vi.advanceTimersByTimeAsync(IDLE_SUSPEND_MS * 3);
+    expect(ctx.suspendCalls).toBe(0);
+  });
+
+  it('unlock waits for a suspend in flight, then resumes; start during it stays silent', async () => {
+    const { ctx, out, h } = await playing({ suspendDelayed: true });
+    h?.stop();
+    await vi.advanceTimersByTimeAsync(IDLE_SUSPEND_MS);
+    expect(ctx.suspendCalls).toBe(1);
+    // The suspend has not settled: a loop started now would be cut by it.
+    expect(out.prepare(HUM, 1)?.start(0)).toBe(false);
+    const unlocked = out.unlock();
+    ctx.finishSuspend();
+    await unlocked;
+    expect(ctx.state).toBe('running');
+    expect(out.prepare(HUM, 1)?.start(0)).toBe(true);
+  });
+
+  it('a suspend that throws or rejects changes nothing and throws nothing', async () => {
+    for (const suspends of ['throws', 'rejects'] as const) {
+      const { ctx, out, h } = await playing({ suspends });
+      h?.stop();
+      await expect(vi.advanceTimersByTimeAsync(IDLE_SUSPEND_MS)).resolves.not.toThrow();
+      expect(ctx.suspendCalls).toBe(1);
+      expect(ctx.state).toBe('running');
+      await expect(out.unlock()).resolves.toBeUndefined();
+      expect(out.prepare(HUM, 1)?.start(0)).toBe(true);
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -29,6 +29,7 @@ export interface AudioContextLike {
   readonly currentTime: number;
   readonly destination: AudioNodeLike;
   resume(): Promise<void>;
+  suspend(): Promise<void>;
   createBuffer(channels: number, length: number, sampleRate: number): AudioBufferLike;
   createBufferSource(): AudioBufferSourceLike;
   createGain(): GainNodeLike;
@@ -46,7 +47,12 @@ export interface StressorHandle {
 }
 
 export interface AudioOut {
-  /** Resumes the context; call it from a user gesture (a click or a key press). Never rejects. */
+  /** False once Web Audio is known to be missing: no AudioContext in the window, or it could not be created. */
+  readonly available: boolean;
+  /**
+   * Resumes the context (waiting for a sleep in progress first); call it from a user gesture (a click or a key
+   * press). Never rejects.
+   */
   unlock(): Promise<void>;
   /** 0..1, the volume setting / 100. Silent (0) until set. Active loops follow it. */
   setVolume(v: number): void;
@@ -60,13 +66,16 @@ const RAMP_TIME_CONSTANT_S = 0.015;
 /** stop(): the source ends this long after the fade-out begins (over 5 time constants: the gain is below 1 %). */
 const STOP_DELAY_S = 0.08;
 const CACHE_LIMIT = 4;
+/** The context is suspended this long after the last loop stopped (or an unlock with nothing played): no idle audio thread. */
+export const IDLE_SUSPEND_MS = 1000;
 
 const clamp01 = (v: number): number => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0);
 
 /**
  * Plays synthesized stressor loops. The context is created on first use; buffers are cached by
  * layers + seed (at most 4). Output gain never exceeds the volume setting. Without Web Audio, or when
- * the context cannot start, nothing sounds and nothing throws.
+ * the context cannot start, nothing sounds and nothing throws. When nothing plays for IDLE_SUSPEND_MS the
+ * context is suspended; unlock() wakes it (every block with sound and the sound check unlock first).
  */
 export function createAudioOut(makeContext: (() => AudioContextLike) | null, synth: typeof renderStressor = renderStressor): AudioOut {
   let ctx: AudioContextLike | null = null;
@@ -75,6 +84,31 @@ export function createAudioOut(makeContext: (() => AudioContextLike) | null, syn
   const cache = new Map<string, AudioBufferLike>();
   /** Loops that are playing and switched on: a volume change retargets them. */
   const active = new Set<() => void>();
+  /** Loops started and not stopped: the context stays awake while there are any. */
+  let playing = 0;
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  /** A suspend() that has not settled yet: a loop started now would be cut by it. */
+  let suspending: Promise<void> | null = null;
+
+  /** Puts the context to sleep IDLE_SUSPEND_MS from now unless a loop starts first. A failed suspend is ignored. */
+  const sleepWhenIdle = (c: AudioContextLike): void => {
+    clearTimeout(idleTimer);
+    if (playing > 0) return;
+    idleTimer = setTimeout(() => {
+      if (playing > 0 || c.state !== 'running') return;
+      let pending: Promise<void>;
+      try {
+        pending = c.suspend();
+      } catch {
+        return;
+      }
+      const settled = (): void => {
+        if (suspending === tracked) suspending = null;
+      };
+      const tracked: Promise<void> = pending.then(settled, settled);
+      suspending = tracked;
+    }, IDLE_SUSPEND_MS);
+  };
 
   const context = (): AudioContextLike | null => {
     if (ctx === null && !broken && makeContext !== null) {
@@ -118,7 +152,7 @@ export function createAudioOut(makeContext: (() => AudioContextLike) | null, syn
       },
       start(offsetS) {
         if (nodes !== null) return true;
-        if (c.state !== 'running' || volume === 0) return false;
+        if (c.state !== 'running' || suspending !== null || volume === 0) return false;
         const source = c.createBufferSource();
         source.buffer = buffer;
         source.loop = true;
@@ -135,6 +169,8 @@ export function createAudioOut(makeContext: (() => AudioContextLike) | null, syn
           return false;
         }
         nodes = { source, gain };
+        playing++;
+        clearTimeout(idleTimer);
         return true;
       },
       setActive(next) {
@@ -150,6 +186,9 @@ export function createAudioOut(makeContext: (() => AudioContextLike) | null, syn
         nodes = null;
         on = false;
         active.delete(retarget);
+        playing--;
+        // The fade-out (STOP_DELAY_S) is long over by the time the context sleeps.
+        sleepWhenIdle(c);
         const release = (): void => {
           source.disconnect();
           gain.disconnect();
@@ -167,14 +206,20 @@ export function createAudioOut(makeContext: (() => AudioContextLike) | null, syn
   };
 
   return {
+    get available() {
+      return !broken;
+    },
     async unlock() {
       const c = context();
-      if (c === null || c.state === 'running') return;
+      if (c === null) return;
+      clearTimeout(idleTimer);
+      if (suspending !== null) await suspending;
       try {
-        await c.resume();
+        if (c.state !== 'running') await c.resume();
       } catch {
         // A blocked device: start() reports false and the block runs without sound.
       }
+      sleepWhenIdle(c);
     },
     setVolume(v) {
       volume = clamp01(v);

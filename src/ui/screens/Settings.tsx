@@ -34,6 +34,9 @@ const SOUND_CHECK_MS = 2000;
 const SOUND_HINT = 'Звуковые помехи включаются в «Помехоустойчивости» на высоких уровнях и в финишере. Лучше слушать в наушниках.';
 const SOUND_UNAVAILABLE = 'Звук недоступен на этом компьютере';
 const SOUND_SILENT = 'Звук не воспроизводился';
+const SOUND_MUTED = 'Громкость помех — 0: звук выключен.';
+/** The check waits this long for the context to resume; a resume that never settles must not hold the button. */
+export const SOUND_UNLOCK_WAIT_MS = 1000;
 
 const TIMING_NOTE =
   'Клавиатура ноутбука добавляет задержку по сравнению с кнопкой прибора. Сравнивай результаты со своими прошлыми, а нормы считай ориентировочными.';
@@ -106,7 +109,7 @@ function SelfCheckResult({ check, fresh }: { check: SelfCheck; fresh: boolean })
 }
 
 type Busy = 'check' | 'export' | 'report' | 'restore' | null;
-type SoundCheck = 'idle' | 'playing' | 'unavailable' | 'silent';
+type SoundCheck = 'idle' | 'playing' | 'unavailable' | 'silent' | 'muted';
 
 export default function Settings({ onBack, measureFrames = (signal) => collectFrameTimestamps(CHECK_MS, signal) }: SettingsProps) {
   const { platform, repo, audio } = useApp();
@@ -115,7 +118,8 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
   const [layout, setLayout] = useState<LayoutId>('keyboard');
   const [testDate, setTestDate] = useState('');
   const [volume, setVolume] = useState(60);
-  const [sound, setSound] = useState<SoundCheck>('idle');
+  // Known at once when the window has no Web Audio: no need to click to find out.
+  const [sound, setSound] = useState<SoundCheck>(() => (audio.available ? 'idle' : 'unavailable'));
   const [check, setCheck] = useState<{ result: SelfCheck; fresh: boolean } | null>(null);
   const [version, setVersion] = useState<string | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
@@ -200,19 +204,34 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
     const previous = volume;
     setVolume(value);
     audio.setVolume(value / 100);
+    setSound((s) => (s === 'muted' ? 'idle' : s));
     void save('громкость помех', { stressVolume: value }, () => {
       setVolume(previous);
       audio.setVolume(previous / 100);
     });
   };
 
-  /** Plays hum and beeps for 2 s, then fades out (handle.stop); it fades out early when the screen closes. */
+  /**
+   * Plays hum and beeps for 2 s, then fades out (handle.stop); it fades out early when the screen closes. At volume 0
+   * it only says the sound is off; a resume that has not settled in SOUND_UNLOCK_WAIT_MS counts as «не воспроизводился».
+   */
   const checkSound = async (): Promise<void> => {
     const signal = lifetime.current?.signal;
     if (signal === undefined) return;
+    if (volume === 0) {
+      setSound('muted');
+      return;
+    }
     setSound('playing');
     audio.setVolume(volume / 100);
-    await audio.unlock();
+    let waited: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      audio.unlock(),
+      new Promise<void>((resolve) => {
+        waited = setTimeout(resolve, SOUND_UNLOCK_WAIT_MS);
+      }),
+    ]);
+    clearTimeout(waited);
     if (signal.aborted) return;
     const handle = audio.prepare(SOUND_CHECK, SOUND_CHECK_SEED);
     if (handle === null) {
@@ -391,6 +410,7 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
         </button>
         {sound === 'unavailable' && <p role="status">{SOUND_UNAVAILABLE}</p>}
         {sound === 'silent' && <p role="status">{SOUND_SILENT}</p>}
+        {sound === 'muted' && <p role="status">{SOUND_MUTED}</p>}
         <p className="muted">{SOUND_HINT}</p>
       </section>
 

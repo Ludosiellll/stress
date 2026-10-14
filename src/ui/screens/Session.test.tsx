@@ -210,6 +210,7 @@ describe('Session start', () => {
         order.push(`volume ${String(v)}`);
       }),
       prepare: vi.fn<AudioOut['prepare']>(() => null),
+      available: true,
     };
     const c = fakeDriver(INSTRUCTION);
     c.ackInstruction.mockImplementation(() => {

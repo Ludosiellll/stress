@@ -74,6 +74,9 @@ export interface FakeAudioOptions {
   /** Whether resume() brings the context to 'running' (default) or rejects, as a blocked device does. */
   resumes?: boolean;
   state?: AudioContextState;
+  /** suspend(): settles at once (default), throws, rejects, or (suspendDelayed) waits for finishSuspend(). */
+  suspends?: 'ok' | 'throws' | 'rejects';
+  suspendDelayed?: boolean;
 }
 
 /** AudioContext double for the player tests: records buffers, sources and gains instead of playing. */
@@ -85,11 +88,39 @@ export class FakeAudioContext implements AudioContextLike {
   readonly sources: FakeSource[] = [];
   readonly gains: FakeGain[] = [];
   resumeCalls = 0;
+  suspendCalls = 0;
   private readonly resumes: boolean;
+  private readonly suspends: NonNullable<FakeAudioOptions['suspends']>;
+  private readonly suspendDelayed: boolean;
+  private settleSuspend: (() => void) | null = null;
 
   constructor(o: FakeAudioOptions = {}) {
     this.state = o.state ?? 'suspended';
     this.resumes = o.resumes ?? true;
+    this.suspends = o.suspends ?? 'ok';
+    this.suspendDelayed = o.suspendDelayed ?? false;
+  }
+
+  suspend(): Promise<void> {
+    this.suspendCalls++;
+    if (this.suspends === 'throws') throw new Error('InvalidStateError');
+    if (this.suspends === 'rejects') return Promise.reject(new Error('InvalidStateError'));
+    if (!this.suspendDelayed) {
+      this.state = 'suspended';
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      this.settleSuspend = () => {
+        this.state = 'suspended';
+        resolve();
+      };
+    });
+  }
+
+  /** A delayed suspend() settles now. */
+  finishSuspend(): void {
+    this.settleSuspend?.();
+    this.settleSuspend = null;
   }
 
   resume(): Promise<void> {
