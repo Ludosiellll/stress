@@ -6,6 +6,8 @@ import type { StepOf } from '../../session/steps';
 
 export interface TableViewProps {
   step: StepOf<'table_block'>;
+  /** The run is being saved: the cells are locked. */
+  busy: boolean;
   onSubmit: (run: TableRun) => void;
 }
 
@@ -29,7 +31,7 @@ const same = (a: TableCell, b: TableCell): boolean => a.value === b.value && a.c
  * last correct click or at the deadline. With `reshuffleEvery` the cells are shuffled after every N
  * correct clicks (seeded by the block seed, so a run can be replayed).
  */
-export default function TableView({ step, onSubmit }: TableViewProps) {
+export default function TableView({ step, busy, onSubmit }: TableViewProps) {
   const { params, task } = step;
   const sequence = useMemo(() => taskSequence(task, params.size), [task, params.size]);
   const [cells, setCells] = useState(step.cells);
@@ -87,6 +89,7 @@ export default function TableView({ step, onSubmit }: TableViewProps) {
             key={`${cell.color}${String(cell.value)}`}
             type="button"
             tabIndex={-1}
+            disabled={busy}
             className="table-cell"
             data-color={cell.color}
             style={{ color: INK[cell.color] }}

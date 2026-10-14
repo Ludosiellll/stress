@@ -260,7 +260,7 @@ export function updatedRatings(
 export type DiagnosticPart =
   | { module: ReactionModuleId; summary: ReactionSummary }
   | { module: 'gorbov'; run: number; seconds: number | null }
-  | { module: 'numseries'; correct: number };
+  | { module: 'numseries'; correct: number; total: number };
 
 /**
  * pzmr/szmr medianRt, gonogo score × 100 (percent, Ruling R18), rdo meanAbsErrorMs, Gorbov metrics only when

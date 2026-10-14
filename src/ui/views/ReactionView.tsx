@@ -68,7 +68,7 @@ export default function ReactionView({ step, nominalFrameMs, onDone, onAbort, on
       runner.abort('focus_lost');
     });
     const onEscape = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return;
+      if (e.key !== 'Escape' || e.repeat) return;
       e.preventDefault();
       stopped = true;
       runner.abort('user');

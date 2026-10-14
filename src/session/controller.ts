@@ -35,6 +35,7 @@ import {
   saveErrorMessage,
   seriesLines,
   tableLines,
+  type SaveErrorWhat,
   type SeriesAnswer,
   type Step,
   type StepOf,
@@ -54,7 +55,8 @@ export interface SessionStartOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
-export type DiscardReason = 'focus_lost' | 'error';
+/** focus_lost: the window lost focus; error: a runner or drawing failure; user: the user paused (Escape). */
+export type DiscardReason = 'focus_lost' | 'error' | 'user';
 
 /** First 3 blocks of a module ever are calibration blocks (g = 2). */
 const CALIBRATION_BLOCKS = 3;
@@ -110,6 +112,8 @@ interface FinishedBlock {
 /** What follows the writes on screen: success, or giving up on them (null: cannot be skipped). */
 interface SaveContext {
   what: string;
+  /** What `save_error` reports as pending, asked when the writes fail. */
+  stage: () => SaveErrorWhat;
   onSaved: () => void | Promise<void>;
   onAbandon: (() => void | Promise<void>) | null;
   error: unknown;
@@ -195,7 +199,7 @@ export class SessionController {
     const c = new SessionController(o, scale, states, ratings);
     const row = sessionRow(c.sessionId, o.now().toISOString(), o.plan.kind, o.appVersion);
     await c.save(
-      { what: 'session start', onSaved: () => c.enterSegment(0), onAbandon: null },
+      { what: 'session start', stage: () => 'session_start', onSaved: () => c.enterSegment(0), onAbandon: null },
       [{ label: 'createSession', run: () => o.repo.createSession(row) }],
     );
     return c;
@@ -301,7 +305,7 @@ export class SessionController {
         rows: (blockId) => ({ trials: [], items: logicItemRows(blockId, outcomes, at) }),
         onCommit: () => {
           if (ratings !== null) this.ratings = ratings;
-          else this.diagParts.push({ module: 'numseries', correct: successes });
+          else this.diagParts.push({ module: 'numseries', correct: successes, total });
         },
         extraWrites: ratings === null ? [] : [{ label: 'saveRatings', run: () => this.repo.saveRatings(ratings) }],
       });
@@ -380,7 +384,7 @@ export class SessionController {
       const done = (): void => {
         this.done(null);
       };
-      await this.save({ what: 'session end', onSaved: done, onAbandon: done }, writes);
+      await this.save({ what: 'session end', stage: () => 'session_end', onSaved: done, onAbandon: done }, writes);
     });
   }
 
@@ -471,7 +475,7 @@ export class SessionController {
     const done = (): void => {
       this.done(diagnostic);
     };
-    await this.save({ what: 'session end', onSaved: done, onAbandon: done }, writes);
+    await this.save({ what: 'session end', stage: () => 'session_end', onSaved: done, onAbandon: done }, writes);
   }
 
   private finishWrite(): Write {
@@ -480,7 +484,9 @@ export class SessionController {
   }
 
   private done(diagnostic: DiagnosticResults | null): void {
-    this.current = { kind: 'done', sessionId: this.sessionId, diagnostic };
+    let seriesTotal: number | null = null;
+    for (const p of this.diagParts) if (p.module === 'numseries') seriesTotal = p.total;
+    this.current = { kind: 'done', sessionId: this.sessionId, diagnostic, seriesTotal };
   }
 
   // ---------- blocks ----------
@@ -560,6 +566,7 @@ export class SessionController {
     await this.save(
       {
         what: `${b.module} block`,
+        stage: () => (committed ? 'block_cache' : 'block'),
         onSaved: () => {
           this.current = { kind: 'summary', view };
         },
@@ -624,7 +631,12 @@ export class SessionController {
       return;
     }
     ctx.error = outcome.error;
-    this.current = { kind: 'save_error', message: saveErrorMessage(outcome.error), canAbandon: ctx.onAbandon !== null };
+    this.current = {
+      kind: 'save_error',
+      message: saveErrorMessage(outcome.error),
+      canAbandon: ctx.onAbandon !== null,
+      what: ctx.stage(),
+    };
   }
 
   // ---------- guards ----------

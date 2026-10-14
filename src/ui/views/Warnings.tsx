@@ -1,18 +1,24 @@
 import { useEffect, useEffectEvent, useState } from 'react';
 import { measureRefresh } from '../../engine/timing';
 import { useApp } from '../AppContext';
+import { FALLBACK_FRAME_MS } from '../frameSampler';
 import { useKeyDown } from '../keys';
 
 export interface WarningsProps {
-  /** Frame timestamps for about 1 s (requestAnimationFrame). */
-  measureFrames: () => Promise<number[]>;
+  /** Frame timestamps for about 1 s (requestAnimationFrame); stops when `signal` aborts. */
+  measureFrames: (signal: AbortSignal) => Promise<number[]>;
   /** Measured frame interval in ms (60 Hz when the measurement failed). */
   onReady: (nominalFrameMs: number) => void;
   onBack: () => void;
 }
 
 const DROPPED_LIMIT = 0.05;
-const FALLBACK_FRAME_MS = 1000 / 60;
+
+const HEADLINE = {
+  battery: 'Подключи зарядку и включи режим максимальной производительности. Иначе время реакции будет измерено неточно.',
+  dropping: 'Экран пропускает кадры. Закрой лишние программы и включи режим максимальной производительности.',
+  failed: 'Не удалось проверить экран.',
+} as const;
 
 /** 0.075 → «7,5», 0.1 → «10». */
 const percent = (ratio: number): string => String(Math.round(ratio * 1000) / 10).replace('.', ',');
@@ -32,17 +38,17 @@ export default function Warnings({ measureFrames, onReady, onBack }: WarningsPro
   const ready = useEffectEvent(onReady);
 
   useEffect(() => {
-    let live = true;
+    const abort = new AbortController();
     const measure = async (): Promise<{ frameMs: number; droppedRatio: number | null }> => {
       try {
-        const stats = measureRefresh(await measureFrames());
+        const stats = measureRefresh(await measureFrames(abort.signal));
         return { frameMs: stats.intervalMs, droppedRatio: stats.droppedRatio };
       } catch {
         return { frameMs: FALLBACK_FRAME_MS, droppedRatio: null };
       }
     };
     void Promise.all([measure(), platform.powerCharging().catch(() => null)]).then(([frames, charging]) => {
-      if (!live) return;
+      if (abort.signal.aborted) return;
       const battery = charging === false;
       const failed = frames.droppedRatio === null;
       const dropping = frames.droppedRatio !== null && frames.droppedRatio > DROPPED_LIMIT;
@@ -53,7 +59,7 @@ export default function Warnings({ measureFrames, onReady, onBack }: WarningsPro
       setCheck({ kind: 'warn', frameMs: frames.frameMs, battery, droppedRatio: dropping ? frames.droppedRatio : null, failed });
     });
     return () => {
-      live = false;
+      abort.abort();
     };
   }, [measureFrames, platform]);
 
@@ -69,17 +75,16 @@ export default function Warnings({ measureFrames, onReady, onBack }: WarningsPro
       </div>
     );
   }
+  const headline = check.battery ? HEADLINE.battery : check.droppedRatio !== null ? HEADLINE.dropping : HEADLINE.failed;
   return (
     <div className="screen-center">
       <p role="alert" className="warning">
-        Подключи зарядку и включи режим максимальной производительности. Иначе время реакции будет измерено неточно.
+        {headline}
       </p>
       <ul>
         {check.battery && <li>Ноутбук работает от батареи.</li>}
-        {check.droppedRatio !== null && (
-          <li>Пропущено кадров: {percent(check.droppedRatio)} % (норма — до 5 %).</li>
-        )}
-        {check.failed && <li>Не удалось измерить частоту экрана.</li>}
+        {check.droppedRatio !== null && <li>Пропущено кадров: {percent(check.droppedRatio)} % (норма — до 5 %).</li>}
+        {check.failed && headline !== HEADLINE.failed && <li>{HEADLINE.failed}</li>}
       </ul>
       <div className="actions">
         <button type="button" className="primary" autoFocus onClick={() => { onReady(check.frameMs); }}>

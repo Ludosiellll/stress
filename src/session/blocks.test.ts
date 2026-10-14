@@ -129,7 +129,7 @@ describe('diagnosticResults', () => {
       { module: 'gorbov', run: 0, seconds: 30 },
       { module: 'gorbov', run: 1, seconds: 35 },
       { module: 'gorbov', run: 2, seconds: 70 },
-      { module: 'numseries', correct: 14 },
+      { module: 'numseries', correct: 14, total: 20 },
     ]);
     expect(all).toEqual({
       pzmrMedianRt: 301,

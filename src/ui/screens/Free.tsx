@@ -4,6 +4,7 @@ import { hashString } from '../../engine/rng';
 import type { ModuleId } from '../../engine/types';
 import { moduleTitles } from '../../modules/registry';
 import { useApp } from '../AppContext';
+import { logEvent } from '../errorLog';
 import { localDate } from '../format';
 import { useKeyDown } from '../keys';
 
@@ -18,12 +19,20 @@ const MODULES: readonly ModuleId[] = ['pzmr', 'szmr', 'gonogo', 'rdo', 'gorbov',
 export default function Free({ onStart, onBack }: FreeProps) {
   const { repo } = useApp();
   const [sessions, setSessions] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
-    void repo.listSessions().then((list) => {
-      if (live) setSessions(list.length);
-    });
+    repo.listSessions().then(
+      (list) => {
+        if (live) setSessions(list.length);
+      },
+      (e: unknown) => {
+        const message = e instanceof Error ? e.message : String(e);
+        void logEvent(repo, 'error', `Свободная тренировка: ${message}`);
+        if (live) setError(message);
+      },
+    );
     return () => {
       live = false;
     };
@@ -33,6 +42,18 @@ export default function Free({ onStart, onBack }: FreeProps) {
     if (e.key === 'Escape') onBack();
   });
 
+  if (error !== null) {
+    return (
+      <section aria-label="Свободная тренировка">
+        <p role="alert">Не удалось загрузить данные: {error}</p>
+        <div className="actions">
+          <button type="button" autoFocus onClick={onBack}>
+            Назад
+          </button>
+        </div>
+      </section>
+    );
+  }
   if (sessions === null) return <p>Загрузка…</p>;
 
   const start = (module: ModuleId): void => {

@@ -33,9 +33,17 @@ export type Step =
   | { kind: 'summary'; view: BlockSummaryView }
   | { kind: 'fatigue_prompt'; module: ModuleId }
   /** canAbandon: abandonPending() may drop the unsaved writes (not for the session row itself). */
-  | { kind: 'save_error'; message: string; canAbandon: boolean }
+  | { kind: 'save_error'; message: string; canAbandon: boolean; what: SaveErrorWhat }
   | { kind: 'wellbeing' }
-  | { kind: 'done'; sessionId: string; diagnostic: DiagnosticResults | null };
+  /** seriesTotal: number-series items of a diagnostic (for «14 из 20»); null otherwise or if that block was not stored. */
+  | { kind: 'done'; sessionId: string; diagnostic: DiagnosticResults | null; seriesTotal: number | null };
+
+/**
+ * Which writes failed (Ruling R32): `block` — the block itself (skipping drops it as if it was never played);
+ * `block_cache` — only the cached level/ratings after the block was stored (rebuilt at the next start);
+ * `session_start` — the session row; `session_end` — the session end (and wellbeing / diagnostic results).
+ */
+export type SaveErrorWhat = 'block' | 'block_cache' | 'session_start' | 'session_end';
 
 export type StepOf<K extends Step['kind']> = Extract<Step, { kind: K }>;
 

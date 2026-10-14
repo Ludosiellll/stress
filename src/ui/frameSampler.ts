@@ -1,3 +1,6 @@
+/** Frame interval assumed when it could not be measured (60 Hz). */
+export const FALLBACK_FRAME_MS = 1000 / 60;
+
 /**
  * Collects requestAnimationFrame timestamps for `durationMs` (the timestamps share the performance.now() time base).
  * Rejects, and stops asking for frames, when `signal` is aborted or the window gets hidden: a hidden window

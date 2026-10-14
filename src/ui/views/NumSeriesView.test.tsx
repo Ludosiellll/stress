@@ -33,7 +33,7 @@ afterEach(() => {
 
 describe('NumSeriesView', () => {
   it('shows the series large with a question mark and focuses the answer field', () => {
-    render(<NumSeriesView step={step([A, B])} exposeAnswer={false} onSubmit={vi.fn()} />);
+    render(<NumSeriesView step={step([A, B])} exposeAnswer={false} busy={false} onSubmit={vi.fn()} />);
     expect(screen.getByText('2, 5, 11, 23, 47, ?')).toBeTruthy();
     expect(screen.getByText('Задача 1 из 2')).toBeTruthy();
     const input = screen.getByRole<HTMLInputElement>('textbox', { name: 'Ответ' });
@@ -42,13 +42,13 @@ describe('NumSeriesView', () => {
   });
 
   it('writes negative numbers with a minus sign', () => {
-    render(<NumSeriesView step={step([B])} exposeAnswer={false} onSubmit={vi.fn()} />);
+    render(<NumSeriesView step={step([B])} exposeAnswer={false} busy={false} onSubmit={vi.fn()} />);
     expect(screen.getByText('3, −1, −5, −9, −13, ?')).toBeTruthy();
   });
 
   it('«−17» + Enter stores −17 and goes to the next item; after the last one submits all answers', () => {
     const onSubmit = vi.fn();
-    render(<NumSeriesView step={step([B, A])} exposeAnswer={false} onSubmit={onSubmit} />);
+    render(<NumSeriesView step={step([B, A])} exposeAnswer={false} busy={false} onSubmit={onSubmit} />);
     answer('−17');
     expect(screen.getByText('2, 5, 11, 23, 47, ?')).toBeTruthy();
     expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Ответ' }).value).toBe('');
@@ -65,7 +65,7 @@ describe('NumSeriesView', () => {
 
   it('«abc» shows «Введи целое число» and stays on the item', () => {
     const onSubmit = vi.fn();
-    render(<NumSeriesView step={step([A, B])} exposeAnswer={false} onSubmit={onSubmit} />);
+    render(<NumSeriesView step={step([A, B])} exposeAnswer={false} busy={false} onSubmit={onSubmit} />);
     answer('abc');
     expect(screen.getByRole('alert').textContent).toBe('Введи целое число');
     expect(screen.getByText('2, 5, 11, 23, 47, ?')).toBeTruthy();
@@ -79,7 +79,7 @@ describe('NumSeriesView', () => {
 
   it('ignores a held Enter', () => {
     const onSubmit = vi.fn();
-    render(<NumSeriesView step={step([A, B])} exposeAnswer={false} onSubmit={onSubmit} />);
+    render(<NumSeriesView step={step([A, B])} exposeAnswer={false} busy={false} onSubmit={onSubmit} />);
     const input = screen.getByRole('textbox', { name: 'Ответ' });
     fireEvent.change(input, { target: { value: '95' } });
     fireEvent.keyDown(input, { key: 'Enter', code: 'Enter', repeat: true });
@@ -89,7 +89,7 @@ describe('NumSeriesView', () => {
   it('a per-item timeout gives null and moves on; the bar shows the seconds left', () => {
     vi.useFakeTimers();
     const onSubmit = vi.fn();
-    render(<NumSeriesView step={step([A, B])} exposeAnswer={false} onSubmit={onSubmit} />);
+    render(<NumSeriesView step={step([A, B])} exposeAnswer={false} busy={false} onSubmit={onSubmit} />);
     expect(screen.getByText('Осталось: 40 с')).toBeTruthy();
     act(() => {
       vi.advanceTimersByTime(10_500);
@@ -114,7 +114,7 @@ describe('NumSeriesView', () => {
   it('the total limit ends the block: the current and the remaining items get null', () => {
     vi.useFakeTimers();
     const onSubmit = vi.fn();
-    render(<NumSeriesView step={step([A, B, C], null, 60_000)} exposeAnswer={false} onSubmit={onSubmit} />);
+    render(<NumSeriesView step={step([A, B, C], null, 60_000)} exposeAnswer={false} busy={false} onSubmit={onSubmit} />);
     expect(screen.getByText('Осталось: 60 с')).toBeTruthy();
     act(() => {
       vi.advanceTimersByTime(10_000);
@@ -131,10 +131,15 @@ describe('NumSeriesView', () => {
     ]);
   });
 
+  it('locks the field while the answers are being saved', () => {
+    render(<NumSeriesView step={step([A])} exposeAnswer={false} busy onSubmit={vi.fn()} />);
+    expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Ответ' }).disabled).toBe(true);
+  });
+
   it('exposes the answer as data-e2e-answer only in e2e mode', () => {
-    const { container, rerender } = render(<NumSeriesView step={step([A])} exposeAnswer={false} onSubmit={vi.fn()} />);
+    const { container, rerender } = render(<NumSeriesView step={step([A])} exposeAnswer={false} busy={false} onSubmit={vi.fn()} />);
     expect(container.querySelector('[data-e2e-answer]')).toBeNull();
-    rerender(<NumSeriesView step={step([A])} exposeAnswer onSubmit={vi.fn()} />);
+    rerender(<NumSeriesView step={step([A])} exposeAnswer busy={false} onSubmit={vi.fn()} />);
     expect(container.querySelector('[data-e2e-answer]')?.getAttribute('data-e2e-answer')).toBe('95');
   });
 });

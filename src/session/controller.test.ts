@@ -200,7 +200,7 @@ describe('SessionController — flow', () => {
       'numseries',
       'numseries',
     ]);
-    expect(expectStep(h.c, 'done')).toEqual({ kind: 'done', sessionId: h.c.sessionId, diagnostic: null });
+    expect(expectStep(h.c, 'done')).toEqual({ kind: 'done', sessionId: h.c.sessionId, diagnostic: null, seriesTotal: null });
   });
 
   it('free session ends with done, no wellbeing', async () => {
@@ -466,7 +466,8 @@ describe('SessionController — levels and persistence', () => {
     const t = await begin(planFree('schulte', 5));
     t.c.ackInstruction();
     const table = expectStep(t.c, 'table_block');
-    t.c.discardBlock('error');
+    t.c.discardBlock('user');
+    expect(t.c.discards).toEqual([{ module: 'schulte', reason: 'user' }]);
     const again = expectStep(t.c, 'table_block');
     expect(again.seed).not.toBe(table.seed);
     expect(again.L).toBe(table.L);
@@ -725,7 +726,7 @@ describe('SessionController — save errors', () => {
     const second = expectStep(h.c, 'reaction_block');
     repo.failures.addBlock = 3;
     await h.c.submitReaction(playTimeline(second.specs, perfectPlayer));
-    expect(expectStep(h.c, 'save_error').canAbandon).toBe(true);
+    expect(expectStep(h.c, 'save_error')).toMatchObject({ canAbandon: true, what: 'block' });
     await h.c.abandonPending();
 
     const third = expectStep(h.c, 'reaction_block');
@@ -754,7 +755,7 @@ describe('SessionController — save errors', () => {
     h.c.ackInstruction();
     repo.failures.saveModuleState = 3;
     await h.c.submitReaction(playTimeline(expectStep(h.c, 'reaction_block').specs, perfectPlayer));
-    expectStep(h.c, 'save_error');
+    expect(expectStep(h.c, 'save_error')).toMatchObject({ canAbandon: true, what: 'block_cache' });
     await h.c.abandonPending();
     const next = expectStep(h.c, 'reaction_block');
     expect(next.L).toBe(2); // the stored block counts, and the next block has the next index
@@ -782,7 +783,7 @@ describe('SessionController — save errors', () => {
     const repo = new FlakyRepo();
     repo.failures.createSession = 3;
     const h = await begin(planFree('pzmr', 1), { repo });
-    expect(expectStep(h.c, 'save_error').canAbandon).toBe(false);
+    expect(expectStep(h.c, 'save_error')).toMatchObject({ canAbandon: false, what: 'session_start' });
     await expect(h.c.abandonPending()).rejects.toThrow(/session start/);
     expectStep(h.c, 'save_error');
     await expect(h.c.abandonPending.call(h.c)).rejects.toThrow();
@@ -793,7 +794,7 @@ describe('SessionController — save errors', () => {
     const h = await begin(planFree('pzmr', 1), { repo });
     repo.failures.finishSession = 3;
     await drive(h, { blockMs: 6 * MIN }).catch(() => undefined);
-    expectStep(h.c, 'save_error');
+    expect(expectStep(h.c, 'save_error')).toMatchObject({ canAbandon: true, what: 'session_end' });
     await h.c.abandonPending();
     expectStep(h.c, 'done');
     expect((await repo.listSessions())[0]?.endedAt).toBeNull();
@@ -885,7 +886,7 @@ describe('SessionController — save errors', () => {
     expectStep(h.c, 'wellbeing');
     repo.failures.addWellbeing = 3;
     await h.c.submitWellbeing({ sleepH: 6.5, caffeine: false, mood: 3 });
-    expectStep(h.c, 'save_error');
+    expect(expectStep(h.c, 'save_error').what).toBe('session_end');
     await h.c.retrySave();
     expectStep(h.c, 'done');
     expect(await repo.listWellbeing()).toMatchObject([{ sleepH: 6.5, caffeine: false, mood: 3, date: '2026-10-14' }]);
@@ -1098,6 +1099,7 @@ describe('SessionController — diagnostics', () => {
     };
     const done = expectStep(h.c, 'done');
     expect(done.diagnostic).toEqual(expected);
+    expect(done.seriesTotal).toBe(20);
     const diags = await repo.listDiagnostics();
     expect(diags).toHaveLength(1);
     expect(diags[0]).toMatchObject({ sessionId: h.c.sessionId, number: 1 });
@@ -1135,6 +1137,7 @@ describe('SessionController — diagnostics', () => {
     const done = expectStep(h.c, 'done');
     expect(done.diagnostic?.gorbov).toBeNull();
     expect(done.diagnostic?.numseriesCorrect).toBe(2);
+    expect(done.seriesTotal).toBe(3);
   });
 
   it('the three diagnostic Gorbov tables come from different seeds', async () => {

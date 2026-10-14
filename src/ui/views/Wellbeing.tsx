@@ -19,24 +19,24 @@ function parseSleep(raw: string): number | null {
   return Number.isFinite(n) && n >= 0 && n <= 14 && Number.isInteger(n * 2) ? n : null;
 }
 
-/** After a training session: sleep, caffeine and mood, or «Пропустить». */
+/** After a training session: sleep, caffeine and mood (all three required), or «Пропустить». */
 export default function Wellbeing({ busy, onSubmit }: WellbeingProps) {
   const [sleep, setSleep] = useState('');
-  const [caffeine, setCaffeine] = useState(false);
+  const [caffeine, setCaffeine] = useState<boolean | null>(null);
   const [mood, setMood] = useState<Mood | null>(null);
   const sleepH = parseSleep(sleep);
-  const ready = sleepH !== null && mood !== null;
+  const ready = sleepH !== null && caffeine !== null && mood !== null;
 
   return (
     <form
       className="screen-center wellbeing"
       onSubmit={(e) => {
         e.preventDefault();
-        if (busy || sleepH === null || mood === null) return;
+        if (busy || sleepH === null || caffeine === null || mood === null) return;
         onSubmit({ sleepH, caffeine, mood });
       }}
     >
-      <h2>Самочувствие</h2>
+      <h2 tabIndex={-1}>Самочувствие</h2>
       <label className="field">
         Сон прошлой ночью, часов
         <input
@@ -55,10 +55,10 @@ export default function Wellbeing({ busy, onSubmit }: WellbeingProps) {
       <fieldset>
         <legend>Кофеин сегодня</legend>
         <label className="choice-inline">
-          <input type="radio" name="caffeine" checked={caffeine} onChange={() => { setCaffeine(true); }} /> Да
+          <input type="radio" name="caffeine" checked={caffeine === true} onChange={() => { setCaffeine(true); }} /> Да
         </label>
         <label className="choice-inline">
-          <input type="radio" name="caffeine" checked={!caffeine} onChange={() => { setCaffeine(false); }} /> Нет
+          <input type="radio" name="caffeine" checked={caffeine === false} onChange={() => { setCaffeine(false); }} /> Нет
         </label>
       </fieldset>
       <fieldset>

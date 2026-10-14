@@ -51,6 +51,19 @@ describe('Free', () => {
     expect((second.onStart.mock.calls[0]?.[0] as SessionPlan).seed).not.toBe(plan.seed);
   });
 
+  it('a failed load is shown and logged; «Назад» still works', async () => {
+    const repo = new MemoryRepository();
+    repo.listSessions = () => Promise.reject(new Error('база занята'));
+    const onBack = vi.fn();
+    renderWithApp(<Free onStart={vi.fn()} onBack={onBack} />, createFakePlatform({ repo }), repo);
+    expect(await screen.findByText('Не удалось загрузить данные: база занята')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Назад' }));
+    expect(onBack).toHaveBeenCalledTimes(1);
+    await waitFor(async () => {
+      expect((await repo.listLog(5)).map((l) => l.message)).toContain('Свободная тренировка: база занята');
+    });
+  });
+
   it('«Назад» and Escape go back', async () => {
     const { onBack } = await renderFree();
     fireEvent.click(screen.getByRole('button', { name: 'Назад' }));

@@ -28,11 +28,16 @@ describe('Wellbeing', () => {
     expect(onSubmit).toHaveBeenCalledWith({ sleepH: 7.5, caffeine: true, mood: 4 });
   });
 
-  it('caffeine defaults to «Нет»; sleep must be 0–14 in half hours', () => {
+  it('caffeine needs an explicit answer; sleep must be 0–14 in half hours', () => {
     const onSubmit = vi.fn();
     render(<Wellbeing busy={false} onSubmit={onSubmit} />);
     const sleep = screen.getByRole('spinbutton', { name: 'Сон прошлой ночью, часов' });
     fireEvent.click(screen.getByRole('radio', { name: '2' }));
+    fireEvent.change(sleep, { target: { value: '8' } });
+    expect(screen.getByRole<HTMLInputElement>('radio', { name: 'Нет' }).checked).toBe(false);
+    expect(save().disabled).toBe(true);
+    fireEvent.click(screen.getByRole('radio', { name: 'Нет' }));
+    expect(save().disabled).toBe(false);
     for (const bad of ['15', '-1', '7.3', '']) {
       fireEvent.change(sleep, { target: { value: bad } });
       expect(save().disabled).toBe(true);

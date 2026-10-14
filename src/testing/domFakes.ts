@@ -7,10 +7,15 @@ type Ctx = Record<string | symbol, unknown>;
 
 /**
  * Makes `canvas.getContext('2d')` return a context whose methods do nothing and whose properties can be set.
- * `overrides` replace single methods (e.g. one that throws). Returns the calls made, by method name.
+ * `overrides` replace single methods (e.g. one that throws). Returns the calls made, by method name, and a context count.
  */
-export function mockCanvas(overrides: Record<string, (...args: unknown[]) => unknown> = {}): { calls: string[] } {
+export function mockCanvas(overrides: Record<string, (...args: unknown[]) => unknown> = {}): {
+  calls: string[];
+  /** How many times a 2D context was asked for (one per renderer). */
+  contexts: () => number;
+} {
   const calls: string[] = [];
+  let contexts = 0;
   const values: Ctx = {};
   const ctx = new Proxy(values, {
     get(target, prop) {
@@ -26,8 +31,11 @@ export function mockCanvas(overrides: Record<string, (...args: unknown[]) => unk
       return true;
     },
   });
-  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation((() => ctx) as never);
-  return { calls };
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation((() => {
+    contexts++;
+    return ctx;
+  }) as never);
+  return { calls, contexts: () => contexts };
 }
 
 export interface ManualFrames {

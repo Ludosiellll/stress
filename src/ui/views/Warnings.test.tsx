@@ -44,16 +44,51 @@ describe('Warnings', () => {
     expect(onReady).toHaveBeenCalledWith(10);
   });
 
-  it('warns about dropped frames above 5 %', async () => {
+  it('warns about dropped frames above 5 % with its own headline when charging', async () => {
     renderWarnings(true, Promise.resolve(frames(61, 10, 10)));
     expect(await screen.findByText('Пропущено кадров: 10 % (норма — до 5 %).')).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toBe(
+      'Экран пропускает кадры. Закрой лишние программы и включи режим максимальной производительности.',
+    );
+  });
+
+  it('on battery with dropped frames the battery headline leads and the frames are listed', async () => {
+    renderWarnings(false, Promise.resolve(frames(61, 10, 10)));
+    expect(await screen.findByText('Пропущено кадров: 10 % (норма — до 5 %).')).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toMatch(/^Подключи зарядку/);
   });
 
   it('a failed measurement warns and continues with 60 Hz', async () => {
     const { onReady } = renderWarnings(true, Promise.resolve([1, 2, 3]));
-    expect(await screen.findByText('Не удалось измерить частоту экрана.')).toBeTruthy();
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toBe('Не удалось проверить экран.');
     fireEvent.click(screen.getByRole('button', { name: 'Продолжить всё равно' }));
     expect(onReady).toHaveBeenCalledWith(1000 / 60);
+  });
+
+  it('on battery a failed measurement is listed under the battery headline', async () => {
+    renderWarnings(false, Promise.resolve([1, 2, 3]));
+    expect(await screen.findByText('Не удалось проверить экран.')).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toMatch(/^Подключи зарядку/);
+  });
+
+  it('stops the measurement when unmounted', () => {
+    const platform = createFakePlatform({ charging: true });
+    let signal: AbortSignal | null = null;
+    const { unmount } = renderWithApp(
+      <Warnings
+        measureFrames={(s) => {
+          signal = s;
+          return new Promise<number[]>(() => undefined);
+        }}
+        onReady={vi.fn()}
+        onBack={vi.fn()}
+      />,
+      platform,
+      platform.repo,
+    );
+    unmount();
+    expect((signal as AbortSignal | null)?.aborted).toBe(true);
   });
 
   it('Escape goes back', async () => {

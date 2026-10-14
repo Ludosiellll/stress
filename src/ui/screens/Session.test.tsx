@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import { MemoryRepository } from '../../data/memoryRepository';
 import type { DiagnosticResults } from '../../engine/diagnostic';
 import { planFree, type SessionPlan } from '../../engine/planner';
+import { moduleTitles } from '../../modules/registry';
 import type { BlockTimeline, TrialSpec } from '../../engine/reaction/types';
 import type { SessionStartOptions } from '../../session/controller';
 import type { BlockSummaryView, Step, StepOf } from '../../session/steps';
@@ -205,15 +206,15 @@ describe('Session start', () => {
 describe('Session steps', () => {
   it('renders the view of each step kind', async () => {
     const cases: Array<[Step, () => HTMLElement]> = [
-      [INSTRUCTION, () => screen.getByText('Нажми Enter, чтобы начать')],
+      [INSTRUCTION, () => screen.getByText('Нажми Enter, чтобы начать. Esc — пауза.')],
       [REACTION, () => document.querySelector('canvas') as HTMLElement],
       [TABLE, () => screen.getByRole('group', { name: 'Таблица' })],
       [SERIES, () => screen.getByRole('textbox', { name: 'Ответ' })],
       [{ kind: 'summary', view: SUMMARY }, () => screen.getByText('Уровень: 2,0 → 3,5')],
       [{ kind: 'fatigue_prompt', module: 'szmr' }, () => screen.getByText(/Похоже на усталость/)],
-      [{ kind: 'save_error', message: 'Не удалось сохранить результаты.', canAbandon: true }, () => screen.getByText('Не удалось сохранить результаты.')],
+      [{ kind: 'save_error', message: 'Не удалось сохранить результаты.', canAbandon: true, what: 'block' }, () => screen.getByText('Не удалось сохранить результаты.')],
       [{ kind: 'wellbeing' }, () => screen.getByRole('button', { name: 'Пропустить' })],
-      [{ kind: 'done', sessionId: 's', diagnostic: null }, () => screen.getByText('Сессия завершена')],
+      [{ kind: 'done', sessionId: 's', diagnostic: null, seriesTotal: null }, () => screen.getByText('Сессия завершена')],
     ];
     for (const [step, find] of cases) {
       const r = await renderSession(fakeDriver(step));
@@ -237,7 +238,7 @@ describe('Session steps', () => {
       return Promise.resolve();
     });
     c.submitWellbeing.mockImplementation(() => {
-      c.step = { kind: 'done', sessionId: 's', diagnostic: null };
+      c.step = { kind: 'done', sessionId: 's', diagnostic: null, seriesTotal: null };
       return Promise.resolve();
     });
     const { onExit, platform } = await renderSession(c);
@@ -259,6 +260,26 @@ describe('Session steps', () => {
     });
     await click('На главную');
     expect(onExit).toHaveBeenCalledTimes(1);
+  });
+
+  it('moves focus to the new screen heading unless something on it has focus', async () => {
+    const c = fakeDriver({ kind: 'summary', view: SUMMARY });
+    c.continueAfterSummary.mockImplementation(() => {
+      c.step = INSTRUCTION;
+      return Promise.resolve();
+    });
+    c.ackInstruction.mockImplementation(() => {
+      c.step = SERIES;
+    });
+    await renderSession(c);
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'ПЗМР' }));
+    await press('Enter');
+    expect(document.activeElement?.textContent).toBe(moduleTitles.pzmr);
+    expect(document.activeElement?.tagName).toBe('H2');
+    expect(document.activeElement).not.toBe(document.body);
+    await click('Начать (Enter)');
+    // The answer field has autofocus; the heading does not take it away.
+    expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Ответ' }));
   });
 
   it('«Закончить модуль» answers the fatigue prompt with stop', async () => {
@@ -325,7 +346,7 @@ describe('Session steps', () => {
       gorbov: { V: 41.25, P: 70.5, Pi: -12 },
       numseriesCorrect: 14,
     };
-    await renderSession(fakeDriver({ kind: 'done', sessionId: 's', diagnostic }), { plan: { ...PLAN, kind: 'diagnostic' } });
+    await renderSession(fakeDriver({ kind: 'done', sessionId: 's', diagnostic, seriesTotal: 20 }), { plan: { ...PLAN, kind: 'diagnostic' } });
     const table = screen.getByRole('table', { name: 'Результаты диагностики' });
     const rows = within(table)
       .getAllByRole('row')
@@ -339,7 +360,7 @@ describe('Session steps', () => {
       ['Горбов — V, среднее время 1-й и 2-й таблиц', '41,3 с'],
       ['Горбов — P, время 3-й таблицы', '70,5 с'],
       ['Горбов — Π, переключение внимания', '−12,0 с'],
-      ['Числовые ряды — решено верно', '14'],
+      ['Числовые ряды — решено верно', '14 из 20'],
     ]);
   });
 
@@ -352,7 +373,7 @@ describe('Session steps', () => {
       gorbov: null,
       numseriesCorrect: null,
     };
-    await renderSession(fakeDriver({ kind: 'done', sessionId: 's', diagnostic }));
+    await renderSession(fakeDriver({ kind: 'done', sessionId: 's', diagnostic, seriesTotal: null }));
     expect(screen.getAllByText('нет данных')).toHaveLength(8);
   });
 });
@@ -377,6 +398,62 @@ describe('Session reaction blocks', () => {
       expect(c.submitReaction).toHaveBeenCalledTimes(1);
     });
     expect((c.submitReaction.mock.calls[0]?.[0] as BlockTimeline).presses).toEqual([{ key: 'Space', ts: 1300 }]);
+  });
+
+  it('mounts one renderer per block: instruction → block → discard → fresh block', async () => {
+    vi.restoreAllMocks();
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    const canvas = mockCanvas();
+    const c = fakeDriver(INSTRUCTION);
+    c.ackInstruction.mockImplementation(() => {
+      c.step = REACTION;
+    });
+    c.discardBlock.mockImplementation(() => {
+      c.step = { ...REACTION, L: 1 };
+    });
+    await renderSession(c);
+    await press('Enter');
+    await nextTask();
+    expect(canvas.contexts()).toBe(1);
+    frames.run(1000);
+    await act(async () => {
+      window.dispatchEvent(new Event('blur'));
+      await Promise.resolve();
+    });
+    await nextTask();
+    await press('Enter');
+    await nextTask();
+    expect(canvas.contexts()).toBe(2);
+  });
+
+  it('after two drawing failures in a row the notice also offers to end the session', async () => {
+    vi.restoreAllMocks();
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    mockCanvas({
+      arc: () => {
+        throw new Error('draw failed');
+      },
+    });
+    const c = fakeDriver(REACTION);
+    c.discardBlock.mockImplementation(() => {
+      c.step = { ...REACTION };
+    });
+    const { onExit } = await renderSession(c);
+    const fail = async (): Promise<void> => {
+      frames.run(1000);
+      frames.run(1100);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      await screen.findByText('Ошибка отрисовки. Блок будет повторён.');
+      await nextTask();
+    };
+    await fail();
+    expect(screen.queryByRole('button', { name: 'Завершить сессию' })).toBeNull();
+    await click('Дальше (Enter)');
+    await fail();
+    await click('Завершить сессию');
+    expect(onExit).toHaveBeenCalledTimes(1);
   });
 
   it('the Enter that starts the block is not a press', async () => {
@@ -478,14 +555,16 @@ describe('Session reaction blocks', () => {
     c.discardBlock.mockImplementation(() => {
       c.step = { ...REACTION, L: 1 };
     });
-    const { repo, onExit, platform } = await renderSession(c);
+    const { onExit, platform } = await renderSession(c);
     frames.run(1000);
     await press('Escape');
-    expect(c.discardBlock).toHaveBeenCalledWith('error');
+    expect(c.discardBlock).toHaveBeenCalledWith('user');
     expect(screen.getByRole('heading', { name: 'Пауза' })).toBeTruthy();
-    await waitFor(async () => {
-      expect((await repo.listLog(10)).map((l) => l.message)).toContain('Пауза: блок отброшен (Esc)');
-    });
+    expect(screen.getByText('Блок начнётся заново. Уже сохранённые блоки не пропадут.')).toBeTruthy();
+    // Escape in the menu does nothing: going on takes Enter or a click.
+    await press('Escape');
+    expect(screen.getByRole('heading', { name: 'Пауза' })).toBeTruthy();
+    expect(c.discardBlock).toHaveBeenCalledTimes(1);
     await click('Продолжить блок заново');
     expect(document.querySelector('canvas')).toBeTruthy();
     frames.run(2000);
@@ -499,7 +578,7 @@ describe('Session reaction blocks', () => {
     const c = fakeDriver(TABLE);
     await renderSession(c);
     await press('Escape');
-    expect(c.discardBlock).toHaveBeenCalledWith('error');
+    expect(c.discardBlock).toHaveBeenCalledWith('user');
     await click('Продолжить блок заново');
 
     cleanup();
@@ -514,8 +593,8 @@ describe('Session reaction blocks', () => {
 });
 
 describe('Session save errors and failures', () => {
-  it('save_error offers only «Повторить» when the write cannot be skipped', async () => {
-    const c = fakeDriver({ kind: 'save_error', message: 'Не удалось сохранить результаты.', canAbandon: false });
+  it('save_error that cannot be skipped offers «Повторить» and «Завершить сессию»', async () => {
+    const c = fakeDriver({ kind: 'save_error', message: 'Не удалось сохранить результаты.', canAbandon: false, what: 'session_start' });
     c.retrySave.mockImplementation(() => {
       c.step = { kind: 'wellbeing' };
       return Promise.resolve();
@@ -529,10 +608,26 @@ describe('Session save errors and failures', () => {
     expect(screen.getByRole('button', { name: 'Пропустить' })).toBeTruthy();
   });
 
-  it('save_error can skip the block when canAbandon', async () => {
-    const c = fakeDriver({ kind: 'save_error', message: 'Не удалось сохранить результаты.', canAbandon: true });
+  it('«Завершить сессию» on an unskippable save error leaves the session', async () => {
+    const c = fakeDriver({ kind: 'save_error', message: 'Не удалось сохранить результаты.', canAbandon: false, what: 'session_start' });
+    const { onExit, platform } = await renderSession(c);
+    await click('Завершить сессию');
+    expect(onExit).toHaveBeenCalledTimes(1);
+    expect(c.abandonPending).not.toHaveBeenCalled();
+    expect(platform.fullscreen.at(-1)).toBe(false);
+  });
+
+  it.each([
+    ['block', 'Пропустить этот блок', null],
+    ['block_cache', 'Продолжить без обновления уровня', /Блок сохранён/],
+    ['session_end', 'Завершить без сохранения итога', null],
+  ] as const)('save_error of a %s offers «%s»', async (what, label, note) => {
+    const c = fakeDriver({ kind: 'save_error', message: 'Не удалось сохранить результаты.', canAbandon: true, what });
     await renderSession(c);
-    await click('Пропустить этот блок');
+    if (note !== null) expect(screen.getByText(note)).toBeTruthy();
+    else expect(screen.queryByText(/Блок сохранён/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Завершить сессию' })).toBeNull();
+    await click(label);
     expect(c.abandonPending).toHaveBeenCalledTimes(1);
   });
 

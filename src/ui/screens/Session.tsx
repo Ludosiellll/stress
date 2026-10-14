@@ -1,15 +1,14 @@
-import { Component, useCallback, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from 'react';
+import { Component, useCallback, useEffect, useRef, useState, type ErrorInfo, type ReactNode, type RefObject } from 'react';
 import type { Repository } from '../../data/repository';
 import type { SessionPlan } from '../../engine/planner';
-import type { ModuleId } from '../../engine/types';
 import { moduleTitles } from '../../modules/registry';
 import type { Platform } from '../../platform';
 import { SessionController, type SessionStartOptions } from '../../session/controller';
-import type { BlockSummaryView } from '../../session/steps';
+import type { BlockSummaryView, Step } from '../../session/steps';
 import { e2eHooks } from '../../testing/e2eHooks';
 import { useApp } from '../AppContext';
 import { logEvent } from '../errorLog';
-import { collectFrameTimestamps } from '../frameSampler';
+import { collectFrameTimestamps, FALLBACK_FRAME_MS } from '../frameSampler';
 import { useKeyDown } from '../keys';
 import BlockSummary from '../views/BlockSummary';
 import Done from '../views/Done';
@@ -41,19 +40,32 @@ export interface SessionProps {
   plan: SessionPlan;
   onExit: () => void;
   /** Frame timestamps for the pre-session check; tests replace the 1-second sampler. */
-  measureFrames?: () => Promise<number[]>;
+  measureFrames?: (signal: AbortSignal) => Promise<number[]>;
   /** Tests pass a controller double. */
   startSession?: (o: SessionStartOptions) => Promise<SessionDriver>;
 }
 
 const CHECK_MS = 1000;
-const FALLBACK_FRAME_MS = 1000 / 60;
+/** After this many drawing failures in a row the notice also offers to end the session. */
+const RENDER_FAILURES_TO_OFFER_EXIT = 2;
 const FOCUS_LOST = 'Окно потеряло фокус. Блок будет повторён.';
 const RENDER_FAILED = 'Ошибка отрисовки. Блок будет повторён.';
 
-const sampleFrames = (): Promise<number[]> => collectFrameTimestamps(CHECK_MS);
+const sampleFrames = (signal: AbortSignal): Promise<number[]> => collectFrameTimestamps(CHECK_MS, signal);
 const startController = (o: SessionStartOptions): Promise<SessionDriver> => SessionController.start(o);
 const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/** A stable number per step object: a block view is keyed by it, so it mounts once per block (a discard makes a new step). */
+const stepIds = new WeakMap<Step, number>();
+let lastStepId = 0;
+function stepId(step: Step): number {
+  let id = stepIds.get(step);
+  if (id === undefined) {
+    id = ++lastStepId;
+    stepIds.set(step, id);
+  }
+  return id;
+}
 
 type Phase =
   | { kind: 'check' }
@@ -65,16 +77,25 @@ type Phase =
  * One session: pre-session check, fullscreen, then whatever `controller.step` says, until done or exit.
  *
  * Every controller call goes through `run`: one at a time, controls disabled meanwhile, the screen re-read
- * from `controller.step` afterwards. A block view is keyed by the call count, so a discarded block mounts
- * fresh. Escape pauses (a running block is discarded first); focus loss and drawing errors discard the
- * block and explain before a fresh one starts.
+ * from `controller.step` afterwards. A block view is keyed by its step object, so it mounts once per block
+ * and a discarded block mounts fresh. Escape pauses (a running block is discarded first); focus loss and
+ * drawing errors discard the block and explain before a fresh one starts. When nothing on the new screen
+ * has focus, its heading gets it (screen readers announce the change).
  */
-function SessionFlow({ plan, onExit, measureFrames = sampleFrames, startSession = startController }: SessionProps) {
+function SessionFlow({
+  plan,
+  onExit,
+  measureFrames = sampleFrames,
+  startSession = startController,
+  rootRef,
+}: SessionProps & { rootRef: RefObject<HTMLElement | null> }) {
   const { platform, repo } = useApp();
   const hooks = e2eHooks();
   const [phase, setPhase] = useState<Phase>({ kind: 'check' });
   const [frameMs, setFrameMs] = useState(FALLBACK_FRAME_MS);
-  const [version, setVersion] = useState(0);
+  // Bumped after every controller call: the step lives in the controller, not in React state.
+  const [, setVersion] = useState(0);
+  const [renderFailures, setRenderFailures] = useState(0);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [pause, setPause] = useState<{ blockDiscarded: boolean } | null>(null);
@@ -104,6 +125,15 @@ function SessionFlow({ plan, onExit, measureFrames = sampleFrames, startSession 
   useEffect(() => {
     if (stepKind === 'done') fullscreen(false);
   }, [stepKind, fullscreen]);
+
+  // After every render: if focus is not on something inside the session screen, put it on the heading.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (root === null) return;
+    const active = document.activeElement;
+    if (active !== null && active !== document.body && root.contains(active)) return;
+    root.querySelector<HTMLElement>('h2[tabindex="-1"]')?.focus();
+  });
 
   const exit = (): void => {
     fullscreen(false);
@@ -148,12 +178,10 @@ function SessionFlow({ plan, onExit, measureFrames = sampleFrames, startSession 
     })();
   };
 
-  const pauseBlock = (module: ModuleId): void => {
+  const pauseBlock = (): void => {
     setPause({ blockDiscarded: true });
-    void logEvent(repo, 'info', 'Пауза: блок отброшен (Esc)', module);
-    // The controller knows only focus_lost and error; the log says it was the user.
     run((c) => {
-      c.discardBlock('error');
+      c.discardBlock('user');
     });
   };
 
@@ -170,8 +198,7 @@ function SessionFlow({ plan, onExit, measureFrames = sampleFrames, startSession 
       // The block after the notice has not started yet: nothing to discard.
       setNotice(null);
       setPause({ blockDiscarded: false });
-    } else if (step.kind === 'table_block') pauseBlock(step.module);
-    else if (step.kind === 'numseries_block') pauseBlock('numseries');
+    } else if (step.kind === 'table_block' || step.kind === 'numseries_block') pauseBlock();
     else setPause({ blockDiscarded: false });
   }, escapePauses);
 
@@ -205,6 +232,7 @@ function SessionFlow({ plan, onExit, measureFrames = sampleFrames, startSession 
         onContinue={() => {
           setNotice(null);
         }}
+        onExit={renderFailures >= RENDER_FAILURES_TO_OFFER_EXIT ? exit : undefined}
       />
     );
   }
@@ -237,15 +265,16 @@ function SessionFlow({ plan, onExit, measureFrames = sampleFrames, startSession 
     case 'reaction_block':
       return (
         <ReactionView
-          key={version}
+          key={stepId(step)}
           step={step}
           nominalFrameMs={frameMs}
           onDone={(timeline) => {
+            setRenderFailures(0);
             run((c) => c.submitReaction(timeline));
           }}
           onAbort={(reason) => {
             if (reason === 'user') {
-              pauseBlock(step.module);
+              pauseBlock();
               return;
             }
             setNotice(FOCUS_LOST);
@@ -255,6 +284,7 @@ function SessionFlow({ plan, onExit, measureFrames = sampleFrames, startSession 
           }}
           onError={(e) => {
             void logEvent(repo, 'error', `Ошибка отрисовки: ${errorText(e)}`, e instanceof Error ? (e.stack ?? '') : '');
+            setRenderFailures((n) => n + 1);
             setNotice(RENDER_FAILED);
             run((c) => {
               c.discardBlock('error');
@@ -265,8 +295,9 @@ function SessionFlow({ plan, onExit, measureFrames = sampleFrames, startSession 
     case 'table_block':
       return (
         <TableView
-          key={version}
+          key={stepId(step)}
           step={step}
+          busy={busy}
           onSubmit={(r) => {
             run((c) => c.submitTable(r));
           }}
@@ -275,9 +306,10 @@ function SessionFlow({ plan, onExit, measureFrames = sampleFrames, startSession 
     case 'numseries_block':
       return (
         <NumSeriesView
-          key={version}
+          key={stepId(step)}
           step={step}
           exposeAnswer={hooks.enabled}
+          busy={busy}
           onSubmit={(answers) => {
             run((c) => c.submitNumSeries(answers));
           }}
@@ -307,7 +339,9 @@ function SessionFlow({ plan, onExit, measureFrames = sampleFrames, startSession 
         <SaveError
           message={step.message}
           canAbandon={step.canAbandon}
+          what={step.what}
           busy={busy}
+          onExit={exit}
           onRetry={() => {
             run((c) => c.retrySave());
           }}
@@ -326,7 +360,7 @@ function SessionFlow({ plan, onExit, measureFrames = sampleFrames, startSession 
         />
       );
     case 'done':
-      return <Done diagnostic={step.diagnostic} summaries={summaries} onHome={exit} />;
+      return <Done diagnostic={step.diagnostic} seriesTotal={step.seriesTotal} summaries={summaries} onHome={exit} />;
   }
 }
 
@@ -369,10 +403,11 @@ class SessionBoundary extends Component<BoundaryProps, { failed: boolean }> {
 /** The session screen (fills the window); `onExit` goes back home. */
 export default function Session(props: SessionProps) {
   const { platform, repo } = useApp();
+  const root = useRef<HTMLElement>(null);
   return (
-    <section className="session" aria-label="Сессия">
+    <section className="session" aria-label="Сессия" ref={root}>
       <SessionBoundary repo={repo} platform={platform} onExit={props.onExit}>
-        <SessionFlow {...props} />
+        <SessionFlow {...props} rootRef={root} />
       </SessionBoundary>
     </section>
   );

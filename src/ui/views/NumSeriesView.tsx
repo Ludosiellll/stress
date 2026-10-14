@@ -6,6 +6,8 @@ export interface NumSeriesViewProps {
   step: StepOf<'numseries_block'>;
   /** e2e mode only: the answer goes into data-e2e-answer for the test bot. */
   exposeAnswer: boolean;
+  /** The answers are being saved: the field is locked. */
+  busy: boolean;
   onSubmit: (answers: SeriesAnswer[]) => void;
 }
 
@@ -23,7 +25,7 @@ function seriesText(shown: readonly number[]): string {
  * bar with the seconds left; when it runs out the item gets no answer (and with the total limit, so do the
  * items not reached). After the last item the answers go to `onSubmit`.
  */
-export default function NumSeriesView({ step, exposeAnswer, onSubmit }: NumSeriesViewProps) {
+export default function NumSeriesView({ step, exposeAnswer, busy, onSubmit }: NumSeriesViewProps) {
   const { items, perItemLimitMs, totalLimitMs } = step;
   const [index, setIndex] = useState(0);
   const [text, setText] = useState('');
@@ -36,6 +38,12 @@ export default function NumSeriesView({ step, exposeAnswer, onSubmit }: NumSerie
   const blockStart = useRef<number | null>(null);
   const itemStart = useRef(0);
   const finished = useRef(false);
+  const input = useRef<HTMLInputElement>(null);
+
+  // Focus follows the field whenever it is usable (it may mount locked while the block is being opened).
+  useEffect(() => {
+    if (!busy) input.current?.focus();
+  }, [busy, index]);
 
   /** Records the current item and moves on; `totalExpired` ends the block (the items not reached get null). */
   const record = (given: number | null, totalExpired: boolean): void => {
@@ -106,9 +114,10 @@ export default function NumSeriesView({ step, exposeAnswer, onSubmit }: NumSerie
         inputMode="numeric"
         aria-label="Ответ"
         className="series-input"
-        autoFocus
+        ref={input}
         autoComplete="off"
         maxLength={MAX_INPUT}
+        disabled={busy}
         value={text}
         onChange={(e) => {
           setText(e.target.value);

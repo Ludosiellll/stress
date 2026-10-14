@@ -126,11 +126,16 @@ describe('ReactionView', () => {
     expect(frames.pending()).toBe(0);
   });
 
-  it('Escape aborts with user', async () => {
+  it('Escape aborts with user; a held Escape (auto-repeat) does not', async () => {
     mockCanvas();
     const { onAbort } = renderView();
     await nextTask();
     frames.run(1000);
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'Escape', code: 'Escape', repeat: true });
+      await Promise.resolve();
+    });
+    expect(onAbort).not.toHaveBeenCalled();
     await act(async () => {
       fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' });
       await Promise.resolve();

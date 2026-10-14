@@ -9,7 +9,14 @@ describe('Instruction', () => {
     expect(screen.getByRole('heading', { name: 'СЗМР' })).toBeTruthy();
     expect(screen.getByText('Красный — F, зелёный — J.')).toBeTruthy();
     expect(screen.getByText('Управление: F, J')).toBeTruthy();
-    expect(screen.getByText('Нажми Enter, чтобы начать')).toBeTruthy();
+    expect(screen.getByText('Нажми Enter, чтобы начать. Esc — пауза.')).toBeTruthy();
+  });
+
+  it('the button starts too', () => {
+    const onStart = vi.fn();
+    render(<Instruction title="ПЗМР" text="Жми пробел." keysHint="Пробел" onStart={onStart} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Начать (Enter)' }));
+    expect(onStart).toHaveBeenCalledTimes(1);
   });
 
   it('starts on Enter once; repeats and the key that opened the screen do not count', async () => {

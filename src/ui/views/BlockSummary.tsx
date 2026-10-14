@@ -1,4 +1,5 @@
 import type { BlockFlag } from '../../engine/types';
+import type { ParamChange } from '../../modules/describe';
 import type { BlockSummaryView } from '../../session/steps';
 import { decimal } from '../format';
 import { fromControl, isEnter, useKeyDown } from '../keys';
@@ -16,6 +17,14 @@ const FLAG_TEXT: Record<BlockFlag, string> = {
   timing_unreliable: 'Замер ненадёжен: пропуски кадров — уровень не менялся',
 };
 
+/** «Окно ответа: 387 → 358 мс»: a unit shared by both values is written once. */
+export function changeText({ label, from, to }: ParamChange): string {
+  const a = /^(.+) (\S+)$/.exec(from);
+  const b = /^(.+) (\S+)$/.exec(to);
+  if (a?.[1] !== undefined && b?.[1] !== undefined && a[2] === b[2]) return `${label}: ${a[1]} → ${b[1]} ${b[2] ?? ''}`;
+  return `${label}: ${from} → ${to}`;
+}
+
 /** Result of the block that just ended: level, changed parameters, score, metrics, flags. Enter goes on. */
 export default function BlockSummary({ view, busy, onContinue }: BlockSummaryProps) {
   useKeyDown((e) => {
@@ -26,7 +35,7 @@ export default function BlockSummary({ view, busy, onContinue }: BlockSummaryPro
 
   return (
     <div className="screen-center summary">
-      <h2>{view.title}</h2>
+      <h2 tabIndex={-1}>{view.title}</h2>
       {view.module !== 'numseries' && (
         <p className="summary-level">
           Уровень: {decimal(view.lBefore)} → {decimal(view.lAfter)}
@@ -35,7 +44,7 @@ export default function BlockSummary({ view, busy, onContinue }: BlockSummaryPro
       {view.changes.length > 0 && (
         <ul aria-label="Изменения">
           {view.changes.map((c) => (
-            <li key={c.label}>{`${c.label}: ${c.from} → ${c.to}`}</li>
+            <li key={c.label}>{changeText(c)}</li>
           ))}
         </ul>
       )}
