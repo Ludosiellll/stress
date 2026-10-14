@@ -456,6 +456,23 @@ describe('ReactionView', () => {
     }
   });
 
+  it('an unlock that rejects starts the block at once, without sound (B3)', async () => {
+    mockCanvas();
+    const { audio, unlock } = fakeAudio({ starts: false });
+    unlock.mockImplementation(() => Promise.reject(new Error('resume refused')));
+    const conds: TrialCond[] = ['noisy'];
+    const { onDone, onError } = renderView(stressedStep(conds), audio);
+    await nextTask();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // Not after UNLOCK_WAIT_MS: the rejection itself lets the block begin.
+    expect(frames.pending()).toBe(1);
+    await playUnanswered(conds.length);
+    expect(onDone.mock.calls[0]?.[0]).toMatchObject({ audioPlayed: false });
+    expect(onError).not.toHaveBeenCalled();
+  });
+
   it('a window blur mid-block stops the sound', async () => {
     mockCanvas();
     const { audio, handle } = fakeAudio();

@@ -16,6 +16,7 @@ export const FIXATION_MS = 500;
  * - card: at the first frame with ts ≥ t0 + 500, hidden cardMs after its onset.
  * Resolves 'done' at the frame that hides the last item, or 'aborted' (screen cleared) when `signal` aborts;
  * a renderer that throws rejects the promise with its error. Nothing is requested after the end.
+ * An empty row throws RangeError at once (a sequential one would never end).
  */
 export function presentMemoryTrial(
   t: MemoryTrial,
@@ -23,6 +24,7 @@ export function presentMemoryTrial(
   r: MemoryRenderer,
   signal: AbortSignal,
 ): Promise<'done' | 'aborted'> {
+  if (t.items.length === 0) throw new RangeError('a memory trial needs at least one item');
   return new Promise((resolve, reject) => {
     let frameId: number | null = null;
     let t0: number | null = null;

@@ -192,7 +192,8 @@ export default function ReactionView({ step, nominalFrameMs, onDone, onAbort, on
         return;
       }
       unlockWait = setTimeout(begin, UNLOCK_WAIT_MS);
-      void audio.unlock().then(begin);
+      // unlock() never rejects by contract; a rejection still starts the block (silently) at once.
+      audio.unlock().then(begin, begin);
     }, 0);
 
     return () => {

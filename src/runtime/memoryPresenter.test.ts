@@ -120,6 +120,16 @@ describe('presentMemoryTrial', () => {
     expect(calls).toHaveLength(n);
   });
 
+  it('an empty row throws RangeError and requests no frame (B3)', () => {
+    for (const t of [{ ...DIGITS, items: [] }, { ...CARD, items: [] }]) {
+      const clock = new FakeClock();
+      const { r, calls } = recorder(clock);
+      expect(() => presentMemoryTrial(t, clock, r, new AbortController().signal)).toThrow(RangeError);
+      expect(clock.hasPending).toBe(false);
+      expect(calls).toEqual([]);
+    }
+  });
+
   it('a drawing failure rejects with the error and stops the frames', async () => {
     const clock = new FakeClock();
     const { r } = recorder(clock, { throwOn: 'item' });
