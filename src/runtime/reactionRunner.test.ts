@@ -109,7 +109,10 @@ interface Harness {
   at(op: Call['op']): number[];
 }
 
-function setup(specs: readonly TrialSpec[], opts: { nominalFrameMs?: number; onShow?: (at: number) => void } = {}): Harness {
+function setup(
+  specs: readonly TrialSpec[],
+  opts: { nominalFrameMs?: number; presentationLeadMs?: number; onShow?: (at: number) => void } = {},
+): Harness {
   const clock = new FakeClock();
   const calls: Call[] = [];
   const renderer: StimulusRenderer = {
@@ -124,7 +127,13 @@ function setup(specs: readonly TrialSpec[], opts: { nominalFrameMs?: number; onS
       calls.push({ op: 'tick', at: clock.now, elapsed });
     },
   };
-  const runner = new ReactionBlockRunner({ specs, clock, renderer, nominalFrameMs: opts.nominalFrameMs ?? FRAME });
+  const runner = new ReactionBlockRunner({
+    specs,
+    clock,
+    renderer,
+    nominalFrameMs: opts.nominalFrameMs ?? FRAME,
+    ...(opts.presentationLeadMs === undefined ? {} : { presentationLeadMs: opts.presentationLeadMs }),
+  });
   const done = runner.start();
   return {
     clock,
@@ -306,8 +315,12 @@ describe('ReactionBlockRunner: trial end', () => {
     const onset = h.clock.now;
     expect(h.at('show')).toEqual([t0 + 500]);
     h.clock.step(300);
-    expect(h.at('hide')).toEqual([onset + 300]);
-    h.clock.step(LATE_GRACE_MS);
+    const end = onset + 300;
+    expect(h.at('hide')).toEqual([end]);
+    const until = end + LATE_GRACE_MS;
+    h.clock.stepTo(until);
+    expect(h.clock.hasPending).toBe(true); // the block closes one nominal frame after the grace end
+    h.clock.stepTo(until + FRAME);
     expect(h.clock.hasPending).toBe(false);
     expect((await timelineOf(h)).onsets).toEqual([onset]);
   });
@@ -329,6 +342,50 @@ describe('ReactionBlockRunner: trial end', () => {
     const onset0 = tl.onsets[0] as number;
     expect(h.at('hide')[0]).toBe(h.clock.frames[h.clock.frames.indexOf(onset0) + 1]);
     expect(tl.onsets[1]).toBe(h.clock.firstFrameAtOrAfter(onset0 + 600));
+  });
+
+  it('a press stamped after the frame that processes it ends the trial at its own timestamp', async () => {
+    // Chromium: rAF ts is the vsync time, so input dispatched in that frame can carry a later timeStamp.
+    const h = setup([pressTrial(500), pressTrial(600)]);
+    while (!h.ops().includes('show')) h.clock.step();
+    const onset0 = h.clock.now;
+    const response = onset0 + 250;
+    h.runner.press({ key: 'Space', ts: response });
+    h.clock.stepTo(onset0 + 248);
+    expect(h.at('hide')).toEqual([onset0 + 248]);
+    h.clock.stepTo(response + 600 - 1);
+    expect(h.at('show')).toEqual([onset0]);
+    h.clock.stepTo(response + 600);
+    h.clock.runOut();
+    const tl = await timelineOf(h);
+    expect(tl.onsets).toEqual([onset0, response + 600]);
+    const [first] = resolveBlock([pressTrial(500), pressTrial(600)], tl);
+    expect(first?.outcome).toBe('hit');
+    expect(first?.rtMs).toBeCloseTo(250, 9);
+  });
+
+  it('a press during the starting phase (before the first frame) is recorded', async () => {
+    const h = setup([pressTrial(500)]);
+    h.runner.press({ key: 'Space', ts: -3 });
+    h.clock.runOut();
+    expect((await timelineOf(h)).presses).toEqual([{ key: 'Space', ts: -3 }]);
+  });
+
+  it('a press delivered while shown but stamped after the deadline ends the trial at the deadline', async () => {
+    const h = setup([pressTrial(500, 300), pressTrial(400)]);
+    while (!h.ops().includes('show')) h.clock.step();
+    const onset0 = h.clock.now;
+    const deadline = onset0 + 300;
+    h.clock.stepTo(onset0 + 290);
+    expect(h.ops()).toEqual(['show']);
+    h.runner.press({ key: 'Space', ts: onset0 + 310 });
+    h.clock.stepTo(onset0 + 320);
+    expect(h.ops()).toEqual(['show', 'hide']);
+    h.clock.stepTo(deadline + 400); // next onset is due from the deadline, not from the late press
+    h.clock.runOut();
+    const tl = await timelineOf(h);
+    expect(tl.onsets).toEqual([onset0, deadline + 400]);
+    expect(tl.presses).toEqual([{ key: 'Space', ts: onset0 + 310 }]);
   });
 
   it('press during ISI does not end anything (recorded only)', async () => {
@@ -369,7 +426,7 @@ describe('ReactionBlockRunner: trial end', () => {
 });
 
 describe('ReactionBlockRunner: rdo', () => {
-  it('rdo ticks every frame while shown', async () => {
+  it('rdo ticks every frame while shown, one nominal frame ahead by default', async () => {
     const h = setup([rdoTrial(500, 200)]);
     h.clock.runOut();
     const tl = await timelineOf(h);
@@ -379,9 +436,31 @@ describe('ReactionBlockRunner: rdo', () => {
     const shownFrames = h.clock.frames.filter((ts) => ts >= onset && ts < hideAt);
     const ticks = h.calls.filter((c) => c.op === 'tick');
     expect(ticks.map((c) => c.at)).toEqual(shownFrames);
-    expect(ticks.map((c) => c.elapsed)).toEqual(shownFrames.map((ts) => ts - onset));
-    expect(ticks[0]?.elapsed).toBe(0);
+    expect(ticks.map((c) => c.elapsed)).toEqual(shownFrames.map((ts) => ts - onset + FRAME));
+    expect(ticks[0]?.elapsed).toBe(FRAME); // the onset frame gets the lead, not 0
     expect(h.ops().slice(0, 2)).toEqual(['show', 'tick']);
+  });
+
+  it('default presentation lead follows nominalFrameMs', async () => {
+    const h = setup([rdoTrial(500, 200)], { nominalFrameMs: 20 });
+    h.clock.runOut();
+    const onset = (await timelineOf(h)).onsets[0] as number;
+    const ticks = h.calls.filter((c) => c.op === 'tick');
+    expect(ticks[0]?.elapsed).toBe(20);
+    expect(ticks.map((c) => c.elapsed)).toEqual(ticks.map((c) => c.at - onset + 20));
+  });
+
+  it.each([0, 25])('custom presentationLeadMs %s is honoured', async (lead) => {
+    const h = setup([rdoTrial(500, 200)], { presentationLeadMs: lead });
+    h.clock.runOut();
+    const tl = await timelineOf(h);
+    const onset = tl.onsets[0] as number;
+    const ticks = h.calls.filter((c) => c.op === 'tick');
+    expect(ticks[0]?.elapsed).toBe(lead);
+    expect(ticks.map((c) => c.elapsed)).toEqual(ticks.map((c) => c.at - onset + lead));
+    // the lead only moves the drawing: onsets and hide times are unchanged
+    expect(onset).toBe(h.clock.firstFrameAtOrAfter((h.clock.frames[0] as number) + 500));
+    expect(h.at('hide')).toEqual([h.clock.firstFrameAtOrAfter(onset + 200)]);
   });
 
   it('shape stimuli get no ticks', async () => {
@@ -424,11 +503,23 @@ describe('ReactionBlockRunner: end of block', () => {
     expect(tl.presses).toHaveLength(2);
   });
 
-  it('done comes in the first frame at or after end of the last trial + 300 ms', async () => {
+  it('done comes in the first frame at or after end of the last trial + 300 ms + one nominal frame', async () => {
     const h = setup([pressTrial(500, 300)]);
     h.clock.runOut();
     const end = ((await timelineOf(h)).onsets[0] as number) + 300;
-    expect(h.clock.frames.at(-1)).toBe(h.clock.firstFrameAtOrAfter(end + LATE_GRACE_MS));
+    expect(h.clock.frames.at(-1)).toBe(h.clock.firstFrameAtOrAfter(end + LATE_GRACE_MS + FRAME));
+  });
+
+  it('a press stamped inside the grace period but delivered after the frame at its end is captured', async () => {
+    const h = setup([pressTrial(500, 300)]);
+    h.clock.step();
+    h.clock.step(500);
+    const end = h.clock.now + 300;
+    h.clock.stepTo(end); // hides
+    h.clock.stepTo(end + LATE_GRACE_MS); // grace over, block still open for in-flight input
+    h.runner.press({ key: 'Space', ts: end + 290 });
+    h.clock.runOut();
+    expect((await timelineOf(h)).presses).toEqual([{ key: 'Space', ts: end + 290 }]);
   });
 
   it('grace period after an answered last trial starts at the response', async () => {
@@ -442,7 +533,7 @@ describe('ReactionBlockRunner: end of block', () => {
     h.clock.runOut();
     const tl = await timelineOf(h);
     const response = (tl.onsets[0] as number) + 250;
-    expect(h.clock.frames.at(-1)).toBe(h.clock.firstFrameAtOrAfter(response + LATE_GRACE_MS));
+    expect(h.clock.frames.at(-1)).toBe(h.clock.firstFrameAtOrAfter(response + LATE_GRACE_MS + FRAME));
   });
 
   it('end-to-end with resolveBlock', async () => {
@@ -616,5 +707,11 @@ describe('ReactionBlockRunner: validation', () => {
 
   it.each([0, -5, Number.NaN, Number.POSITIVE_INFINITY])('rejects windowMs %s', (w) => {
     expect(() => make([pressTrial(100, w)])).toThrow(RangeError);
+  });
+
+  it.each([-1, Number.NaN, Number.POSITIVE_INFINITY])('rejects presentationLeadMs %s', (lead) => {
+    expect(
+      () => new ReactionBlockRunner({ specs: [pressTrial(100)], clock, renderer, nominalFrameMs: FRAME, presentationLeadMs: lead }),
+    ).toThrow(RangeError);
   });
 });

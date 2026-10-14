@@ -6,7 +6,10 @@ import type { FrameClock } from './frameClock';
 export interface StimulusRenderer {
   show(s: Stimulus): void;
   hide(): void;
-  /** RDO only: time since onset, called on every frame while the stimulus is shown (0 on the onset frame). */
+  /**
+   * RDO only: called on every frame while the stimulus is shown, with the time since onset at which this frame will
+   * be seen (frame ts − onset + presentation lead; the lead alone on the onset frame).
+   */
   tick(elapsedMs: number): void;
 }
 
@@ -23,6 +26,12 @@ export interface RunnerOptions {
   renderer: StimulusRenderer;
   /** Measured display frame interval; a frame longer than 1.5× this is a dropped frame. */
   nominalFrameMs: number;
+  /**
+   * Display latency the RDO drawing compensates for: a frame drawn in the rAF callback at ts is seen about one frame
+   * later, so the dot is drawn where it will be then. Without it a perfectly timed press scores late by the latency
+   * (ruling R17). Default: `nominalFrameMs`. Onsets and press timing are not affected.
+   */
+  presentationLeadMs?: number;
 }
 
 type Phase =
@@ -30,7 +39,8 @@ type Phase =
   | { kind: 'starting' }
   | { kind: 'waiting'; i: number; onsetAt: number }
   | { kind: 'shown'; i: number; onset: number; deadline: number; answeredAt: number | null }
-  | { kind: 'grace'; until: number }
+  /** Presses stamped ≤ until are recorded; the block closes at closeAt (one frame later, for input in flight). */
+  | { kind: 'grace'; until: number; closeAt: number }
   | { kind: 'finished' };
 
 function validate(o: RunnerOptions): void {
@@ -46,6 +56,10 @@ function validate(o: RunnerOptions): void {
       throw new RangeError(`ReactionBlockRunner: trial ${String(i)} windowMs must be > 0, got ${String(s.windowMs)}`);
     }
   });
+  const lead = o.presentationLeadMs;
+  if (lead !== undefined && !(Number.isFinite(lead) && lead >= 0)) {
+    throw new RangeError(`ReactionBlockRunner: presentationLeadMs must be ≥ 0, got ${String(lead)}`);
+  }
 }
 
 /**
@@ -56,9 +70,11 @@ function validate(o: RunnerOptions): void {
  * - An in-window press ends the trial at the press time, and the stimulus is hidden in the next frame.
  *   Otherwise the trial ends at onset + windowMs and is hidden in the first frame at or after that time.
  * - Every press while the block runs is recorded, whatever the phase. After the last trial, presses stamped up to
- *   end + LATE_GRACE_MS are still recorded; the block is done in the first frame at or after that time.
+ *   end + LATE_GRACE_MS are still recorded; the block is done in the first frame at or after that time plus one
+ *   nominal frame, so a press already in flight at the grace end is not lost.
  *   Presses before `start()` or after the block ended are ignored.
  * - `abort()` stops the loop and hides the stimulus; if the renderer throws, `start()` rejects with that error.
+ * - RDO frames are drawn `presentationLeadMs` ahead (see RunnerOptions); nothing else uses the lead.
  * - No I/O: the timeline lives in memory until `start()` resolves.
  */
 export class ReactionBlockRunner {
@@ -66,6 +82,7 @@ export class ReactionBlockRunner {
   private readonly clock: FrameClock;
   private readonly renderer: StimulusRenderer;
   private readonly nominalFrameMs: number;
+  private readonly presentationLeadMs: number;
 
   private phase: Phase = { kind: 'idle' };
   private started = false;
@@ -81,6 +98,7 @@ export class ReactionBlockRunner {
     this.clock = o.clock;
     this.renderer = o.renderer;
     this.nominalFrameMs = o.nominalFrameMs;
+    this.presentationLeadMs = o.presentationLeadMs ?? o.nominalFrameMs;
   }
 
   start(): Promise<RunnerEnd> {
@@ -140,15 +158,15 @@ export class ReactionBlockRunner {
         case 'shown': {
           const end = ph.answeredAt ?? (ts >= ph.deadline ? ph.deadline : null);
           if (end === null) {
-            if ((this.specs[ph.i] as TrialSpec).stimulus.kind === 'rdo') this.renderer.tick(ts - ph.onset);
+            if ((this.specs[ph.i] as TrialSpec).stimulus.kind === 'rdo') this.tick(ts - ph.onset);
             return;
           }
-          this.phase = ph.i + 1 < this.specs.length ? this.waitFor(ph.i + 1, end) : { kind: 'grace', until: end + LATE_GRACE_MS };
+          this.phase = ph.i + 1 < this.specs.length ? this.waitFor(ph.i + 1, end) : this.graceAfter(end);
           this.renderer.hide();
           break;
         }
         case 'grace':
-          if (ts >= ph.until) this.finish({ kind: 'done', timeline: this.timeline });
+          if (ts >= ph.closeAt) this.finish({ kind: 'done', timeline: this.timeline });
           return;
         default:
           return;
@@ -160,6 +178,15 @@ export class ReactionBlockRunner {
     return { kind: 'waiting', i, onsetAt: from + (this.specs[i] as TrialSpec).isiMs };
   }
 
+  private graceAfter(end: number): Phase {
+    const until = end + LATE_GRACE_MS;
+    return { kind: 'grace', until, closeAt: until + this.nominalFrameMs };
+  }
+
+  private tick(sinceOnsetMs: number): void {
+    this.renderer.tick(sinceOnsetMs + this.presentationLeadMs);
+  }
+
   private show(i: number, ts: number): void {
     const spec = this.specs[i] as TrialSpec;
     this.timeline.onsets.push(ts);
@@ -167,7 +194,7 @@ export class ReactionBlockRunner {
     // Phase first: a renderer callback that presses or aborts sees the trial as shown.
     this.phase = { kind: 'shown', i, onset: ts, deadline: ts + spec.windowMs, answeredAt: null };
     this.renderer.show(spec.stimulus);
-    if (spec.stimulus.kind === 'rdo') this.renderer.tick(0);
+    if (spec.stimulus.kind === 'rdo') this.tick(0);
   }
 
   private finish(end: RunnerEnd): void {

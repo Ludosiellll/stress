@@ -1,7 +1,12 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { attachFocusGuard } from './focusGuard';
 
 const detach: (() => void)[] = [];
+
+// jsdom's document.hasFocus() is false unless an element has focus; a real visible window has it.
+beforeEach(() => {
+  vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+});
 
 afterEach(() => {
   for (const off of detach.splice(0)) off();
@@ -18,8 +23,12 @@ function guard(): { lost: number } {
   return state;
 }
 
-function setVisibility(v: DocumentVisibilityState): void {
+function stubVisibility(v: DocumentVisibilityState): void {
   vi.spyOn(document, 'visibilityState', 'get').mockReturnValue(v);
+}
+
+function setVisibility(v: DocumentVisibilityState): void {
+  stubVisibility(v);
   document.dispatchEvent(new Event('visibilitychange'));
 }
 
@@ -60,6 +69,27 @@ describe('attachFocusGuard', () => {
     const again = guard();
     window.dispatchEvent(new FocusEvent('blur'));
     expect(again.lost).toBe(1);
+  });
+
+  it('fires on attach when the page is already hidden', () => {
+    stubVisibility('hidden');
+    const g = guard();
+    expect(g.lost).toBe(1);
+    window.dispatchEvent(new FocusEvent('blur'));
+    expect(g.lost).toBe(1);
+  });
+
+  it('fires on attach when the document has no focus', () => {
+    vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+    const g = guard();
+    expect(g.lost).toBe(1);
+    setVisibility('hidden');
+    expect(g.lost).toBe(1);
+  });
+
+  it('does not fire on attach when visible and focused', () => {
+    stubVisibility('visible');
+    expect(guard().lost).toBe(0);
   });
 
   it('unsubscribe removes the listeners', () => {
