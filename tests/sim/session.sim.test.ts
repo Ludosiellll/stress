@@ -17,12 +17,20 @@ import { playTimeline, type Respond } from '../../src/testing/sessionPlayers';
  * (cvMax) both take part. L* is where the expected score is 0.8:
  * p(L) · P(100 ≤ RT ≤ window(L)) = 0.8, found by bisection. The stability rule is not in L*: it can only
  * hold the level back.
+ *
+ * Ruling R29: every case runs on 5 seeds and is judged on window means, not on single values:
+ * - each seed: the mean L_saved over sessions 31–60 is within 1 of L*;
+ * - the case: the drift mean(sessions 51–60) − mean(sessions 21–30), averaged over its seeds, is ≥ −0.5.
+ *   A single seed's drift has SD ≈ 0.22 (window means of a noisy staircase), so a per-seed −0.5 bound
+ *   would fail on noise alone for some seed in about every other set of 20 runs; the mean of 5 seeds
+ *   (SD ≈ 0.1) still catches a real drift of 0.5 levels per 30 sessions.
  */
 
 const SESSIONS = 60;
 const DAY_MS = 86_400_000;
 const START = new Date('2026-11-02T18:00:00').getTime();
 const RT_CV = 0.15;
+const SEEDS = [1, 2, 3, 4, 5];
 const SIGMA = Math.sqrt(Math.log(1 + RT_CV ** 2));
 
 /** Days between consecutive sessions: daily with a day off each week, one 6-day break after session 35. */
@@ -80,28 +88,26 @@ function responder(p: Player, seed: number): (L: number) => Respond {
 interface SimCase {
   name: string;
   player: Player;
-  seed: number;
   /** Clock advance per block. */
   blockMs: number;
   /** Blocks that fit the segment budget at that pace. */
   blocksPerSession: number;
-  plan: (session: number, repo: MemoryRepository, todayIso: string) => Promise<SessionPlan>;
+  /** Plan of session `session`; `planSeed` differs per session. */
+  plan: (planSeed: number, repo: MemoryRepository, todayIso: string) => Promise<SessionPlan>;
 }
 
 /** Free ПЗМР: 5 minutes, 8 blocks of 40 s. */
-const free = (seed: number) => (session: number): Promise<SessionPlan> => Promise.resolve(planFree('pzmr', seed * 1000 + session));
+const free = (planSeed: number): Promise<SessionPlan> => Promise.resolve(planFree('pzmr', planSeed));
 
 /** A training session cut to its first segment: the 2-minute ПЗМР warm-up, 5 blocks of 28 s. */
-const warmup =
-  (seed: number) =>
-  async (session: number, repo: MemoryRepository, todayIso: string): Promise<SessionPlan> => {
-    const plan = planTraining(await repo.getModuleStates(), todayIso, seed * 1000 + session);
-    return { ...plan, segments: plan.segments.slice(0, 1) };
-  };
+async function warmup(planSeed: number, repo: MemoryRepository, todayIso: string): Promise<SessionPlan> {
+  const plan = planTraining(await repo.getModuleStates(), todayIso, planSeed);
+  return { ...plan, segments: plan.segments.slice(0, 1) };
+}
 
-async function runMonths(c: SimCase): Promise<{ lSaved: number; savedHistory: number[]; blocks: number }> {
+async function runMonths(c: SimCase, seed: number): Promise<{ savedHistory: number[]; blocks: number }> {
   const repo = new MemoryRepository();
-  const respond = responder(c.player, c.seed);
+  const respond = responder(c.player, seed);
   let day = 0;
   let blocks = 0;
   for (let s = 0; s < SESSIONS; s++) {
@@ -109,7 +115,7 @@ async function runMonths(c: SimCase): Promise<{ lSaved: number; savedHistory: nu
     let nowMs = START + day * DAY_MS;
     const ctl = await SessionController.start({
       repo,
-      plan: await c.plan(s, repo, new Date(nowMs).toISOString()),
+      plan: await c.plan(seed * 1000 + s, repo, new Date(nowMs).toISOString()),
       layout: 'keyboard',
       now: () => new Date(nowMs),
       appVersion: 'sim',
@@ -141,23 +147,34 @@ async function runMonths(c: SimCase): Promise<{ lSaved: number; savedHistory: nu
       }
     }
   }
-  const st = (await repo.getModuleStates()).pzmr;
-  return { lSaved: st.lSaved, savedHistory: st.savedHistory, blocks };
+  return { savedHistory: (await repo.getModuleStates()).pzmr.savedHistory, blocks };
 }
 
 const CASES: SimCase[] = [
-  { name: 'free, logistic-limited', player: { ability: 10, medianRt: 300 }, seed: 1, blockMs: 40_000, blocksPerSession: 8, plan: free(1) },
-  { name: 'free, mixed', player: { ability: 18, medianRt: 220 }, seed: 2, blockMs: 40_000, blocksPerSession: 8, plan: free(2) },
-  { name: 'free, window-limited', player: { ability: 30, medianRt: 250 }, seed: 3, blockMs: 40_000, blocksPerSession: 8, plan: free(3) },
-  { name: 'training warm-up, mixed', player: { ability: 18, medianRt: 220 }, seed: 4, blockMs: 28_000, blocksPerSession: 5, plan: warmup(4) },
+  { name: 'free, logistic-limited', player: { ability: 10, medianRt: 300 }, blockMs: 40_000, blocksPerSession: 8, plan: free },
+  { name: 'free, mixed', player: { ability: 18, medianRt: 220 }, blockMs: 40_000, blocksPerSession: 8, plan: free },
+  { name: 'free, window-limited', player: { ability: 30, medianRt: 250 }, blockMs: 40_000, blocksPerSession: 8, plan: free },
+  { name: 'training warm-up, mixed', player: { ability: 18, medianRt: 220 }, blockMs: 28_000, blocksPerSession: 5, plan: warmup },
 ];
 
-describe('session simulation (R6, R28a): months of daily sessions through the controller', () => {
-  it.each(CASES)('$name: L_saved stays within 1 of L* and does not drift down', async (c) => {
-    const { lSaved, savedHistory, blocks } = await runMonths(c);
-    expect(blocks).toBe(SESSIONS * c.blocksPerSession);
-    expect(savedHistory).toHaveLength(SESSIONS);
-    expect(Math.abs(lSaved - equilibrium(c.player))).toBeLessThanOrEqual(1);
-    expect(mean(savedHistory.slice(-10))).toBeGreaterThanOrEqual(mean(savedHistory.slice(19, 30)) - 0.5);
-  });
+describe('session simulation (R6, R28a, R29): months of daily sessions through the controller', () => {
+  it.each(CASES)(
+    '$name: mean L_saved of sessions 31–60 within 1 of L* for every seed, no downward drift',
+    async (c) => {
+      const target = equilibrium(c.player);
+      const offTarget: Array<{ seed: number; gap: number }> = [];
+      const drifts: number[] = [];
+      for (const seed of SEEDS) {
+        const { savedHistory, blocks } = await runMonths(c, seed);
+        expect(blocks).toBe(SESSIONS * c.blocksPerSession);
+        expect(savedHistory).toHaveLength(SESSIONS);
+        const gap = mean(savedHistory.slice(30, 60)) - target;
+        if (Math.abs(gap) > 1) offTarget.push({ seed, gap });
+        drifts.push(mean(savedHistory.slice(50, 60)) - mean(savedHistory.slice(20, 30)));
+      }
+      expect(offTarget).toEqual([]);
+      expect(mean(drifts)).toBeGreaterThanOrEqual(-0.5);
+    },
+    30_000,
+  );
 });
