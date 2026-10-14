@@ -90,6 +90,13 @@ describe('scoreReaction', () => {
     expect(scored?.hitRts).toEqual([251, 252]);
     expect(scored?.summary.n).toBe(3);
   });
+
+  it('hit RTs leave out trials with a dropped onset frame, like the summary RT statistics', () => {
+    const specs = pzmr.generateBlock(pzmr.params(0), createRng(1), 'keyboard', 3);
+    const tl = playTimeline(specs, (_spec, i) => ({ key: 'Space', rtMs: 250 + i }));
+    const scored = scoreReaction(specs, { ...tl, droppedOnset: [false, true, false] });
+    expect(scored?.hitRts).toEqual([250, 252]);
+  });
 });
 
 describe('scoreSeries', () => {
@@ -120,6 +127,18 @@ describe('scoreSeries', () => {
 });
 
 describe('diagnosticResults', () => {
+  it('lists the reaction modules whose stored block was timingUnreliable, keeping their values (I1)', () => {
+    const r = diagnosticResults([
+      { module: 'pzmr', summary: summary({ medianRt: 301, timingUnreliable: true }) },
+      { module: 'szmr', summary: summary({ medianRt: 402 }) },
+      { module: 'rdo', summary: summary({ meanAbsErrorMs: 20, timingUnreliable: true }) },
+      { module: 'gorbov', run: 0, seconds: 30 },
+    ]);
+    expect(r.unreliable).toEqual(['pzmr', 'rdo']);
+    expect(r.pzmrMedianRt).toBe(301);
+    expect(r.rdoMeanAbsErrorMs).toBe(20);
+  });
+
   it('fills each metric from its block; Gorbov needs all three runs completed', () => {
     const all = diagnosticResults([
       { module: 'pzmr', summary: summary({ medianRt: 301 }) },
@@ -138,6 +157,7 @@ describe('diagnosticResults', () => {
       rdoMeanAbsErrorMs: 23.5,
       gorbov: gorbovMetrics(30, 35, 70),
       numseriesCorrect: 14,
+      unreliable: [],
     });
     expect(diagnosticResults([{ module: 'gorbov', run: 0, seconds: 30 }, { module: 'gorbov', run: 1, seconds: null }, { module: 'gorbov', run: 2, seconds: 70 }]).gorbov).toBeNull();
     expect(diagnosticResults([{ module: 'gorbov', run: 0, seconds: 30 }, { module: 'gorbov', run: 2, seconds: 70 }]).gorbov).toBeNull();
@@ -148,6 +168,7 @@ describe('diagnosticResults', () => {
       rdoMeanAbsErrorMs: null,
       gorbov: null,
       numseriesCorrect: null,
+      unreliable: [],
     });
   });
 });

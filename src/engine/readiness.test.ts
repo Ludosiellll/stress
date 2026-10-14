@@ -8,9 +8,9 @@ import {
   bandScore,
   readiness,
 } from './readiness';
-import type { DiagnosticResults } from './diagnostic';
+import type { DiagnosticMetrics } from './diagnostic';
 
-const full = (over: Partial<DiagnosticResults> = {}): DiagnosticResults => ({
+const full = (over: Partial<DiagnosticMetrics> = {}): DiagnosticMetrics => ({
   pzmrMedianRt: 250,
   szmrMedianRt: 400,
   gonogoScore: 80,
@@ -20,7 +20,7 @@ const full = (over: Partial<DiagnosticResults> = {}): DiagnosticResults => ({
   ...over,
 });
 
-const empty: DiagnosticResults = {
+const empty: DiagnosticMetrics = {
   pzmrMedianRt: null,
   szmrMedianRt: null,
   gonogoScore: null,

@@ -1,5 +1,5 @@
 import type { DiagnosticResults } from '../../engine/diagnostic';
-import type { ModuleId } from '../../engine/types';
+import type { ModuleId, ReactionModuleId } from '../../engine/types';
 import { moduleTitles } from '../../modules/registry';
 import type { BlockSummaryView } from '../../session/steps';
 import { decimal } from '../format';
@@ -15,6 +15,8 @@ export interface DoneProps {
 }
 
 const NO_DATA = 'нет данных';
+/** Added to a value whose block kept dropping frames after its replay (I1). */
+const UNRELIABLE = 'замер ненадёжен';
 
 const ms = (x: number | null): string => (x === null ? NO_DATA : `${String(Math.round(x))} мс`);
 const seconds = (x: number): string => `${decimal(x).replace('-', '−')} с`;
@@ -26,11 +28,13 @@ function seriesText(correct: number | null, total: number | null): string {
 
 function diagnosticRows(d: DiagnosticResults, seriesTotal: number | null): Array<[string, string]> {
   const g = d.gorbov;
+  const mark = (module: ReactionModuleId, text: string): string =>
+    text !== NO_DATA && d.unreliable.includes(module) ? `${text}, ${UNRELIABLE}` : text;
   return [
-    [`${moduleTitles.pzmr} — медиана времени реакции`, ms(d.pzmrMedianRt)],
-    [`${moduleTitles.szmr} — медиана времени реакции`, ms(d.szmrMedianRt)],
-    [`${moduleTitles.gonogo} — верные ответы`, d.gonogoScore === null ? NO_DATA : `${String(Math.round(d.gonogoScore))} %`],
-    [`${moduleTitles.rdo} — средняя ошибка`, ms(d.rdoMeanAbsErrorMs)],
+    [`${moduleTitles.pzmr} — медиана времени реакции`, mark('pzmr', ms(d.pzmrMedianRt))],
+    [`${moduleTitles.szmr} — медиана времени реакции`, mark('szmr', ms(d.szmrMedianRt))],
+    [`${moduleTitles.gonogo} — верные ответы`, mark('gonogo', d.gonogoScore === null ? NO_DATA : `${String(Math.round(d.gonogoScore))} %`)],
+    [`${moduleTitles.rdo} — средняя ошибка`, mark('rdo', ms(d.rdoMeanAbsErrorMs))],
     ['Горбов — V, среднее время 1-й и 2-й таблиц', g === null ? NO_DATA : seconds(g.V)],
     ['Горбов — P, время 3-й таблицы', g === null ? NO_DATA : seconds(g.P)],
     ['Горбов — Π, переключение внимания', g === null ? NO_DATA : seconds(g.Pi)],
@@ -38,7 +42,7 @@ function diagnosticRows(d: DiagnosticResults, seriesTotal: number | null): Array
   ];
 }
 
-/** «ПЗМР: блоков 3, уровень 4,0 → 5,5» per module, in the order the modules were played. */
+/** «ПЗМР: блоков 3, уровень 4,0 → 5,5» per module, in the order the modules were played; no level where none is shown. */
 function moduleLines(summaries: readonly BlockSummaryView[]): string[] {
   const byModule = new Map<ModuleId, BlockSummaryView[]>();
   for (const s of summaries) byModule.set(s.module, [...(byModule.get(s.module) ?? []), s]);
@@ -46,7 +50,7 @@ function moduleLines(summaries: readonly BlockSummaryView[]): string[] {
     const first = list[0] as BlockSummaryView;
     const last = list[list.length - 1] as BlockSummaryView;
     const head = `${first.title}: блоков ${String(list.length)}`;
-    return first.module === 'numseries' ? head : `${head}, уровень ${decimal(first.lBefore)} → ${decimal(last.lAfter)}`;
+    return first.showLevel ? `${head}, уровень ${decimal(first.lBefore)} → ${decimal(last.lAfter)}` : head;
   });
 }
 
@@ -72,6 +76,11 @@ export default function Done({ diagnostic, seriesTotal, summaries, onHome }: Don
             ))}
           </tbody>
         </table>
+      )}
+      {diagnostic !== null && diagnostic.unreliable.length > 0 && (
+        <p className="muted">
+          Замер ненадёжен: в блоке были пропуски кадров и после повтора. Значение сохранено и учтено в индексе готовности.
+        </p>
       )}
       {lines.length > 0 && (
         <ul aria-label="Итог по модулям">

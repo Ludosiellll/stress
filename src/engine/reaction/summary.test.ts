@@ -171,9 +171,35 @@ describe('summarize', () => {
     expect(summarize(rs).timingUnreliable).toBe(false);
   });
 
-  it('timingUnreliable: 2 of 20 dropped → true', () => {
+  it('timingUnreliable: 2 of 20 dropped (0.1 > 0.05) → true', () => {
     const rs = Array.from({ length: 20 }, (_, i) => res({ idx: i, frameDropped: i < 2 }));
     expect(summarize(rs).timingUnreliable).toBe(true);
+  });
+
+  it('timingUnreliable: a single dropped onset never flags a block, even in 15 trials (1/15 > 0.05)', () => {
+    const rs = Array.from({ length: 15 }, (_, i) => res({ idx: i, frameDropped: i === 3 }));
+    expect(summarize(rs).timingUnreliable).toBe(false);
+  });
+
+  it('timingUnreliable: 2 of 60 dropped (0.033) → false', () => {
+    const rs = Array.from({ length: 60 }, (_, i) => res({ idx: i, frameDropped: i < 2 }));
+    expect(summarize(rs).timingUnreliable).toBe(false);
+  });
+
+  it('timingUnreliable: 2 of 3 dropped → true (the share decides once there are 2)', () => {
+    const rs = Array.from({ length: 3 }, (_, i) => res({ idx: i, frameDropped: i < 2 }));
+    expect(summarize(rs).timingUnreliable).toBe(true);
+  });
+
+  it('RT statistics leave out hits with a dropped onset frame; score and counts keep them', () => {
+    const s = summarize([res({ rtMs: 300 }), res({ rtMs: 500 }), res({ rtMs: 2000, frameDropped: true })]);
+    expect(s).toMatchObject({ meanRt: 400, medianRt: 400, sdRt: sd([300, 500]), cvRt: cv([300, 500]), score: 1 });
+    expect(s.counts.hit).toBe(3);
+    expect(s.n).toBe(3);
+  });
+
+  it('only dropped-onset hits → RT statistics are null', () => {
+    expect(summarize([res({ frameDropped: true })])).toMatchObject({ meanRt: null, medianRt: null, sdRt: null, cvRt: null });
   });
 
   it('empty set → score 0, statistics null', () => {

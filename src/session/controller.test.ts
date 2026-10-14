@@ -362,9 +362,32 @@ describe('SessionController — levels and persistence', () => {
       lAfter: 2,
       changes: [{ label: 'Окно ответа', from: '1000 мс', to: '808 мс' }],
       score: 1,
-      lines: ['Медиана: 300 мс', 'Разброс (SD): 0 мс', 'Фальстарты: 0', 'Пропуски: 0'],
+      lines: ['Медиана: 300 мс', 'Среднее: 300 мс', 'Разброс (SD): 0 мс', 'Стабильность (CV): 0,00', 'Фальстарты: 0', 'Пропуски: 0'],
       flags: ['calibration'],
+      showLevel: true,
     });
+  });
+
+  it('says why the level did not rise when the RT spread is above the stability threshold (I3)', async () => {
+    const h = await begin(planFree('pzmr', 1));
+    const rts = [150, 500];
+    const { view } = await playReaction(h, (spec, idx) => ({ key: 'Space', rtMs: rts[idx % 2] as number }));
+    expect(view.score).toBe(1);
+    expect(view.lAfter).toBe(view.lBefore);
+    const line = view.lines.find((l) => l.startsWith('Уровень не повышен'));
+    expect(line).toMatch(/^Уровень не повышен: разброс выше порога \(CV 0,\d\d > 0,25\)$/);
+    const cvLine = view.lines.find((l) => l.startsWith('Стабильность (CV): '));
+    expect(line).toContain(`CV ${cvLine?.slice('Стабильность (CV): '.length) ?? ''} >`);
+  });
+
+  it('no stability line when the spread is within the threshold or the score is not above 0.8', async () => {
+    const h = await begin(planFree('pzmr', 1));
+    expect((await playReaction(h)).view.lines.some((l) => l.startsWith('Уровень не повышен'))).toBe(false);
+    await h.c.continueAfterSummary();
+    const rts = [150, 500];
+    const weak = await playReaction(h, (spec, idx) => (idx % 3 === 0 ? null : { key: 'Space', rtMs: rts[idx % 2] as number }));
+    expect(weak.view.score).toBeLessThanOrEqual(0.8);
+    expect(weak.view.lines.some((l) => l.startsWith('Уровень не повышен'))).toBe(false);
   });
 
   it('segment starts at startLevel(lSaved, days since last training)', async () => {
@@ -995,7 +1018,7 @@ describe('SessionController — number series', () => {
     await h.c.submitNumSeries(answers);
 
     const { view } = expectStep(h.c, 'summary');
-    expect(view).toMatchObject({ module: 'numseries', title: 'Числовые ряды', lBefore: 0, lAfter: 0, changes: [], score: 0.7, flags: [] });
+    expect(view).toMatchObject({ module: 'numseries', title: 'Числовые ряды', lBefore: 0, lAfter: 0, changes: [], score: 0.7, flags: [], showLevel: false });
     expect(view.lines).toEqual(['Верно: 7 из 10', `Среднее время: ${String(Math.round((41 + 9 + 40 + 7 * 5) / 10))} с`]);
 
     const items = await h.repo.listLogicItems();
@@ -1096,6 +1119,7 @@ describe('SessionController — diagnostics', () => {
       rdoMeanAbsErrorMs: 0,
       gorbov: gorbovMetrics(7.2, 7.5, 14.7),
       numseriesCorrect: 20,
+      unreliable: [],
     };
     const done = expectStep(h.c, 'done');
     expect(done.diagnostic).toEqual(expected);
@@ -1173,6 +1197,80 @@ describe('SessionController — diagnostics', () => {
     expect(again.specs.slice(0, 5)).toEqual(
       pzmr.generateBlock(p, createRng(deriveSeed(seed, 'practice')), 'keyboard', 5).map((t) => ({ ...t, practice: true })),
     );
+  });
+
+  const pzmrOnly = (n = 1, seedIndex = n): SessionPlan => {
+    const plan = planDiagnostic(n, seedIndex);
+    return { ...plan, segments: [plan.segments[0] as Segment] };
+  };
+  /** 5 of the 50 counted onsets dropped (practice trials are 0–4): 10 % > 5 %. */
+  const droppedFive = (idx: number): boolean => idx >= 5 && idx < 10;
+
+  it('an unreliable diagnostic reaction block is replayed once from a new seed, with a notice and no write (I1)', async () => {
+    const h = await begin(pzmrOnly());
+    h.c.ackInstruction();
+    const first = expectStep(h.c, 'reaction_block');
+    await h.c.submitReaction(playTimeline(first.specs, perfectPlayer, { dropped: droppedFive }));
+    expect(expectStep(h.c, 'notice')).toEqual({
+      kind: 'notice',
+      module: 'pzmr',
+      text: 'Замер ненадёжен (пропуски кадров). Блок будет повторён.',
+    });
+    expect(await h.repo.listBlocks()).toEqual([]);
+    expect(h.c.discards).toEqual([{ module: 'pzmr', reason: 'timing_unreliable' }]);
+    h.c.ackNotice();
+    const again = expectStep(h.c, 'reaction_block');
+    const seed = deriveSeed(diagnosticSegmentSeed(1, 'pzmr'), 'retry:1');
+    expect(again.specs.slice(5)).toEqual(pzmr.generateBlock(pzmr.params(0), createRng(seed), 'keyboard', 50));
+    await h.c.submitReaction(playTimeline(again.specs, perfectPlayer));
+    expect(expectStep(h.c, 'summary').view.flags).toEqual([]);
+    await h.c.continueAfterSummary();
+    const done = expectStep(h.c, 'done');
+    expect(done.diagnostic).toMatchObject({ pzmrMedianRt: 300, unreliable: [] });
+    expect(await h.repo.listBlocks()).toHaveLength(1);
+  });
+
+  it('a replay that is unreliable again is accepted and its module is marked unreliable (I1)', async () => {
+    const h = await begin(pzmrOnly());
+    h.c.ackInstruction();
+    await h.c.submitReaction(playTimeline(expectStep(h.c, 'reaction_block').specs, perfectPlayer, { dropped: droppedFive }));
+    h.c.ackNotice();
+    await h.c.submitReaction(playTimeline(expectStep(h.c, 'reaction_block').specs, perfectPlayer, { dropped: droppedFive }));
+    const summary = expectStep(h.c, 'summary');
+    expect(summary.view.flags).toEqual(['timing_unreliable']);
+    await h.c.continueAfterSummary();
+    const done = expectStep(h.c, 'done');
+    expect(done.diagnostic).toMatchObject({ pzmrMedianRt: 300, unreliable: ['pzmr'] });
+    const [row] = await h.repo.listDiagnostics();
+    expect(JSON.parse(row?.resultsJson ?? '')).toMatchObject({ unreliable: ['pzmr'] });
+    expect(await h.repo.listBlocks()).toHaveLength(1);
+  });
+
+  it('training never replays an unreliable block (the flag keeps the level instead)', async () => {
+    const h = await begin(planFree('pzmr', 1));
+    const s = await playReaction(h, perfectPlayer, (idx) => idx < 2);
+    expect(s.view.flags).toContain('timing_unreliable');
+    expect(() => {
+      h.c.ackNotice();
+    }).toThrow(/expected step notice/);
+  });
+
+  it('the seed index of a diagnostic can differ from its displayed number (I5)', async () => {
+    const h = await begin(pzmrOnly(1, 2));
+    h.c.ackInstruction();
+    const block = expectStep(h.c, 'reaction_block');
+    const seed = diagnosticSegmentSeed(2, 'pzmr');
+    expect(block.specs.slice(5)).toEqual(pzmr.generateBlock(pzmr.params(0), createRng(seed), 'keyboard', 50));
+    await h.c.submitReaction(playTimeline(block.specs, perfectPlayer));
+    await h.c.continueAfterSummary();
+    expect((await h.repo.listDiagnostics())[0]?.number).toBe(1);
+  });
+
+  it('diagnostic summaries do not show a level (M5)', async () => {
+    const h = await begin(pzmrOnly());
+    h.c.ackInstruction();
+    await h.c.submitReaction(playTimeline(expectStep(h.c, 'reaction_block').specs, perfectPlayer));
+    expect(expectStep(h.c, 'summary').view.showLevel).toBe(false);
   });
 
   it('a diagnostic plan needs its number', async () => {

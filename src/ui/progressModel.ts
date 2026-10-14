@@ -2,7 +2,7 @@ import type { Repository } from '../data/repository';
 import type { DiagnosticRow, SessionRow } from '../data/rows';
 import type { DiagnosticResults } from '../engine/diagnostic';
 import { L_NORM } from '../engine/planner';
-import type { ModuleId, SessionKind } from '../engine/types';
+import type { ModuleId, ReactionModuleId, SessionKind } from '../engine/types';
 import { moduleTitles } from '../modules/registry';
 import type { ChartPoint, ChartSeries } from './charts/LineChart';
 import { parseResults, readinessOf, type HomeModel } from './homeModel';
@@ -15,6 +15,8 @@ export interface ChartSpec {
   lowerIsBetter: boolean;
   yLabel: string;
   series: ChartSeries[];
+  /** x labels of the diagnostics whose value was measured with dropped frames (I1); the points carry a note too. */
+  unreliable: string[];
 }
 
 export interface LevelChartSpec {
@@ -75,27 +77,53 @@ function gorbovOf(r: DiagnosticResults | null): { V: number | null; P: number | 
   return { V: num(g.V), P: num(g.P), Pi: num(g.Pi) };
 }
 
-/** One chart per metric of the control diagnostics; a missing metric is a gap, never a zero. */
+const UNRELIABLE_NOTE = 'замер ненадёжен';
+
+/** The numeric metrics of DiagnosticResults (gorbov is an object). */
+type NumericMetric = 'pzmrMedianRt' | 'szmrMedianRt' | 'gonogoScore' | 'rdoMeanAbsErrorMs' | 'numseriesCorrect';
+
+/**
+ * One chart per metric of the control diagnostics; a missing metric is a gap, never a zero. A value measured
+ * with dropped frames (DiagnosticResults.unreliable) keeps its point, with a note on it and under the chart.
+ */
 export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
   const parsed = rows.map((row) => ({ x: `№${String(row.number)}`, r: parseResults(row) }));
-  const line = (name: string, pick: (r: DiagnosticResults | null) => number | null): ChartSeries => ({
+  const shaky = (module: ReactionModuleId | null, r: DiagnosticResults | null): boolean =>
+    module !== null && r !== null && r.unreliable.includes(module);
+  const line = (name: string, pick: (r: DiagnosticResults | null) => number | null, module: ReactionModuleId | null = null): ChartSeries => ({
     name,
-    points: parsed.map<ChartPoint>(({ x, r }) => ({ x, y: pick(r) })),
+    points: parsed.map<ChartPoint>(({ x, r }) => {
+      const y = pick(r);
+      return y !== null && shaky(module, r) ? { x, y, note: UNRELIABLE_NOTE } : { x, y };
+    }),
   });
-  const metric = (r: DiagnosticResults | null, key: keyof DiagnosticResults): number | null => num(r?.[key]);
+  const metric = (r: DiagnosticResults | null, key: NumericMetric): number | null => num(r?.[key]);
+  const reaction = (id: ReactionModuleId, title: string, yLabel: string, lowerIsBetter: boolean, name: string, key: NumericMetric): ChartSpec => {
+    const series = [line(name, (r) => metric(r, key), id)];
+    const unreliable = (series[0]?.points ?? []).flatMap((p) => (p.note === undefined ? [] : [p.x]));
+    return { id, title, yLabel, lowerIsBetter, series, unreliable };
+  };
   return [
-    { id: 'pzmr', title: 'ПЗМР, медиана, мс', yLabel: 'мс', lowerIsBetter: true, series: [line('ПЗМР', (r) => metric(r, 'pzmrMedianRt'))] },
-    { id: 'szmr', title: 'СЗМР, медиана, мс', yLabel: 'мс', lowerIsBetter: true, series: [line('СЗМР', (r) => metric(r, 'szmrMedianRt'))] },
-    { id: 'gonogo', title: 'Go/No-Go, точность, %', yLabel: '%', lowerIsBetter: false, series: [line('Go/No-Go', (r) => metric(r, 'gonogoScore'))] },
-    { id: 'rdo', title: 'РДО, средняя ошибка, мс', yLabel: 'мс', lowerIsBetter: true, series: [line('РДО', (r) => metric(r, 'rdoMeanAbsErrorMs'))] },
+    reaction('pzmr', 'ПЗМР, медиана, мс', 'мс', true, 'ПЗМР', 'pzmrMedianRt'),
+    reaction('szmr', 'СЗМР, медиана, мс', 'мс', true, 'СЗМР', 'szmrMedianRt'),
+    reaction('gonogo', 'Go/No-Go, точность, %', '%', false, 'Go/No-Go', 'gonogoScore'),
+    reaction('rdo', 'РДО, средняя ошибка, мс', 'мс', true, 'РДО', 'rdoMeanAbsErrorMs'),
     {
       id: 'gorbov',
       title: 'Таблица Горбова: V, P, Π, с',
       yLabel: 'с',
       lowerIsBetter: true,
       series: [line('V', (r) => gorbovOf(r).V), line('P', (r) => gorbovOf(r).P), line('Π', (r) => gorbovOf(r).Pi)],
+      unreliable: [],
     },
-    { id: 'numseries', title: 'Числовые ряды, верно из 20', yLabel: 'верно из 20', lowerIsBetter: false, series: [line('Числовые ряды', (r) => metric(r, 'numseriesCorrect'))] },
+    {
+      id: 'numseries',
+      title: 'Числовые ряды, верно из 20',
+      yLabel: 'верно из 20',
+      lowerIsBetter: false,
+      series: [line('Числовые ряды', (r) => metric(r, 'numseriesCorrect'))],
+      unreliable: [],
+    },
   ];
 }
 

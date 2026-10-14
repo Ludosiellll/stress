@@ -201,7 +201,7 @@ export function buildBlock(
 export interface ScoredReaction {
   results: TrialResult[];
   summary: ReactionSummary;
-  /** RTs of `press` hits outside practice (FatigueBlock.hitRts). */
+  /** RTs of `press` hits outside practice whose onset frame was not dropped (FatigueBlock.hitRts). */
   hitRts: number[];
 }
 
@@ -211,7 +211,7 @@ export function scoreReaction(specs: readonly TrialSpec[], tl: BlockTimeline): S
   const summary = summarize(results);
   if (summary.n === 0) return null;
   const hitRts = results.flatMap((r) =>
-    !r.practice && r.kind === 'press' && r.outcome === 'hit' && r.rtMs !== null ? [r.rtMs] : [],
+    !r.practice && !r.frameDropped && r.kind === 'press' && r.outcome === 'hit' && r.rtMs !== null ? [r.rtMs] : [],
   );
   return { results, summary, hitRts };
 }
@@ -265,6 +265,7 @@ export type DiagnosticPart =
 /**
  * pzmr/szmr medianRt, gonogo score × 100 (percent, Ruling R18), rdo meanAbsErrorMs, Gorbov metrics only when
  * all three runs were completed, number series correct within the total limit. Missing parts stay null.
+ * Reaction blocks stored with timingUnreliable (after their replay) list their module in `unreliable`.
  */
 export function diagnosticResults(parts: readonly DiagnosticPart[]): DiagnosticResults {
   const r: DiagnosticResults = {
@@ -274,9 +275,11 @@ export function diagnosticResults(parts: readonly DiagnosticPart[]): DiagnosticR
     rdoMeanAbsErrorMs: null,
     gorbov: null,
     numseriesCorrect: null,
+    unreliable: [],
   };
   const seconds: Array<number | null> = [];
   for (const p of parts) {
+    if ('summary' in p && p.summary.timingUnreliable) r.unreliable.push(p.module);
     switch (p.module) {
       case 'pzmr':
         r.pzmrMedianRt = p.summary.medianRt;

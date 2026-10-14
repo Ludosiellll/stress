@@ -31,6 +31,8 @@ export type Step =
     }
   | { kind: 'numseries_block'; items: SeriesItem[]; perItemLimitMs: number | null; totalLimitMs: number | null }
   | { kind: 'summary'; view: BlockSummaryView }
+  /** Diagnostics: the reaction block just played was timingUnreliable and is replayed once (I1); ackNotice() starts it. */
+  | { kind: 'notice'; module: ReactionModuleId; text: string }
   | { kind: 'fatigue_prompt'; module: ModuleId }
   /** canAbandon: abandonPending() may drop the unsaved writes (not for the session row itself). */
   | { kind: 'save_error'; message: string; canAbandon: boolean; what: SaveErrorWhat }
@@ -58,6 +60,8 @@ export interface BlockSummaryView {
   score: number;
   lines: string[];
   flags: BlockFlag[];
+  /** Training and free blocks of modules with a level; diagnostics play at a fixed level and hide it (M5). */
+  showLevel: boolean;
 }
 
 /** One number-series answer; `given` null = no valid answer (time ran out). */
@@ -67,6 +71,7 @@ export interface SeriesAnswer {
   timeMs: number;
 }
 
+export const UNRELIABLE_REPLAY_NOTICE = 'Замер ненадёжен (пропуски кадров). Блок будет повторён.';
 export const SERIES_INSTRUCTION_TRAINING = 'Найди закономерность и введи следующее число. На каждую задачу — 40 секунд.';
 export const TABLE_KEYS_HINT = 'Мышь';
 export const SERIES_KEYS_HINT = 'Цифры и Enter';
@@ -129,10 +134,21 @@ function timingErrorLine(meanSignedErrorMs: number): string {
 export function reactionLines(module: ReactionModuleId, s: ReactionSummary): string[] {
   const lines: string[] = [];
   if (s.medianRt !== null) lines.push(`Медиана: ${String(whole(s.medianRt))} мс`);
+  if (s.meanRt !== null) lines.push(`Среднее: ${String(whole(s.meanRt))} мс`);
   if (s.sdRt !== null) lines.push(`Разброс (SD): ${String(whole(s.sdRt))} мс`);
+  if (s.cvRt !== null) lines.push(`Стабильность (CV): ${decimal(s.cvRt, 2)}`);
   if (s.meanSignedErrorMs !== null) lines.push(timingErrorLine(s.meanSignedErrorMs));
+  if (module === 'rdo') {
+    lines.push(`Точных попаданий: ${String(s.counts.hit)} из ${String(s.n)}`);
+    lines.push(`Опережений: ${String(s.counts.early)}, запаздываний: ${String(s.counts.timing_late)}`);
+  }
   for (const [label, count] of COUNT_LINES[module]) lines.push(`${label}: ${String(count(s.counts))}`);
   return lines;
+}
+
+/** «Уровень не повышен: разброс выше порога (CV 0,24 > 0,19)» (I3). */
+export function stabilityLine(cvRt: number, cvMax: number): string {
+  return `Уровень не повышен: разброс выше порога (CV ${decimal(cvRt, 2)} > ${decimal(cvMax, 2)})`;
 }
 
 export function tableLines(r: TableRunResult): string[] {

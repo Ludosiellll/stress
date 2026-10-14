@@ -32,6 +32,16 @@ describe('diagnosticCharts', () => {
     expect(charts[4]?.series[1]?.points.map((p) => p.y)).toEqual([null, null, null]);
   });
 
+  it('marks the points of modules measured with dropped frames (I1)', () => {
+    const charts = diagnosticCharts([row(1, full), row(2, { ...full, unreliable: ['pzmr', 'gonogo'] })]);
+    expect(charts[0]?.series[0]?.points).toEqual([{ x: '№1', y: 300 }, { x: '№2', y: 300, note: 'замер ненадёжен' }]);
+    expect(charts[0]?.unreliable).toEqual(['№2']);
+    expect(charts[2]?.unreliable).toEqual(['№2']);
+    expect(charts[1]?.unreliable).toEqual([]);
+    expect(charts[1]?.series[0]?.points[1]).toEqual({ x: '№2', y: 420 });
+    expect(charts[4]?.unreliable).toEqual([]);
+  });
+
   it('has no points without diagnostics', () => {
     expect(diagnosticCharts([]).every((c) => c.series.every((s) => s.points.length === 0))).toBe(true);
   });

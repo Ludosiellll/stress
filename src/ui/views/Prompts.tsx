@@ -72,6 +72,8 @@ export function SaveError({ message, canAbandon, what, busy, onRetry, onAbandon,
 }
 
 export interface NoticeProps {
+  /** Heading; default «Блок прерван». */
+  title?: string;
   text: string;
   onContinue: () => void;
   /** Offered after repeated failures: leave the session instead of trying again. */
@@ -79,7 +81,7 @@ export interface NoticeProps {
 }
 
 /** Why the block was thrown away; Enter goes on to a fresh block. */
-export function Notice({ text, onContinue, onExit }: NoticeProps) {
+export function Notice({ title = 'Блок прерван', text, onContinue, onExit }: NoticeProps) {
   useKeyDown((e) => {
     if (!isEnter(e) || fromControl(e)) return;
     e.preventDefault();
@@ -87,7 +89,7 @@ export function Notice({ text, onContinue, onExit }: NoticeProps) {
   });
   return (
     <div className="screen-center">
-      <h2 tabIndex={-1}>Блок прерван</h2>
+      <h2 tabIndex={-1}>{title}</h2>
       <p className="notice">{text}</p>
       <p className="hint">Нажми Enter, чтобы продолжить. Esc — пауза.</p>
       <div className="actions">

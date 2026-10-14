@@ -34,7 +34,9 @@ import {
   reactionLines,
   saveErrorMessage,
   seriesLines,
+  stabilityLine,
   tableLines,
+  UNRELIABLE_REPLAY_NOTICE,
   type SaveErrorWhat,
   type SeriesAnswer,
   type Step,
@@ -55,8 +57,11 @@ export interface SessionStartOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
-/** focus_lost: the window lost focus; error: a runner or drawing failure; user: the user paused (Escape). */
-export type DiscardReason = 'focus_lost' | 'error' | 'user';
+/**
+ * focus_lost: the window lost focus; error: a runner or drawing failure; user: the user paused (Escape);
+ * timing_unreliable: a diagnostic reaction block with too many dropped frames, replayed once (I1).
+ */
+export type DiscardReason = 'focus_lost' | 'error' | 'user' | 'timing_unreliable';
 
 /** First 3 blocks of a module ever are calibration blocks (g = 2). */
 const CALIBRATION_BLOCKS = 3;
@@ -78,6 +83,8 @@ interface SegmentRun {
   blocksDone: number;
   /** Discards of the current block. */
   attempt: number;
+  /** Diagnostics: the current block was already replayed once for timingUnreliable (I1). */
+  unreliableReplayed: boolean;
   /** Text and key hint of the last instruction shown in the segment. */
   lastInstruction: string | null;
 }
@@ -234,6 +241,13 @@ export class SessionController {
         return;
       }
       const { results, summary, hitRts } = scored;
+      const seg = this.segment();
+      if (!this.counted && summary.timingUnreliable && !seg.unreliableReplayed) {
+        // A diagnostic value from a block with dropped frames is replayed once; a second one is kept and marked.
+        seg.unreliableReplayed = true;
+        this.restartBlock(module, 'timing_unreliable', { kind: 'notice', module, text: UNRELIABLE_REPLAY_NOTICE });
+        return;
+      }
       await this.completeBlock({
         module,
         L,
@@ -310,6 +324,12 @@ export class SessionController {
         extraWrites: ratings === null ? [] : [{ label: 'saveRatings', run: () => this.repo.saveRatings(ratings) }],
       });
     });
+  }
+
+  /** Starts the replay announced by the `notice` step. */
+  ackNotice(): void {
+    this.take('notice');
+    this.startBlock(this.block().plan);
   }
 
   /** Throws the block on screen away: nothing is written, the level stays, a fresh block of the module follows. */
@@ -399,7 +419,16 @@ export class SessionController {
       await this.finish();
       return;
     }
-    this.seg = { index, segment, L: this.segmentLevel(segment), clockStart: null, blocksDone: 0, attempt: 0, lastInstruction: null };
+    this.seg = {
+      index,
+      segment,
+      L: this.segmentLevel(segment),
+      clockStart: null,
+      blocksDone: 0,
+      attempt: 0,
+      unreliableReplayed: false,
+      lastInstruction: null,
+    };
     this.presentNext();
   }
 
@@ -495,18 +524,20 @@ export class SessionController {
     const seg = this.segment();
     const seed = this.counted
       ? trainingBlockSeed(this.plan.seed, seg.index, seg.blocksDone, seg.attempt)
-      : diagnosticBlockSeed(this.diagnosticNumber(), seg.segment.module, seg.blocksDone, seg.attempt);
+      : diagnosticBlockSeed(this.plan.diagnosticSeedIndex ?? this.diagnosticNumber(), seg.segment.module, seg.blocksDone, seg.attempt);
     const { step, paramsJson } = buildBlock(plan, seed, this.layout, this.ratings);
     this.next = null;
     this.active = { plan, startedAt: this.now().toISOString(), paramsJson };
     this.current = step;
   }
 
-  private restartBlock(module: ModuleId, reason: DiscardReason): void {
+  /** The block again from the next attempt's seed; with `notice`, that step comes first (ackNotice starts the block). */
+  private restartBlock(module: ModuleId, reason: DiscardReason, notice?: StepOf<'notice'>): void {
     const { plan } = this.block();
     this.discardLog.push({ module, reason });
     this.segment().attempt++;
-    this.startBlock(plan);
+    if (notice === undefined) this.startBlock(plan);
+    else this.current = notice;
   }
 
   /**
@@ -521,6 +552,12 @@ export class SessionController {
       this.counted && b.level !== null
         ? nextLevel(b.L, { score: b.score, calibration, prevScoreSameSession: this.prevScore(b.module), ...b.level })
         : b.L;
+    const lines = [...b.lines];
+    const lv = b.level;
+    if (this.counted && lv !== null && !lv.timingUnreliable && b.score > 0.8 && lv.cvMax !== null && lv.cvRt !== null && lv.cvRt > lv.cvMax) {
+      // nextLevel held the level (stability rule): say so (I3).
+      lines.push(stabilityLine(lv.cvRt, lv.cvMax));
+    }
     const flags: BlockFlag[] = [];
     if (calibration) flags.push('calibration');
     if (b.level?.timingUnreliable === true) flags.push('timing_unreliable');
@@ -536,8 +573,9 @@ export class SessionController {
       lAfter,
       changes: describeChanges(b.module, b.L, lAfter, b.task),
       score: b.score,
-      lines: b.lines,
+      lines,
       flags,
+      showLevel: this.counted && b.level !== null,
     };
 
     let committed = false;
@@ -590,6 +628,7 @@ export class SessionController {
     seg.L = lAfter;
     seg.blocksDone++;
     seg.attempt = 0;
+    seg.unreliableReplayed = false;
     this.active = null;
     if (b.module !== 'numseries') this.levels.set(b.module, lAfter);
     if (this.counted && isReaction(b.module)) {

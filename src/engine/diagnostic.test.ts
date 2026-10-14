@@ -18,6 +18,13 @@ describe('planDiagnostic', () => {
     ]);
   });
 
+  it('takes its seeds from seedIndex, which defaults to the number (I5)', () => {
+    expect(planDiagnostic(3)).toMatchObject({ diagnosticNumber: 3, diagnosticSeedIndex: 3 });
+    const later = planDiagnostic(2, 5);
+    expect(later).toMatchObject({ diagnosticNumber: 2, diagnosticSeedIndex: 5, seed: hashString('diag:5') });
+    expect(later.segments).toEqual(planDiagnostic(2).segments);
+  });
+
   it('is deterministic and number-dependent', () => {
     expect(planDiagnostic(1)).toEqual(planDiagnostic(1));
     expect(planDiagnostic(1).seed).not.toBe(planDiagnostic(2).seed);

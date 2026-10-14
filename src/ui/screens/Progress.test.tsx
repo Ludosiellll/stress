@@ -17,6 +17,7 @@ const base: DiagnosticResults = {
   rdoMeanAbsErrorMs: 60,
   gorbov: { V: 50, P: 90, Pi: 30 },
   numseriesCorrect: 10,
+  unreliable: [],
 };
 
 async function seedDiagnostic(repo: MemoryRepository, number: number, results: Partial<DiagnosticResults>): Promise<void> {
@@ -86,6 +87,20 @@ describe('Progress with two diagnostics', () => {
     expect(Math.max(...ticks)).toBeGreaterThanOrEqual(L_NORM.pzmr);
     expect(screen.getAllByText('≈ формат теста')).toHaveLength(1);
     expect(within(card).getByText('номер сессии')).toBeTruthy();
+  });
+});
+
+describe('Progress with an unreliable measurement', () => {
+  it('marks the point, notes it under the chart and in the readiness block (I1)', async () => {
+    const repo = new MemoryRepository();
+    await seedDiagnostic(repo, 1, {});
+    await seedDiagnostic(repo, 2, { pzmrMedianRt: 300, unreliable: ['pzmr'] });
+    await renderProgress(repo);
+    const card = chartOf('ПЗМР, медиана, мс');
+    expect([...card.querySelectorAll('circle > title')].map((t) => t.textContent)).toEqual(['№1: 320', '№2: 300 (замер ненадёжен)']);
+    expect(within(card).getByText('Замер ненадёжен (пропуски кадров): №2')).toBeTruthy();
+    expect(within(chartOf('СЗМР, медиана, мс')).queryByText(/Замер ненадёжен/)).toBeNull();
+    expect(screen.getByText('В последней диагностике замер ненадёжен: ПЗМР. Индекс учитывает эти значения.')).toBeTruthy();
   });
 });
 

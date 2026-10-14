@@ -1,41 +1,64 @@
 import type { Repository } from '../data/repository';
 import type { DiagnosticRow } from '../data/rows';
-import { hashString } from '../engine/rng';
-import { planDiagnostic, type DiagnosticResults } from '../engine/diagnostic';
+import { planDiagnostic, type DiagnosticMetrics, type DiagnosticResults } from '../engine/diagnostic';
 import { isDiagnosticDue, planTraining, type SessionPlan } from '../engine/planner';
 import { readiness, type Ability } from '../engine/readiness';
+import { hashString } from '../engine/rng';
 import { computeStreak, daysUntil } from '../engine/streak';
+import type { ReactionModuleId } from '../engine/types';
 
 export interface HomeModel {
   plan: SessionPlan;
   diagnosticDue: boolean;
   diagnosticPlan: SessionPlan;
-  /** null until the first diagnostic exists. */
-  readiness: { abilities: Record<Ability, number | null>; overall: number | null } | null;
+  /** null until the first diagnostic exists. `unreliable`: reaction modules marked «замер ненадёжен» in the latest one. */
+  readiness: { abilities: Record<Ability, number | null>; overall: number | null; unreliable: ReactionModuleId[] } | null;
   streak: number;
   daysToTest: number | null;
 }
 
 const NO_ABILITIES: Record<Ability, number | null> = { reaction: null, attention: null, switching: null, memory: null, logic: null };
 
-/** The stored results of a diagnostic, or null when the row does not hold a JSON object. */
+const REACTION_IDS: readonly string[] = ['pzmr', 'szmr', 'gonogo', 'rdo'];
+const isReactionId = (v: unknown): v is ReactionModuleId => typeof v === 'string' && REACTION_IDS.includes(v);
+
+const NO_METRICS: DiagnosticMetrics = {
+  pzmrMedianRt: null,
+  szmrMedianRt: null,
+  gonogoScore: null,
+  rdoMeanAbsErrorMs: null,
+  gorbov: null,
+  numseriesCorrect: null,
+};
+
+/**
+ * The stored results of a diagnostic, or null when the row does not hold a JSON object. A missing metric
+ * reads as null; rows written before `unreliable` existed read as reliable (I1); unknown entries are dropped.
+ */
 export function parseResults(row: DiagnosticRow): DiagnosticResults | null {
   try {
     const value = JSON.parse(row.resultsJson) as unknown;
-    return typeof value === 'object' && value !== null ? (value as DiagnosticResults) : null;
+    if (typeof value !== 'object' || value === null) return null;
+    const r = value as Partial<DiagnosticResults>;
+    const unreliable = Array.isArray(r.unreliable) ? (r.unreliable as unknown[]).filter(isReactionId) : [];
+    return { ...NO_METRICS, ...r, unreliable };
   } catch {
     return null;
   }
 }
 
-/** Readiness from the stored diagnostics (first = baseline, last = latest); null until the first one exists. */
+/**
+ * Readiness from the stored diagnostics (first = baseline, last = latest); null until the first one exists.
+ * Values marked unreliable still count (they are marked on screen).
+ */
 export function readinessOf(diagnostics: readonly DiagnosticRow[]): HomeModel['readiness'] {
-  const first = diagnostics[0];
   const last = diagnostics[diagnostics.length - 1];
-  if (first === undefined || last === undefined) return null;
+  if (last === undefined) return null;
   const latest = parseResults(last);
-  const baseline = parseResults(first);
-  return latest !== null && baseline !== null ? readiness(latest, baseline) : { abilities: NO_ABILITIES, overall: null };
+  if (latest === null) return { abilities: NO_ABILITIES, overall: null, unreliable: [] };
+  const baseline = parseResults(diagnostics[0] as DiagnosticRow);
+  if (baseline === null) return { abilities: NO_ABILITIES, overall: null, unreliable: [] };
+  return { ...readiness(latest, baseline), unreliable: latest.unreliable };
 }
 
 /** Everything Home shows, computed from the repository at the given local date (YYYY-MM-DD). */
@@ -48,10 +71,12 @@ export async function loadHomeModel(repo: Repository, today: string): Promise<Ho
   ]);
   const last = diagnostics[diagnostics.length - 1];
   const trainingDays = sessions.flatMap((s) => (s.kind === 'training' && s.endedAt !== null ? [s.endedAt] : []));
+  // Seeds count every diagnostic ever started, so an abandoned one is not replayed with the same tables (I5).
+  const diagnosticsStarted = sessions.filter((s) => s.kind === 'diagnostic').length;
   return {
     plan: planTraining(states, today, hashString(`${today}:${String(sessions.length)}`)),
     diagnosticDue: isDiagnosticDue(last?.at ?? null, today),
-    diagnosticPlan: planDiagnostic(diagnostics.length + 1),
+    diagnosticPlan: planDiagnostic(diagnostics.length + 1, diagnosticsStarted + 1),
     readiness: readinessOf(diagnostics),
     streak: computeStreak(trainingDays, today),
     daysToTest: daysUntil(settings.testDate, today),

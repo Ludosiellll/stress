@@ -1,12 +1,15 @@
 import { cv, mean, median, sd } from '../stats';
 import type { Outcome, ReactionSummary, TrialResult } from './types';
 
-/** A block whose share of dropped onset frames exceeds this is flagged `timingUnreliable`. */
+/** A block is flagged `timingUnreliable` when at least this many onset frames were dropped… */
+const MIN_DROPPED = 2;
+/** …and their share of the block's trials exceeds this. */
 const MAX_DROPPED_RATIO = 0.05;
 
 /**
- * Block summary over non-practice trials. RT statistics use hits of `press` trials only;
- * error statistics use every result with an errorMs (timed trials answered with the right key, no false starts).
+ * Block summary over non-practice trials. RT statistics use hits of `press` trials only, and leave out
+ * trials whose onset frame was dropped (their onset time is uncertain); those still count for score and counts.
+ * Error statistics use every result with an errorMs (timed trials answered with the right key, no false starts).
  */
 export function summarize(results: readonly TrialResult[]): ReactionSummary {
   const counts: Record<Outcome, number> = {
@@ -31,7 +34,7 @@ export function summarize(results: readonly TrialResult[]): ReactionSummary {
     counts[r.outcome]++;
     if (r.success) successes++;
     if (r.frameDropped) dropped++;
-    if (r.kind === 'press' && r.outcome === 'hit' && r.rtMs !== null) rts.push(r.rtMs);
+    if (r.kind === 'press' && r.outcome === 'hit' && r.rtMs !== null && !r.frameDropped) rts.push(r.rtMs);
     if (r.errorMs !== null) errors.push(r.errorMs);
   }
   const hasRt = rts.length > 0;
@@ -46,6 +49,6 @@ export function summarize(results: readonly TrialResult[]): ReactionSummary {
     counts,
     meanAbsErrorMs: hasErr ? mean(errors.map((e) => Math.abs(e))) : null,
     meanSignedErrorMs: hasErr ? mean(errors) : null,
-    timingUnreliable: n > 0 && dropped / n > MAX_DROPPED_RATIO,
+    timingUnreliable: dropped >= MIN_DROPPED && dropped / n > MAX_DROPPED_RATIO,
   };
 }

@@ -13,6 +13,7 @@ const VIEW: BlockSummaryView = {
   score: 0.85,
   lines: ['Медиана: 312 мс', 'Разброс (SD): 41 мс', 'Фальстарты: 1', 'Пропуски: 0'],
   flags: ['calibration', 'fatigued', 'timing_unreliable'],
+  showLevel: true,
 };
 
 describe('BlockSummary', () => {
@@ -37,10 +38,17 @@ describe('BlockSummary', () => {
     expect(screen.queryByText(/Блок помечен|Замер ненадёжен|Калибровка/)).toBeNull();
   });
 
+  it('a diagnostic block shows no level and no parameter changes (M5)', () => {
+    render(<BlockSummary view={{ ...VIEW, lBefore: 0, lAfter: 0, showLevel: false }} busy={false} onContinue={vi.fn()} />);
+    expect(screen.queryByText(/Уровень/)).toBeNull();
+    expect(screen.queryByRole('list', { name: 'Изменения' })).toBeNull();
+    expect(screen.getByText('Успешно: 85 %')).toBeTruthy();
+  });
+
   it('has no level line for number series', () => {
     render(
       <BlockSummary
-        view={{ ...VIEW, module: 'numseries', title: 'Числовые ряды', lBefore: 0, lAfter: 0, changes: [], flags: [], score: 0.7 }}
+        view={{ ...VIEW, module: 'numseries', title: 'Числовые ряды', lBefore: 0, lAfter: 0, changes: [], flags: [], score: 0.7, showLevel: false }}
         busy={false}
         onContinue={vi.fn()}
       />,

@@ -1,4 +1,5 @@
 import type { Ability } from '../../engine/readiness';
+import { moduleTitles } from '../../modules/registry';
 import type { HomeModel } from '../homeModel';
 
 const ABILITIES: readonly (readonly [Ability, string])[] = [
@@ -32,6 +33,12 @@ export default function ReadinessBlock({ readiness }: { readiness: HomeModel['re
             ))}
           </dl>
           <p>Общий индекс: {readiness.overall === null ? 'нет данных' : Math.round(readiness.overall)}</p>
+          {readiness.unreliable.length > 0 && (
+            <p className="muted">
+              В последней диагностике замер ненадёжен: {readiness.unreliable.map((m) => moduleTitles[m]).join(', ')}. Индекс учитывает
+              эти значения.
+            </p>
+          )}
           <p className="muted">60 — уровень твоей первой диагностики. Таблица Горбова оценивается по опубликованным нормам.</p>
         </>
       )}

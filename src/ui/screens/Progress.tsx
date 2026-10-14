@@ -18,8 +18,10 @@ function ChartCard(props: {
   lowerIsBetter?: boolean;
   series: ChartSeries[];
   refLine?: { y: number; label: string };
+  /** x labels of values measured with dropped frames, listed under the chart. */
+  unreliable?: readonly string[];
 }) {
-  const { title, note, yLabel, xLabel, lowerIsBetter, series, refLine } = props;
+  const { title, note, yLabel, xLabel, lowerIsBetter, series, refLine, unreliable = [] } = props;
   return (
     <figure className="chart-card">
       <figcaption>
@@ -33,6 +35,7 @@ function ChartCard(props: {
         {...(lowerIsBetter === undefined ? {} : { lowerIsBetter })}
         {...(refLine === undefined ? {} : { refLine })}
       />
+      {unreliable.length > 0 && <p className="muted chart-note">Замер ненадёжен (пропуски кадров): {unreliable.join(', ')}</p>}
     </figure>
   );
 }
@@ -51,6 +54,7 @@ function Diagnostics({ model }: { model: ProgressModel }) {
             yLabel={c.yLabel}
             lowerIsBetter={c.lowerIsBetter}
             series={c.series}
+            unreliable={c.unreliable}
           />
         ))}
       </div>

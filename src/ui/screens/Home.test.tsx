@@ -17,6 +17,7 @@ function noResults(over: Partial<DiagnosticResults>): string {
     rdoMeanAbsErrorMs: null,
     gorbov: null,
     numseriesCorrect: null,
+    unreliable: [],
   };
   return JSON.stringify({ ...base, ...over });
 }

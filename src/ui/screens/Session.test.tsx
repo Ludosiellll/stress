@@ -46,6 +46,7 @@ const SUMMARY: BlockSummaryView = {
   score: 0.9,
   lines: ['Медиана: 280 мс'],
   flags: [],
+  showLevel: true,
 };
 
 const TABLE: StepOf<'table_block'> = {
@@ -81,6 +82,7 @@ function fakeDriver(first: Step): FakeDriver {
     retrySave: vi.fn(() => Promise.resolve()),
     abandonPending: vi.fn(() => Promise.resolve()),
     submitWellbeing: vi.fn(() => Promise.resolve()),
+    ackNotice: vi.fn(),
   };
 }
 
@@ -282,6 +284,19 @@ describe('Session steps', () => {
     expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Ответ' }));
   });
 
+  it('a diagnostic replay notice: Enter starts the replayed block (I1)', async () => {
+    const c = fakeDriver({ kind: 'notice', module: 'pzmr', text: 'Замер ненадёжен (пропуски кадров). Блок будет повторён.' });
+    c.ackNotice.mockImplementation(() => {
+      c.step = REACTION;
+    });
+    await renderSession(c);
+    expect(screen.getByRole('heading', { name: 'Повтор блока' })).toBeTruthy();
+    expect(screen.getByText('Замер ненадёжен (пропуски кадров). Блок будет повторён.')).toBeTruthy();
+    await press('Enter');
+    expect(c.ackNotice).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('canvas')).not.toBeNull();
+  });
+
   it('«Закончить модуль» answers the fatigue prompt with stop', async () => {
     const c = fakeDriver({ kind: 'fatigue_prompt', module: 'szmr' });
     await renderSession(c);
@@ -345,6 +360,7 @@ describe('Session steps', () => {
       rdoMeanAbsErrorMs: 18.6,
       gorbov: { V: 41.25, P: 70.5, Pi: -12 },
       numseriesCorrect: 14,
+      unreliable: [],
     };
     await renderSession(fakeDriver({ kind: 'done', sessionId: 's', diagnostic, seriesTotal: 20 }), { plan: { ...PLAN, kind: 'diagnostic' } });
     const table = screen.getByRole('table', { name: 'Результаты диагностики' });
@@ -372,6 +388,7 @@ describe('Session steps', () => {
       rdoMeanAbsErrorMs: null,
       gorbov: null,
       numseriesCorrect: null,
+      unreliable: [],
     };
     await renderSession(fakeDriver({ kind: 'done', sessionId: 's', diagnostic, seriesTotal: null }));
     expect(screen.getAllByText('нет данных')).toHaveLength(8);

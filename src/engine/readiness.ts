@@ -1,5 +1,5 @@
 import { mean } from './stats';
-import type { DiagnosticResults } from './diagnostic';
+import type { DiagnosticMetrics } from './diagnostic';
 
 export type Ability = 'reaction' | 'attention' | 'switching' | 'memory' | 'logic';
 
@@ -41,8 +41,8 @@ function avg(scores: readonly number[]): number | null {
 }
 
 export function readiness(
-  latest: DiagnosticResults,
-  baseline: DiagnosticResults,
+  latest: DiagnosticMetrics,
+  baseline: DiagnosticMetrics,
 ): { abilities: Record<Ability, number | null>; overall: number | null } {
   const rel = (v: number | null, v0: number | null, lowerIsBetter: boolean): number[] =>
     v === null || v0 === null ? [] : [baselineScore(v, Math.max(v0, 1), lowerIsBetter)];

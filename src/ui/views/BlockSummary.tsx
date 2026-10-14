@@ -36,12 +36,12 @@ export default function BlockSummary({ view, busy, onContinue }: BlockSummaryPro
   return (
     <div className="screen-center summary">
       <h2 tabIndex={-1}>{view.title}</h2>
-      {view.module !== 'numseries' && (
+      {view.showLevel && (
         <p className="summary-level">
           Уровень: {decimal(view.lBefore)} → {decimal(view.lAfter)}
         </p>
       )}
-      {view.changes.length > 0 && (
+      {view.showLevel && view.changes.length > 0 && (
         <ul aria-label="Изменения">
           {view.changes.map((c) => (
             <li key={c.label}>{changeText(c)}</li>

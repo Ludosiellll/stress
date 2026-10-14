@@ -26,6 +26,8 @@ export interface SessionPlan {
   segments: Segment[];
   seed: number;
   diagnosticNumber?: number;
+  /** Diagnostics: the index their block seeds come from (diagnosticSegmentSeed); diagnosticNumber when absent. */
+  diagnosticSeedIndex?: number;
 }
 
 export interface ModuleState {

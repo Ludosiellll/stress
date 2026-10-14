@@ -4,6 +4,8 @@ export interface ChartPoint {
   x: string;
   /** null = no value at this x: the line breaks there and no point is drawn. */
   y: number | null;
+  /** Said after the value in the point's title, e.g. «замер ненадёжен». */
+  note?: string;
 }
 
 export interface ChartSeries {
@@ -60,6 +62,12 @@ function fmt(v: number): string {
 function tickText(v: number, step: number): string {
   if (step >= 1) return String(v);
   return decimal(v, step >= 0.1 ? 1 : 2);
+}
+
+/** «№2: 300», «№2: 40 (V)», «№2: 300 (замер ненадёжен)». */
+function pointTitle(x: string, value: string, series: string | null, note: string | undefined): string {
+  const extra = [series, note].filter((t): t is string => t !== null && t !== undefined);
+  return extra.length === 0 ? `${x}: ${value}` : `${x}: ${value} (${extra.join(', ')})`;
 }
 
 function ends(s: ChartSeries): { first: ChartPoint & { y: number }; last: ChartPoint & { y: number } } | null {
@@ -179,7 +187,7 @@ export default function LineChart({ series, yLabel, xLabel, lowerIsBetter, refLi
               {s.points.map((p, i) =>
                 p.y === null ? null : (
                   <circle key={i} className={slots > 40 ? 'chart-point dense' : 'chart-point'} cx={xAt(i)} cy={yAt(p.y)} r={radius}>
-                    <title>{multi ? `${p.x}: ${fmt(p.y)} (${s.name})` : `${p.x}: ${fmt(p.y)}`}</title>
+                    <title>{pointTitle(p.x, fmt(p.y), multi ? s.name : null, p.note)}</title>
                   </circle>
                 ),
               )}

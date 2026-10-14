@@ -34,6 +34,7 @@ export type SessionDriver = Pick<
   | 'retrySave'
   | 'abandonPending'
   | 'submitWellbeing'
+  | 'ackNotice'
 >;
 
 export interface SessionProps {
@@ -322,6 +323,18 @@ function SessionFlow({
           busy={busy}
           onContinue={() => {
             run((c) => c.continueAfterSummary());
+          }}
+        />
+      );
+    case 'notice':
+      return (
+        <Notice
+          title="Повтор блока"
+          text={step.text}
+          onContinue={() => {
+            run((c) => {
+              c.ackNotice();
+            });
           }}
         />
       );
