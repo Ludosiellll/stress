@@ -23,6 +23,12 @@ jobs:
       - run: npm run test:coverage
       - run: npx playwright install --with-deps chromium
       - run: npm run e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-screens
+          path: test-results/screens
+          if-no-files-found: warn
       - run: cargo test --manifest-path src-tauri/backup/Cargo.toml
 
   build-windows:
