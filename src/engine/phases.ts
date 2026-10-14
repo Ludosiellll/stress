@@ -1,4 +1,4 @@
-import { daysBetween, signedDaysBetween } from './dates';
+import { daysBetween, localDayNumber, signedDaysBetween } from './dates';
 import type { ModuleState } from './planner';
 import { MODULE_IDS, type ModuleId } from './types';
 
@@ -30,6 +30,18 @@ export const OVERLOAD_FROM_DAY = 60;
 
 export function isCalibrated(s: ModuleState): boolean {
   return s.lifetimeBlocks >= CALIBRATION_BLOCKS;
+}
+
+/**
+ * The start of the earliest session of any kind (by local calendar day; the first listed on ties), the
+ * `firstSessionAt` of currentPhase; null without sessions. Structural: SessionRow fits.
+ */
+export function firstSessionAt(sessions: readonly { readonly startedAt: string }[]): string | null {
+  let first: { readonly startedAt: string } | null = null;
+  for (const s of sessions) {
+    if (first === null || localDayNumber(s.startedAt) < localDayNumber(first.startedAt)) first = s;
+  }
+  return first?.startedAt ?? null;
 }
 
 /**

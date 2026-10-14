@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MemoryRepository } from '../../src/data/memoryRepository';
-import { currentPhase } from '../../src/engine/phases';
+import { currentPhase, firstSessionAt } from '../../src/engine/phases';
 import { planFree, planTraining, type SessionPlan } from '../../src/engine/planner';
 import { createRng } from '../../src/engine/rng';
 import { mean } from '../../src/engine/stats';
@@ -102,11 +102,11 @@ const free = (planSeed: number): Promise<SessionPlan> => Promise.resolve(planFre
 
 /**
  * A training session cut to its first segment: the 2-minute ПЗМР warm-up, 5 blocks of 28 s. Planned as Home
- * does: the phase from the first session (sessions are listed by startedAt) and no test date.
+ * does: the phase from the first session (firstSessionAt) and no test date.
  */
 async function warmup(planSeed: number, repo: MemoryRepository, todayIso: string): Promise<SessionPlan> {
   const [states, sessions] = await Promise.all([repo.getModuleStates(), repo.listSessions()]);
-  const phase = currentPhase({ firstSessionAt: sessions[0]?.startedAt ?? null, today: todayIso, testDate: null, states });
+  const phase = currentPhase({ firstSessionAt: firstSessionAt(sessions), today: todayIso, testDate: null, states });
   const plan = planTraining(states, todayIso, planSeed, phase);
   return { ...plan, segments: plan.segments.slice(0, 1) };
 }

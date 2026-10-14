@@ -1,9 +1,8 @@
 import type { Repository } from '../data/repository';
-import type { DiagnosticRow, SessionRow } from '../data/rows';
-import { localDayNumber } from '../engine/dates';
+import type { DiagnosticRow } from '../data/rows';
 import { MODULE_IDS } from '../engine/derive';
 import { parseResults, planDiagnostic } from '../engine/diagnostic';
-import { BASE_DAYS, CALIBRATION_BLOCKS, currentPhase, type PhaseId, type PhaseInfo } from '../engine/phases';
+import { BASE_DAYS, CALIBRATION_BLOCKS, currentPhase, firstSessionAt, type PhaseId, type PhaseInfo } from '../engine/phases';
 import {
   OVERLOAD_REACTION_MINUTES,
   TAPER_VOLUME,
@@ -114,15 +113,6 @@ const OVERLOAD_SUFFIX: Record<NonNullable<Segment['overload']>, string> = {
 export function planLine(s: Segment): string {
   const suffix = s.overload === undefined ? '' : OVERLOAD_SUFFIX[s.overload];
   return `${moduleTitles[s.module]} — ${budgetMinutes(s.budgetMs)} мин${suffix}`;
-}
-
-/** The start of the earliest session of any kind (by local calendar day); null without sessions. */
-function firstSessionAt(sessions: readonly SessionRow[]): string | null {
-  let first: SessionRow | null = null;
-  for (const s of sessions) {
-    if (first === null || localDayNumber(s.startedAt) < localDayNumber(first.startedAt)) first = s;
-  }
-  return first?.startedAt ?? null;
 }
 
 /** Everything Home shows, computed from the repository at the given local date (YYYY-MM-DD). */

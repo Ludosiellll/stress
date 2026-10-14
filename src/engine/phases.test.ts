@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { defaultModuleState } from './derive';
-import { currentPhase, type PhaseInfo } from './phases';
+import { currentPhase, firstSessionAt, type PhaseInfo } from './phases';
 import type { ModuleState } from './planner';
 import { MODULE_IDS, type ModuleId } from './types';
 
@@ -119,5 +119,15 @@ describe('currentPhase', () => {
       const p = currentPhase({ firstSessionAt: '2026-10-24T23:30:00', today: '2026-10-26', testDate: '2026-11-04', states: CALIBRATED });
       expect(p).toMatchObject({ dayNumber: 3, daysToTest: 9, phase: 'taper' });
     });
+  });
+});
+
+describe('firstSessionAt', () => {
+  it('the session on the earliest local day, whatever the order of the list; null without sessions', () => {
+    expect(firstSessionAt([])).toBeNull();
+    const sessions = [{ startedAt: '2026-10-11T10:00:00' }, { startedAt: '2026-09-24T23:30:00' }, { startedAt: '2026-10-01T08:00:00' }];
+    expect(firstSessionAt(sessions)).toBe('2026-09-24T23:30:00');
+    // On the same local day the first one listed is kept.
+    expect(firstSessionAt([{ startedAt: '2026-09-24T23:30:00' }, { startedAt: '2026-09-24T08:00:00' }])).toBe('2026-09-24T23:30:00');
   });
 });
