@@ -52,6 +52,7 @@ export default function App({ platform: given }: AppProps) {
   const platform = useMemo(() => given ?? getPlatform(), [given]);
   const [boot, setBoot] = useState<Boot>({ status: 'loading' });
   const [route, setRoute] = useState<Route>({ screen: 'home' });
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let live = true;
@@ -66,13 +67,27 @@ export default function App({ platform: given }: AppProps) {
     return () => {
       live = false;
     };
-  }, [platform]);
+  }, [platform, attempt]);
+
+  const retry = (): void => {
+    setBoot({ status: 'loading' });
+    setAttempt((n) => n + 1);
+  };
 
   return (
     <main>
       <h1>Тренажёр отбора</h1>
       {boot.status === 'loading' && <p>Загрузка…</p>}
-      {boot.status === 'failed' && <p role="alert">Не удалось открыть базу данных: {boot.message}</p>}
+      {boot.status === 'failed' && (
+        <>
+          <p role="alert">Не удалось открыть базу данных: {boot.message}</p>
+          <div className="actions">
+            <button type="button" onClick={retry}>
+              Повторить
+            </button>
+          </div>
+        </>
+      )}
       {boot.status === 'ready' && (
         <AppContext.Provider value={{ platform, repo: boot.repo }}>
           <Screens route={route} go={setRoute} />

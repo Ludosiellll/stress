@@ -111,9 +111,26 @@ describe('buildReport', () => {
     const repo = new MemoryRepository();
     await repo.createSession({ id: 's', startedAt: '2026-10-14T08:00:00.000Z', endedAt: null, kind: 'training', phase: 'base', appVersion: '0' });
     await repo.addWellbeing({ id: 'w', date: '2026-10-14', sleepH: 7.5, caffeine: true, mood: 4 });
-    const text = await buildReport(repo, createFakePlatform({ repo }));
-    expect(JSON.parse(text)).toMatchObject({ lastSelfCheck: null, log: [] });
-    for (const word of ['sleepH', 'caffeine', 'mood', 'wellbeing', '7.5']) expect(text).not.toContain(word);
+    const report: unknown = JSON.parse(await buildReport(repo, createFakePlatform({ repo })));
+    expect(report).toMatchObject({ lastSelfCheck: null, log: [] });
+    expect(Object.keys(report as object).sort()).toEqual(['appVersion', 'generatedAt', 'lastSelfCheck', 'log', 'platform']);
+    const keys = new Set<string>();
+    const collect = (v: unknown): void => {
+      if (typeof v !== 'object' || v === null) return;
+      for (const [k, child] of Object.entries(v)) {
+        keys.add(k);
+        collect(child);
+      }
+    };
+    collect(report);
+    for (const key of ['sleepH', 'caffeine', 'mood', 'wellbeing', 'date']) expect(keys.has(key)).toBe(false);
+  });
+
+  it('still builds when the app version cannot be read', async () => {
+    const repo = new MemoryRepository();
+    const platform = createFakePlatform({ repo });
+    platform.appVersion = () => Promise.reject(new Error('no version'));
+    expect(JSON.parse(await buildReport(repo, platform))).toMatchObject({ appVersion: 'unknown' });
   });
 
   it('keeps a damaged self-check string as text instead of failing', async () => {

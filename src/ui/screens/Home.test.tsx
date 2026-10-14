@@ -1,5 +1,5 @@
 import { fireEvent, screen, within } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DiagnosticResults } from '../../engine/diagnostic';
 import { MemoryRepository } from '../../data/memoryRepository';
 import { session } from '../../data/repository.contract';
@@ -175,6 +175,7 @@ describe('Home with history', () => {
     expect(value('Логика')).toBe('100');
     expect(value('Память')).toBe('появится позже');
     expect(screen.getByText('Общий индекс: 96')).toBeTruthy();
+    expect(screen.getByText('60 — уровень твоей первой диагностики. Таблица Горбова оценивается по опубликованным нормам.')).toBeTruthy();
     expect(screen.queryByText('Пройди диагностику, чтобы увидеть индекс')).toBeNull();
   });
 
@@ -192,5 +193,63 @@ describe('Home with history', () => {
     await seedDiagnostic(repo, 1, new Date(), '{не json');
     await renderHome(repo);
     expect(screen.getByText('Реакция').nextElementSibling?.textContent).toBe('нет данных');
+  });
+});
+
+describe('Home keys', () => {
+  it('ignores Enter with a modifier or after preventDefault', async () => {
+    const { onStart } = await renderHome();
+    for (const mod of ['altKey', 'ctrlKey', 'metaKey', 'shiftKey']) {
+      fireEvent.keyDown(document.body, { key: 'Enter', [mod]: true });
+    }
+    const prevented = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    prevented.preventDefault();
+    document.body.dispatchEvent(prevented);
+    expect(onStart).not.toHaveBeenCalled();
+    fireEvent.keyDown(document.body, { key: 'Enter' });
+    expect(onStart).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Home day change', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('recomputes the date when the window gets focus after midnight', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date(2026, 9, 14, 23, 50) });
+    const repo = new MemoryRepository();
+    await repo.saveSettings({ testDate: '2026-10-24' });
+    await renderHome(repo);
+    expect(screen.getByText('До теста: 10 дн.')).toBeTruthy();
+    vi.setSystemTime(new Date(2026, 9, 15, 0, 10));
+    fireEvent.focus(window);
+    await screen.findByText('До теста: 9 дн.');
+  });
+});
+
+describe('Home load failure', () => {
+  it('logs the error and keeps «Повторить» and «Настройки» available', async () => {
+    const repo = new MemoryRepository();
+    const getSettings = vi.spyOn(repo, 'getSettings').mockRejectedValueOnce(new Error('плохая дата'));
+    const handlers = { onStart: vi.fn(), onFree: vi.fn(), onProgress: vi.fn(), onSettings: vi.fn() };
+    renderWithApp(<Home {...handlers} />, createFakePlatform({ repo }), repo);
+    await screen.findByText(/Не удалось загрузить данные: плохая дата/);
+    await vi.waitFor(async () => {
+      expect((await repo.listLog(5)).some((r) => r.level === 'error' && r.message.includes('плохая дата'))).toBe(true);
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Настройки' }));
+    expect(handlers.onSettings).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Повторить' }));
+    await screen.findByRole('button', { name: 'Начать тренировку' });
+    expect(getSettings).toHaveBeenCalledTimes(2);
+  });
+
+  it('reaches the error state from a damaged session date', async () => {
+    const repo = new MemoryRepository();
+    await repo.createSession(session('bad', '2026-10-01T08:00:00.000Z', { endedAt: 'вчера' }));
+    renderWithApp(<Home onStart={vi.fn()} onFree={vi.fn()} onProgress={vi.fn()} onSettings={vi.fn()} />, createFakePlatform({ repo }), repo);
+    await screen.findByRole('alert');
+    expect(screen.getByRole('button', { name: 'Настройки' })).toBeTruthy();
   });
 });

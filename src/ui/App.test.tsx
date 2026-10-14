@@ -66,6 +66,17 @@ describe('App', () => {
     render(<App platform={platform} />);
     expect(await screen.findByText(/Не удалось открыть базу данных.*файл занят/)).toBeTruthy();
   });
+
+  it('retries opening the database on «Повторить»', async () => {
+    const platform = createFakePlatform();
+    let calls = 0;
+    platform.openRepository = () => (++calls === 1 ? Promise.reject(new Error('файл занят')) : Promise.resolve(platform.repo));
+    render(<App platform={platform} />);
+    await screen.findByText(/файл занят/);
+    fireEvent.click(screen.getByRole('button', { name: 'Повторить' }));
+    expect(await screen.findByRole('button', { name: 'Начать тренировку' })).toBeTruthy();
+    expect(calls).toBe(2);
+  });
 });
 
 describe('startup', () => {

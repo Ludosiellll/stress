@@ -94,6 +94,11 @@ button.primary {
   font-weight: 700;
 }
 
+/* More specific than the generic hover rule above: the accent border stays on hover. */
+button.primary:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
 input[type='date'] {
   margin-left: 8px;
   padding: 6px 8px;

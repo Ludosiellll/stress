@@ -55,6 +55,15 @@ export function installErrorLog(repo: Repository, w: Window): () => void {
   };
 }
 
+/** The version for files: a failing getVersion must not block an export or the error report. */
+export async function safeAppVersion(platform: Platform): Promise<string> {
+  try {
+    return await platform.appVersion();
+  } catch {
+    return 'unknown';
+  }
+}
+
 function parseOrText(text: string | null): unknown {
   if (text === null) return null;
   try {
@@ -72,7 +81,7 @@ export async function buildReport(repo: Repository, platform: Platform): Promise
   const [settings, log] = await Promise.all([repo.getSettings(), repo.listLog(REPORT_LOG_ROWS)]);
   return JSON.stringify(
     {
-      appVersion: await platform.appVersion(),
+      appVersion: await safeAppVersion(platform),
       platform: platform.kind,
       generatedAt: new Date().toISOString(),
       lastSelfCheck: parseOrText(settings.lastSelfCheckJson),

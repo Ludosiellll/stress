@@ -24,9 +24,9 @@ async function renderSettings(options: FakePlatformOptions = {}, measureFrames =
   const repo = options.repo ?? new MemoryRepository();
   const platform = createFakePlatform({ ...options, repo });
   const onBack = vi.fn();
-  renderWithApp(<Settings onBack={onBack} measureFrames={measureFrames} />, platform, repo);
+  const view = renderWithApp(<Settings onBack={onBack} measureFrames={measureFrames} />, platform, repo);
   await screen.findByText(/Версия приложения/);
-  return { repo, platform, onBack, measureFrames };
+  return { repo, platform, onBack, measureFrames, view };
 }
 
 describe('Settings layout and date', () => {
@@ -181,5 +181,118 @@ describe('Settings export and report', () => {
     expect(platform.exports).toHaveLength(1);
     expect(platform.exports[0]?.name).toMatch(/^report-\d{4}-\d{2}-\d{2}-\d{4}\.json$/);
     expect(JSON.parse(platform.exports[0]?.contents ?? '')).toMatchObject({ appVersion: '2.0.0', platform: 'tauri' });
+  });
+});
+
+describe('Settings failures and cancellation', () => {
+  it('shows a load failure with «Назад» and logs it', async () => {
+    const repo = new MemoryRepository();
+    vi.spyOn(repo, 'getSettings').mockRejectedValue(new Error('база недоступна'));
+    const onBack = vi.fn();
+    renderWithApp(<Settings onBack={onBack} />, createFakePlatform({ repo }), repo);
+    await screen.findByText(/Не удалось загрузить настройки: база недоступна/);
+    fireEvent.click(screen.getByRole('button', { name: 'Назад' }));
+    expect(onBack).toHaveBeenCalledTimes(1);
+    await waitFor(async () => {
+      expect((await repo.listLog(5)).some((r) => r.level === 'error' && r.message.includes('база недоступна'))).toBe(true);
+    });
+  });
+
+  it('opens without the version when it cannot be read, and the report still saves', async () => {
+    const repo = new MemoryRepository();
+    const platform = createFakePlatform({ repo });
+    platform.appVersion = () => Promise.reject(new Error('нет версии'));
+    renderWithApp(<Settings onBack={vi.fn()} />, platform, repo);
+    await screen.findByText('Версия приложения: неизвестна');
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить отчёт об ошибке' }));
+    await screen.findByText(/Отчёт сохранён/);
+    expect(JSON.parse(platform.exports[0]?.contents ?? '')).toMatchObject({ appVersion: 'unknown' });
+    fireEvent.click(screen.getByRole('button', { name: 'Экспорт данных (JSON и CSV)' }));
+    await waitFor(() => { expect(platform.exports).toHaveLength(4); });
+  });
+
+  it('rolls the layout back, shows the failure and logs it when saving fails', async () => {
+    const repo = new MemoryRepository();
+    vi.spyOn(repo, 'saveSettings').mockRejectedValue(new Error('диск полон'));
+    await renderSettings({ repo });
+    fireEvent.click(screen.getByRole('radio', { name: 'Мышь' }));
+    await screen.findByText(/Не удалось сохранить: раскладка. диск полон/);
+    expect(screen.getByRole<HTMLInputElement>('radio', { name: 'Клавиатура' }).checked).toBe(true);
+    expect(screen.getByRole<HTMLInputElement>('radio', { name: 'Мышь' }).checked).toBe(false);
+    expect((await repo.listLog(5))[0]).toMatchObject({ level: 'error' });
+  });
+
+  it('rolls the test date back when saving fails', async () => {
+    const repo = new MemoryRepository();
+    await repo.saveSettings({ testDate: '2026-11-01' });
+    await renderSettings({ repo });
+    vi.spyOn(repo, 'saveSettings').mockRejectedValue(new Error('диск полон'));
+    fireEvent.click(screen.getByRole('button', { name: 'Очистить' }));
+    await screen.findByText(/Не удалось сохранить: дата теста/);
+    expect(screen.getByLabelText<HTMLInputElement>('Дата теста').value).toBe('2026-11-01');
+  });
+
+  it('stops the measurement and saves nothing when the screen is left', async () => {
+    const repo = new MemoryRepository();
+    let seen: AbortSignal | undefined;
+    const measureFrames = vi.fn(
+      (signal: AbortSignal) =>
+        new Promise<number[]>((resolve) => {
+          seen = signal;
+          signal.addEventListener('abort', () => { resolve(frames(181, 1000 / 60)); });
+        }),
+    );
+    const platform = createFakePlatform({ repo });
+    const view = renderWithApp(<Settings onBack={vi.fn()} measureFrames={measureFrames} />, platform, repo);
+    await screen.findByText(/Версия приложения/);
+    fireEvent.click(screen.getByRole('button', { name: 'Проверить тайминги (3 с)' }));
+    await waitFor(() => { expect(seen).toBeDefined(); });
+    view.unmount();
+    expect(seen?.aborted).toBe(true);
+    await new Promise((r) => setTimeout(r, 10));
+    expect((await repo.getSettings()).lastSelfCheckJson).toBeNull();
+  });
+
+  it('shows why the measurement failed when the window was hidden, and keeps the buttons usable', async () => {
+    await renderSettings({}, vi.fn(() => Promise.reject(new Error('окно было скрыто во время замера'))));
+    fireEvent.click(screen.getByRole('button', { name: 'Проверить тайминги (3 с)' }));
+    await screen.findByText(/окно было скрыто/);
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Экспорт данных (JSON и CSV)' }).disabled).toBe(false);
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Проверить тайминги (3 с)' }).disabled).toBe(false);
+  });
+
+  it('ignores Escape during the measurement and honours it afterwards', async () => {
+    let finish: (f: number[]) => void = () => undefined;
+    const measureFrames = vi.fn(() => new Promise<number[]>((resolve) => { finish = resolve; }));
+    const { onBack } = await renderSettings({}, measureFrames);
+    fireEvent.click(screen.getByRole('button', { name: 'Проверить тайминги (3 с)' }));
+    await screen.findByText(/Идёт замер/);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(onBack).not.toHaveBeenCalled();
+    finish(frames(181, 1000 / 60));
+    await screen.findByText('Частота: 60 Гц');
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Settings dropped-frame warning', () => {
+  it('judges the rounded percentage that is displayed (5 % is not above 5 %)', async () => {
+    // 1 hiccup in 20 gaps = 5 %.
+    await renderSettings({ charging: true }, vi.fn(() => Promise.resolve(frames(21, 1000 / 60, 20))));
+    fireEvent.click(screen.getByRole('button', { name: 'Проверить тайминги (3 с)' }));
+    await screen.findByText('Пропущенные кадры: 5 %');
+    expect(screen.queryByText(WARNING)).toBeNull();
+  });
+
+  it('uses an alert for a fresh warning and a status for a stored one', async () => {
+    const { repo, view } = await renderSettings({ charging: false });
+    fireEvent.click(screen.getByRole('button', { name: 'Проверить тайминги (3 с)' }));
+    await screen.findByText(WARNING);
+    expect(screen.getByText(WARNING).getAttribute('role')).toBe('alert');
+    view.unmount();
+    renderWithApp(<Settings onBack={vi.fn()} />, createFakePlatform({ repo }), repo);
+    await screen.findByText(WARNING);
+    expect(screen.getByText(WARNING).getAttribute('role')).toBe('status');
   });
 });

@@ -3,6 +3,7 @@ import { moduleTitles } from '../../modules/registry';
 import type { SessionPlan } from '../../engine/planner';
 import type { Ability } from '../../engine/readiness';
 import { useApp } from '../AppContext';
+import { logEvent } from '../errorLog';
 import { localDate } from '../format';
 import { loadHomeModel, type HomeModel } from '../homeModel';
 
@@ -46,10 +47,7 @@ function Readiness({ model }: { model: HomeModel }) {
             ))}
           </dl>
           <p>Общий индекс: {r.overall === null ? 'нет данных' : Math.round(r.overall)}</p>
-          <p className="muted">
-            Баллы от 0 до 100. По реакции и логике 60 баллов — уровень первой диагностики. Таблицы Горбова оцениваются по
-            опубликованным нормам, они ориентировочные.
-          </p>
+          <p className="muted">60 — уровень твоей первой диагностики. Таблица Горбова оценивается по опубликованным нормам.</p>
         </>
       )}
     </section>
@@ -60,27 +58,47 @@ export default function Home({ onStart, onFree, onProgress, onSettings }: HomePr
   const { repo } = useApp();
   const [model, setModel] = useState<HomeModel | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [today, setToday] = useState(() => localDate());
+  const [attempt, setAttempt] = useState(0);
+
+  // A window left open past midnight must plan for the new day when it is used again.
+  useEffect(() => {
+    const refresh = (): void => {
+      if (!document.hidden) setToday(localDate());
+    };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, []);
 
   useEffect(() => {
     let live = true;
-    loadHomeModel(repo, localDate()).then(
+    loadHomeModel(repo, today).then(
       (m) => {
-        if (live) setModel(m);
+        if (!live) return;
+        setModel(m);
+        setError(null);
       },
       (e: unknown) => {
-        if (live) setError(e instanceof Error ? e.message : String(e));
+        const message = e instanceof Error ? e.message : String(e);
+        void logEvent(repo, 'error', `Главная: не удалось загрузить данные: ${message}`, e instanceof Error ? (e.stack ?? '') : '');
+        if (live) setError(message);
       },
     );
     return () => {
       live = false;
     };
-  }, [repo]);
+  }, [repo, today, attempt]);
 
   const plan = model?.plan;
   useEffect(() => {
     if (plan === undefined) return;
     const onKeyDown = (e: KeyboardEvent): void => {
-      if (e.key !== 'Enter' || e.repeat) return;
+      if (e.key !== 'Enter' || e.repeat || e.defaultPrevented) return;
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
       // A focused button or field handles Enter itself.
       if (e.target instanceof Element && e.target.closest(INTERACTIVE) !== null) return;
       onStart(plan);
@@ -91,7 +109,21 @@ export default function Home({ onStart, onFree, onProgress, onSettings }: HomePr
     };
   }, [plan, onStart]);
 
-  if (error !== null) return <p role="alert">Не удалось загрузить данные: {error}</p>;
+  if (error !== null && model === null) {
+    return (
+      <div>
+        <p role="alert">Не удалось загрузить данные: {error}</p>
+        <div className="actions">
+          <button type="button" onClick={() => { setError(null); setAttempt((n) => n + 1); }}>
+            Повторить
+          </button>
+          <button type="button" onClick={onSettings}>
+            Настройки
+          </button>
+        </div>
+      </div>
+    );
+  }
   if (model === null) return <p>Загрузка…</p>;
 
   return (
