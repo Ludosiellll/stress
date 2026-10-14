@@ -1,4 +1,5 @@
 import { render, within } from '@testing-library/react';
+import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import LineChart, { niceTicks } from './LineChart';
 
@@ -187,6 +188,51 @@ describe('niceTicks', () => {
   it('a bound off the tick grid closes the axis so the data stay covered', () => {
     expect(niceTicks(0, 7, { max: 7 })).toEqual([0, 2, 4, 6, 7]);
     expect(niceTicks(3, 10, { min: 3 })).toEqual([3, 4, 6, 8, 10]);
+  });
+
+  it('never inserts an infinite bound when a value sits just below a tick (R39)', () => {
+    expect(niceTicks(20 - 1e-12, 119)).toEqual([20, 40, 60, 80, 100, 120]);
+    expect(niceTicks(1, 100 + 1e-12)).toEqual([0, 20, 40, 60, 80, 100]);
+  });
+
+  it('keeps finite, increasing ticks that cover the data inside the domain (property)', () => {
+    const milli = fc.integer({ min: -1_000_000_000, max: 1_000_000_000 }).map((n) => n / 1000);
+    const input = fc
+      .record({
+        a: milli,
+        gap: fc.oneof(fc.constant(0), fc.integer({ min: 10, max: 2_000_000_000 }).map((n) => n / 1000)),
+        shiftMin: fc.constantFrom(0, 0, 1e-12, -1e-12),
+        shiftMax: fc.constantFrom(0, 0, 1e-12, -1e-12),
+        domain: fc.boolean(),
+        below: fc.integer({ min: 1, max: 1000 }).map((n) => n / 10),
+        above: fc.integer({ min: 1, max: 1000 }).map((n) => n / 10),
+      })
+      .map((r) => {
+        // Nudging only makes sense for a real range: a flat one stays flat (the padded case has its own test).
+        const nudged = r.gap > 0;
+        const min = nudged ? r.a + r.shiftMin : r.a;
+        const max = nudged ? Number((r.a + r.gap).toFixed(3)) + r.shiftMax : r.a; // three decimals, as measured values are
+        const domain = r.domain ? { min: min - r.below, max: max + r.above } : undefined; // a real domain: it contains [min, max] and has room around it
+        return { lo: min, hi: max, domain };
+      });
+    fc.assert(
+      fc.property(input, ({ lo, hi, domain }) => {
+        const ticks = niceTicks(lo, hi, domain);
+        expect(ticks.length).toBeGreaterThanOrEqual(2);
+        for (const t of ticks) expect(Number.isFinite(t)).toBe(true);
+        for (let i = 1; i < ticks.length; i += 1) expect(ticks[i]).toBeGreaterThan(ticks[i - 1] as number);
+        const step = (ticks[1] as number) - (ticks[0] as number);
+        expect(ticks[0]).toBeLessThanOrEqual(lo + 1e-9 * step);
+        expect(ticks.at(-1)).toBeGreaterThanOrEqual(hi - 1e-9 * step);
+        if (domain !== undefined) {
+          for (const t of ticks) {
+            expect(t).toBeGreaterThanOrEqual(domain.min);
+            expect(t).toBeLessThanOrEqual(domain.max);
+          }
+        }
+      }),
+      { numRuns: 1000 },
+    );
   });
 
   it('never returns −0', () => {

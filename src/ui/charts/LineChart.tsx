@@ -63,16 +63,20 @@ export function niceTicks(min: number, max: number, domain: ChartDomain = {}): n
   const mag = 10 ** Math.floor(Math.log10(raw));
   const f = raw / mag;
   const step = (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * mag;
+  // Round to the digits the step has, not to a fixed ten: at 1e6 a fixed ten leaves noise above the data.
+  const digits = Math.min(20, Math.max(0, -Math.floor(Math.log10(raw))));
   const first = Math.floor(lo / step + 1e-9);
   const last = Math.ceil(hi / step - 1e-9);
   const ticks: number[] = [];
   for (let k = first; k <= last; k += 1) {
-    const t = Number((k * step).toFixed(10)) + 0; // + 0 turns −0 into 0
+    const t = Number((k * step).toFixed(digits)) + 0; // + 0 turns −0 into 0
     if (t >= floor && t <= ceiling) ticks.push(t);
   }
-  // A bound that is not a multiple of the step closes the axis itself, so the data stay covered.
-  if ((ticks[0] ?? Infinity) > lo) ticks.unshift(floor);
-  if ((ticks.at(-1) ?? -Infinity) < hi) ticks.push(ceiling);
+  // A finite domain bound that is not a multiple of the step closes the axis itself, so the data stay covered.
+  // A tick within rounding noise of the data already covers them: the bound would only be infinite or a sliver.
+  const tolerance = 1e-9 * step;
+  if (Number.isFinite(floor) && (ticks[0] ?? Infinity) - lo > tolerance) ticks.unshift(floor);
+  if (Number.isFinite(ceiling) && hi - (ticks.at(-1) ?? -Infinity) > tolerance) ticks.push(ceiling);
   return ticks;
 }
 

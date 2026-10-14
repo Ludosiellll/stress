@@ -1,4 +1,4 @@
-import { fireEvent, screen, within } from '@testing-library/react';
+import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DiagnosticResults } from '../../engine/diagnostic';
 import { MemoryRepository } from '../../data/memoryRepository';
@@ -32,6 +32,9 @@ async function renderHome(repo = new MemoryRepository()) {
   const handlers = { onStart: vi.fn(), onFree: vi.fn(), onProgress: vi.fn(), onSettings: vi.fn() };
   renderWithApp(<Home {...handlers} />, createFakePlatform({ repo }), repo);
   await screen.findByRole('button', { name: 'Начать тренировку' });
+  // findByRole can resolve as soon as the DOM is committed, before React runs Home's passive keydown effect;
+  // leaving act flushes it, so a synchronous fireEvent right after always finds the handler.
+  await act(async () => {});
   return { repo, ...handlers };
 }
 
@@ -176,7 +179,7 @@ describe('Home with history', () => {
     expect(value('Логика')).toBe('100');
     expect(value('Память')).toBe('появится позже');
     expect(screen.getByText('Общий индекс: 96')).toBeTruthy();
-    expect(screen.getByText('60 — уровень твоей первой диагностики. Таблица Горбова оценивается по опубликованным нормам.')).toBeTruthy();
+    expect(screen.getByText('Для большинства показателей 60 — уровень первой диагностики; таблица Горбова оценивается по опубликованным нормам.')).toBeTruthy();
     expect(screen.queryByText('Пройди диагностику, чтобы увидеть индекс')).toBeNull();
   });
 
