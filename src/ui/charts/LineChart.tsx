@@ -45,28 +45,42 @@ const MAX_SERIES = 3;
 /** Width of one tick-label character in viewBox units at the chart font size (15). */
 const CHAR_W = 9;
 
-/**
- * Axis ticks on 1, 2, 5 × 10^k, at least three of them, covering [min, max]. A flat range is padded, the
- * padding never crossing the domain bounds; ticks stay inside the domain.
- */
-export function niceTicks(min: number, max: number, domain: ChartDomain = {}): number[] {
-  const floor = domain.min ?? -Infinity;
-  const ceiling = domain.max ?? Infinity;
-  let lo = min;
-  let hi = max;
-  if (!(hi > lo)) {
-    const pad = Math.max(1, Math.abs(lo) * 0.1);
-    lo = Math.max(floor, lo - pad);
-    hi = Math.min(ceiling, hi + pad);
-  }
+/** Axis values are clamped to this magnitude, so ranges, steps and tick indices stay exactly representable. */
+const AXIS_LIMIT = 1e9;
+/** A tick grid of more cells than this (or with indices beyond 2^50) is not a grid the loop can walk safely. */
+const MAX_GRID_CELLS = 50;
+const MAX_GRID_INDEX = 2 ** 50;
+/** Below this the tick labels could not tell neighbours apart (and toFixed would merge them). */
+const MIN_GRID_STEP = 1e-9;
+
+interface Grid {
+  step: number;
+  digits: number;
+  first: number;
+  last: number;
+}
+
+/** 1, 2, 5 × 10^k grid over [lo, hi], or null when the range is flat, non-finite or too fine for its magnitude. */
+function gridFor(lo: number, hi: number): Grid | null {
   const raw = (hi - lo) / 5;
-  const mag = 10 ** Math.floor(Math.log10(raw));
+  if (!(raw > 0) || !Number.isFinite(raw)) return null;
+  const exponent = Math.floor(Math.log10(raw));
+  const mag = 10 ** exponent;
   const f = raw / mag;
   const step = (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * mag;
   // Round to the digits the step has, not to a fixed ten: at 1e6 a fixed ten leaves noise above the data.
-  const digits = Math.min(20, Math.max(0, -Math.floor(Math.log10(raw))));
+  const digits = Math.min(100, Math.max(0, -exponent));
   const first = Math.floor(lo / step + 1e-9);
   const last = Math.ceil(hi / step - 1e-9);
+  const sane = Number.isFinite(step) && step >= MIN_GRID_STEP && Math.abs(first) < MAX_GRID_INDEX && Math.abs(last) < MAX_GRID_INDEX;
+  return sane && last - first <= MAX_GRID_CELLS ? { step, digits, first, last } : null;
+}
+
+/** Ticks of the grid over [lo, hi] inside [floor, ceiling]; a finite bound closes an axis the grid does not reach. */
+function gridTicks(lo: number, hi: number, floor: number, ceiling: number): number[] {
+  const grid = gridFor(lo, hi);
+  if (grid === null) return [];
+  const { step, digits, first, last } = grid;
   const ticks: number[] = [];
   for (let k = first; k <= last; k += 1) {
     const t = Number((k * step).toFixed(digits)) + 0; // + 0 turns −0 into 0
@@ -78,6 +92,41 @@ export function niceTicks(min: number, max: number, domain: ChartDomain = {}): n
   if (Number.isFinite(floor) && (ticks[0] ?? Infinity) - lo > tolerance) ticks.unshift(floor);
   if (Number.isFinite(ceiling) && hi - (ticks.at(-1) ?? -Infinity) > tolerance) ticks.push(ceiling);
   return ticks;
+}
+
+function usable(ticks: number[]): boolean {
+  return ticks.length >= 2 && ticks.every((t, i) => Number.isFinite(t) && (i === 0 || t > (ticks[i - 1] as number)));
+}
+
+/**
+ * Axis ticks on 1, 2, 5 × 10^k, at least three of them, covering [min, max]. A flat range is padded, the
+ * padding never crossing the domain bounds; ticks stay inside the domain. Total: it terminates and returns at
+ * least two finite, strictly increasing ticks for any input. Non-finite values are dropped, swapped bounds are
+ * reordered, a domain that is zero-width, inverted or does not contain the data is ignored, and a range too fine
+ * for its magnitude is replaced by mid ± 1.
+ */
+export function niceTicks(min: number, max: number, domain: ChartDomain = {}): number[] {
+  const finite = [min, max].filter(Number.isFinite);
+  const clamp = (v: number): number => Math.max(-AXIS_LIMIT, Math.min(AXIS_LIMIT, v));
+  const dataLo = clamp(finite.length === 0 ? 0 : Math.min(...finite));
+  const dataHi = clamp(finite.length === 0 ? 0 : Math.max(...finite));
+  let floor = Number.isFinite(domain.min) ? (domain.min as number) : -Infinity;
+  let ceiling = Number.isFinite(domain.max) ? (domain.max as number) : Infinity;
+  if (!(floor < ceiling) || floor > dataLo || ceiling < dataHi) {
+    floor = -Infinity;
+    ceiling = Infinity;
+  }
+  let lo = dataLo;
+  let hi = dataHi;
+  if (!(hi > lo)) {
+    const pad = Math.max(1, Math.abs(lo) * 0.1);
+    lo = Math.max(floor, lo - pad);
+    hi = Math.min(ceiling, hi + pad);
+  }
+  const ticks = gridTicks(lo, hi, floor, ceiling);
+  if (usable(ticks)) return ticks;
+  const mid = (dataLo + dataHi) / 2; // |mid| <= AXIS_LIMIT, so mid ± 1 are distinct finite numbers
+  return [mid - 1, mid + 1];
 }
 
 /** U+2212 instead of the hyphen, as everywhere else in the UI. */

@@ -235,6 +235,38 @@ describe('niceTicks', () => {
     );
   });
 
+  it('terminates with finite, increasing ticks for degenerate and non-finite input (property)', () => {
+    const num = fc.oneof(
+      fc.double({ noNaN: false }), // includes ±Infinity, NaN, ±0 and subnormals
+      fc.double({ min: -1e12, max: 1e12 }),
+      fc.constantFrom(0, 1, -1, 5, 1e15, -1e15, 1e300, Number.MAX_VALUE, Number.MIN_VALUE, 1e9 + 1e-6),
+    );
+    const bound = fc.option(num, { nil: undefined });
+    const domain = fc.option(fc.record({ min: bound, max: bound }), { nil: undefined });
+    // The same value on both sides makes min === max, a zero-width domain; swapped values make an inverted one.
+    const pair = fc.oneof(fc.tuple(num, num), num.map((v) => [v, v] as const));
+    fc.assert(
+      fc.property(pair, domain, ([a, b], d) => {
+        const ticks = niceTicks(a, b, d === undefined ? undefined : { ...(d.min === undefined ? {} : { min: d.min }), ...(d.max === undefined ? {} : { max: d.max }) });
+        expect(ticks.length).toBeGreaterThanOrEqual(2);
+        for (const t of ticks) expect(Number.isFinite(t)).toBe(true);
+        for (let i = 1; i < ticks.length; i += 1) expect(ticks[i]).toBeGreaterThan(ticks[i - 1] as number);
+      }),
+      { numRuns: 1000 },
+    );
+  });
+
+  it('handles a zero-width or inverted domain, swapped bounds and non-finite values', () => {
+    expect(niceTicks(5, 5, { min: 5, max: 5 })).toEqual(niceTicks(5, 5));
+    expect(niceTicks(0, 10, { min: 8, max: 2 })).toEqual(niceTicks(0, 10));
+    expect(niceTicks(10, 0)).toEqual(niceTicks(0, 10));
+    expect(niceTicks(Number.NaN, Number.NaN)).toEqual(niceTicks(0, 0));
+    expect(niceTicks(Number.NEGATIVE_INFINITY, 10)).toEqual(niceTicks(10, 10));
+    expect(niceTicks(1e16, 1e16 + 2).length).toBeGreaterThanOrEqual(2); // clamped to the axis limit, then padded
+    expect(niceTicks(0, 1e-12)).toEqual([5e-13 - 1, 5e-13 + 1]); // finer than a label can show: mid ± 1
+    expect(niceTicks(0, 10, { min: 2, max: 8 })).toEqual(niceTicks(0, 10)); // a domain that misses the data is ignored
+  });
+
   it('never returns −0', () => {
     for (const t of niceTicks(-0.4, 0.4)) expect(Object.is(t, -0)).toBe(false);
   });
