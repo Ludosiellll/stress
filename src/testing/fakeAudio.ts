@@ -40,15 +40,22 @@ export class FakeBuffer implements AudioBufferLike {
 export class FakeSource extends FakeNode implements AudioBufferSourceLike {
   buffer: AudioBufferLike | null = null;
   loop = false;
+  onended: (() => void) | null = null;
   starts: { when: number; offset: number }[] = [];
-  stops = 0;
+  /** The `when` of every stop call. */
+  stops: number[] = [];
 
   start(when: number, offset: number): void {
     this.starts.push({ when, offset });
   }
 
-  stop(): void {
-    this.stops++;
+  stop(when = 0): void {
+    this.stops.push(when);
+  }
+
+  /** The scheduled stop time has come: fires `onended`, as the real node does. */
+  end(): void {
+    this.onended?.();
   }
 }
 

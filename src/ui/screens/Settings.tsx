@@ -203,7 +203,7 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
     });
   };
 
-  /** Plays hum and beeps for 2 s; the sound stops early when the screen closes. */
+  /** Plays hum and beeps for 2 s, then fades out (handle.stop); it fades out early when the screen closes. */
   const checkSound = async (): Promise<void> => {
     const signal = lifetime.current?.signal;
     if (signal === undefined) return;

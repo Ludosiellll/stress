@@ -14,8 +14,10 @@ export interface AudioBufferLike {
 export interface AudioBufferSourceLike extends AudioNodeLike {
   buffer: AudioBufferLike | null;
   loop: boolean;
+  /** Fires once the source has stopped playing. */
+  onended: ((ev: Event) => unknown) | null;
   start(when: number, offset: number): void;
-  stop(): void;
+  stop(when: number): void;
 }
 
 export interface GainNodeLike extends AudioNodeLike {
@@ -38,7 +40,7 @@ export interface StressorHandle {
   start(offsetS: number): boolean;
   /** Ramps the gain to volume × params.gain (on) or 0 (off), time constant 0.015 s. */
   setActive(on: boolean): void;
-  /** Idempotent. */
+  /** Fades out (gain → 0, time constant 0.015 s) and stops the source 80 ms later, never cutting the sound. Idempotent. */
   stop(): void;
   readonly playing: boolean;
 }
@@ -55,6 +57,8 @@ export interface AudioOut {
 /** Loop start delay after `currentTime`, s: lets the source be scheduled on the audio clock, not "now". */
 const START_DELAY_S = 0.05;
 const RAMP_TIME_CONSTANT_S = 0.015;
+/** stop(): the source ends this long after the fade-out begins (over 5 time constants: the gain is below 1 %). */
+const STOP_DELAY_S = 0.08;
 const CACHE_LIMIT = 4;
 
 const clamp01 = (v: number): number => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0);
@@ -122,7 +126,14 @@ export function createAudioOut(makeContext: (() => AudioContextLike) | null, syn
         gain.gain.value = 0;
         source.connect(gain);
         gain.connect(c.destination);
-        source.start(c.currentTime + START_DELAY_S, offsetS);
+        try {
+          source.start(c.currentTime + START_DELAY_S, offsetS);
+        } catch {
+          // A context that went away or a refused offset: no sound, and nothing left in the graph.
+          source.disconnect();
+          gain.disconnect();
+          return false;
+        }
         nodes = { source, gain };
         return true;
       },
@@ -139,13 +150,18 @@ export function createAudioOut(makeContext: (() => AudioContextLike) | null, syn
         nodes = null;
         on = false;
         active.delete(retarget);
+        const release = (): void => {
+          source.disconnect();
+          gain.disconnect();
+        };
+        gain.gain.setTargetAtTime(0, c.currentTime, RAMP_TIME_CONSTANT_S);
         try {
-          source.stop();
+          source.onended = release;
+          source.stop(c.currentTime + STOP_DELAY_S);
         } catch {
-          // Already stopped by the context: nothing left to silence.
+          // Already stopped by the context: nothing left to fade.
+          release();
         }
-        source.disconnect();
-        gain.disconnect();
       },
     };
   };

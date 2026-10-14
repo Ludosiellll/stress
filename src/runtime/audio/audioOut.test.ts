@@ -145,7 +145,8 @@ describe('createAudioOut', () => {
     expect(ctx.gains[1]?.targets).toEqual([]);
     a?.stop();
     out.setVolume(0.8);
-    expect(ctx.gains[0]?.targets).toHaveLength(2);
+    // 0.5, 0.1, then the fade-out of stop(); the volume change after it adds nothing.
+    expect(ctx.gains[0]?.targets.map((t) => t.target)).toEqual([0.5, 0.1, 0]);
   });
 
   it('volume 0 keeps the block silent', async () => {
@@ -169,14 +170,40 @@ describe('createAudioOut', () => {
     h?.stop();
     h?.stop();
     expect(h?.playing).toBe(false);
-    expect(ctx.sources[0]?.stops).toBe(1);
+    expect(ctx.sources[0]?.stops).toHaveLength(1);
+    ctx.sources[0]?.end();
     expect(ctx.sources[0]?.disconnects).toBe(1);
     expect(ctx.gains[0]?.disconnects).toBe(1);
     h?.setActive(true);
-    expect(ctx.gains[0]?.targets).toEqual([]);
+    expect(ctx.gains[0]?.targets).toHaveLength(1); // only the fade-out of stop()
   });
 
-  it('stop survives a source that refuses to stop', async () => {
+  it('stop fades out: gain to 0 with time constant 0.015, the source stops 80 ms later, nodes go when it ends', async () => {
+    const { ctx, out } = setup();
+    await out.unlock();
+    out.setVolume(0.5);
+    const h = out.prepare(HUM, 1);
+    h?.start(0);
+    h?.setActive(true);
+    ctx.currentTime = 6;
+    h?.stop();
+    const [source] = ctx.sources;
+    const [gain] = ctx.gains;
+    expect(gain?.targets.at(-1)).toEqual({ target: 0, at: 6, timeConstant: 0.015 });
+    expect(source?.stops).toHaveLength(1);
+    expect(source?.stops[0]).toBeCloseTo(6.08, 9);
+    // Still connected while the fade plays: disconnecting now would cut the sound.
+    expect(source?.disconnects).toBe(0);
+    expect(gain?.disconnects).toBe(0);
+    source?.end();
+    expect(source?.disconnects).toBe(1);
+    expect(gain?.disconnects).toBe(1);
+    // A later volume change leaves the stopped loop alone.
+    out.setVolume(1);
+    expect(gain?.targets).toHaveLength(2);
+  });
+
+  it('stop survives a source that refuses to stop and disconnects at once', async () => {
     const { ctx, out } = setup();
     await out.unlock();
     out.setVolume(0.5);
@@ -189,6 +216,40 @@ describe('createAudioOut', () => {
     };
     expect(() => h?.stop()).not.toThrow();
     expect(h?.playing).toBe(false);
+    expect(source.disconnects).toBe(1);
+    expect(ctx.gains[0]?.disconnects).toBe(1);
+  });
+
+  it('start returns false and leaves nothing connected when the source refuses to start', async () => {
+    const { ctx, out } = setup();
+    await out.unlock();
+    out.setVolume(0.5);
+    const create = ctx.createBufferSource.bind(ctx);
+    ctx.createBufferSource = () => {
+      const s = create();
+      s.start = () => {
+        throw new RangeError('offset out of range');
+      };
+      return s;
+    };
+    const h = out.prepare(HUM, 1);
+    expect(h?.start(0)).toBe(false);
+    expect(h?.playing).toBe(false);
+    expect(ctx.sources[0]?.disconnects).toBe(1);
+    expect(ctx.gains[0]?.disconnects).toBe(1);
+    h?.setActive(true);
+    h?.stop();
+    expect(ctx.gains[0]?.targets).toEqual([]);
+  });
+
+  it('a fresh player stays silent until the volume is set', async () => {
+    const { ctx, out } = setup();
+    await out.unlock();
+    const h = out.prepare(HUM, 1);
+    expect(h?.start(0)).toBe(false);
+    expect(ctx.sources).toHaveLength(0);
+    out.setVolume(0.5);
+    expect(h?.start(0)).toBe(true);
   });
 
   it('unlock resumes the context', async () => {
