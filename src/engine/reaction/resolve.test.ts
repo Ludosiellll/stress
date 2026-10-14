@@ -195,6 +195,12 @@ describe('rule 4: outcomes', () => {
     expect(single(press(), [space(1100)])).toMatchObject([{ outcome: 'hit', rtMs: 100 }]);
   });
 
+  it('press: a wrong key under 100 ms is a false start, not wrong', () => {
+    expect(single(press('KeyF'), [p('KeyJ', 1050)])).toMatchObject([
+      { outcome: 'false_start', success: false, rtMs: 50, key: 'KeyJ' },
+    ]);
+  });
+
   it('press: wrong key → wrong', () => {
     expect(single(press('KeyF'), [p('KeyJ', 1300)])).toMatchObject([
       { outcome: 'wrong', success: false, rtMs: 300, key: 'KeyJ' },
@@ -217,6 +223,22 @@ describe('rule 4: outcomes', () => {
 
   it('withhold: no press → correct_reject', () => {
     expect(single(withhold(), [])).toMatchObject([{ outcome: 'correct_reject', success: true, rtMs: null, key: null }]);
+  });
+
+  it('withhold: a false-start mark overrides correct_reject', () => {
+    const r = resolveBlock([press(), withhold()], timeline([1000, 3000], [space(1250), space(2500)]));
+    expect(r).toMatchObject([
+      { outcome: 'hit', rtMs: 250 },
+      { outcome: 'false_start', success: false, rtMs: null, key: null },
+    ]);
+  });
+
+  it('withhold: a false-start mark overrides commission; rt and key are kept', () => {
+    const r = resolveBlock([press(), withhold()], timeline([1000, 3000], [space(1250), space(2500), space(3300)]));
+    expect(r).toMatchObject([
+      { outcome: 'hit', rtMs: 250 },
+      { outcome: 'false_start', success: false, rtMs: 300, key: 'Space' },
+    ]);
   });
 
   it('timed: err +5 with tol 10 → hit, errorMs 5', () => {
@@ -251,6 +273,12 @@ describe('rule 4: outcomes', () => {
   it('timed: rt under 100 → false_start, errorMs null even for the right key (R10)', () => {
     expect(single(timed(500, 10), [space(1099)])).toMatchObject([
       { outcome: 'false_start', rtMs: 99, errorMs: null, key: 'Space' },
+    ]);
+  });
+
+  it('timed: a wrong key under 100 ms is a false start, not wrong', () => {
+    expect(single(timed(500, 10), [p('KeyF', 1050)])).toMatchObject([
+      { outcome: 'false_start', success: false, rtMs: 50, errorMs: null, key: 'KeyF' },
     ]);
   });
 
@@ -346,6 +374,8 @@ const ALLOWED: Record<Expected['kind'], readonly Outcome[]> = {
 
 const NEEDS_RT: readonly Outcome[] = ['hit', 'wrong', 'late', 'commission'];
 const WITH_ERROR: readonly Outcome[] = ['hit', 'early', 'timing_late'];
+/** Outcomes of press/timed trials answered inside the window by a press of at least FALSE_START_MS. */
+const IN_WINDOW: readonly Outcome[] = ['hit', 'wrong', 'early', 'timing_late'];
 
 describe('resolveBlock properties', () => {
   it('one consistent result per trial', () => {
@@ -354,9 +384,9 @@ describe('resolveBlock properties', () => {
         const results = resolveBlock(specs, tl);
         expect(results).toHaveLength(specs.length);
         results.forEach((r, i) => {
-          const spec = specs[i];
+          const spec = specs[i] as TrialSpec;
           expect(r.idx).toBe(i);
-          expect(r.kind).toBe(spec?.expected.kind);
+          expect(r.kind).toBe(spec.expected.kind);
           expect(ALLOWED[r.kind]).toContain(r.outcome);
           expect(r.success).toBe(r.outcome === 'hit' || r.outcome === 'correct_reject');
           if (NEEDS_RT.includes(r.outcome)) expect(r.rtMs).not.toBeNull();
@@ -367,7 +397,16 @@ describe('resolveBlock properties', () => {
             expect(WITH_ERROR).toContain(r.outcome);
           }
           expect(r.frameDropped).toBe(tl.droppedOnset[i]);
-          expect(r.practice).toBe(spec?.practice ?? false);
+          expect(r.practice).toBe(spec.practice ?? false);
+          if (IN_WINDOW.includes(r.outcome)) {
+            expect(r.rtMs).toBeGreaterThanOrEqual(FALSE_START_MS);
+            expect(r.rtMs).toBeLessThanOrEqual(spec.windowMs);
+          }
+          if (r.outcome === 'late') expect(r.rtMs).toBeGreaterThan(spec.windowMs);
+          // A withhold trial without a false-start mark is a commission exactly when it got a press.
+          if (r.kind === 'withhold' && r.outcome !== 'false_start') {
+            expect(r.outcome === 'commission').toBe(r.rtMs !== null);
+          }
         });
       }),
       { numRuns: 1000 },
