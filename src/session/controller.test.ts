@@ -915,7 +915,7 @@ describe('SessionController — overload', () => {
   it('overload reaction blocks play the finisher sound with gate all', async () => {
     const repo = new MemoryRepository();
     await repo.saveModuleState(stateWith('pzmr', { lSaved: 5, lastTrainedAt: YESTERDAY, lifetimeBlocks: 10 }));
-    await repo.saveModuleState(stateWith('pomeh', { lSaved: 33, lastTrainedAt: YESTERDAY, lifetimeBlocks: 10 }));
+    await repo.saveModuleState(stateWith('pomeh', { lSaved: 17, lastTrainedAt: YESTERDAY, lifetimeBlocks: 10 }));
     const h = await begin(training(overloadSegment('pzmr', 'finisher', 1), overloadSegment('pomeh', 'finisher', 1)), { repo });
     h.c.ackInstruction();
     expect(expectStep(h.c, 'reaction_block').layers).toMatchObject({ noise: null, audio: FINISHER_AUDIO, gate: 'all' });
@@ -924,11 +924,13 @@ describe('SessionController — overload', () => {
     await h.c.continueAfterSummary();
     h.c.ackInstruction();
     const pomehBlock = expectStep(h.c, 'reaction_block');
-    expect(pomehBlock.L).toBe(36);
-    // pomeh at L 36 has all four layers at gain 0.95: the union keeps them and the larger gain; the noise stays.
+    expect(pomehBlock.L).toBe(20);
+    // pomeh's own sound at L 20 is the hum alone at 0.55, so the block shows whether the finisher was merged in:
+    // the union of the layers and the larger gain; the noise stays.
+    expect(pomeh.params(20).audio).toEqual({ layers: ['hum'], gain: 0.55 });
     expect(pomehBlock.layers).toMatchObject({
-      noise: pomeh.params(36).noise,
-      audio: { layers: ['hum', 'beeps', 'metronome', 'babble'], gain: 0.95 },
+      noise: pomeh.params(20).noise,
+      audio: { layers: ['hum', 'beeps', 'babble'], gain: 0.8 },
       gate: 'all',
     });
   });
