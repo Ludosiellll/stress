@@ -9,7 +9,7 @@ import { EMPTY_METRICS, diagnosticSegmentSeed, type DiagnosticResults } from '..
 import type { PhaseInfo } from '../engine/phases';
 import type { Segment, SessionPlan } from '../engine/planner';
 import { readiness } from '../engine/readiness';
-import { MODULE_IDS } from '../engine/types';
+import { MODULE_IDS, type ModuleId } from '../engine/types';
 import { loadHomeModel, phaseTexts, planLine, readinessOf } from './homeModel';
 
 const EMPTY: DiagnosticResults = { ...EMPTY_METRICS, unreliable: [] };
@@ -145,6 +145,8 @@ describe('loadHomeModel', () => {
     expect(m.phase).toMatchObject({ phase: 'taper', daysToTest: 5 });
     expect(m.plan.phase).toBe('taper');
     expect(m.testLine).toBeNull();
+    // Nothing was ever trained, so the taper plan is made of new modules and the reason does not deny it (B2).
+    expect(m.phaseWhy).toBe('До теста 5 дн.: объём меньше на 40 %, без финишера.');
     expect(m.hints).toHaveLength(2);
     expect(m.rehearsalDue).toBe(true);
 
@@ -183,34 +185,35 @@ describe('phaseTexts', () => {
     ],
   });
   const NO_PLAN: Pick<SessionPlan, 'segments'> = { segments: [] };
+  const NONE_NEW: ReadonlySet<ModuleId> = new Set();
 
   it('gives the title, the reason and the taper hints', () => {
-    expect(phaseTexts(info({ dayNumber: 3 }), NO_PLAN)).toEqual({
+    expect(phaseTexts(info({ dayNumber: 3 }), NO_PLAN, NONE_NEW)).toEqual({
       title: 'Фаза: база',
       why: 'День 3 из 14: калибровка уровней и стартовая диагностика.',
       hints: [],
     });
-    expect(phaseTexts(info({ reason: 'calibration', dayNumber: 25, uncalibrated: ['stroop', 'taskswitch', 'pomeh', 'memory'] }), NO_PLAN)).toEqual({
+    expect(phaseTexts(info({ reason: 'calibration', dayNumber: 25, uncalibrated: ['stroop', 'taskswitch', 'pomeh', 'memory'] }), NO_PLAN, NONE_NEW)).toEqual({
       title: 'Фаза: база',
       why: 'Нужно откалибровать (по 3 блока): Струп, Переключение правил, Помехоустойчивость, Память.',
       hints: [],
     });
-    expect(phaseTexts(info({ phase: 'development', reason: 'weak_spots', dayNumber: 30 }), NO_PLAN)).toEqual({
+    expect(phaseTexts(info({ phase: 'development', reason: 'weak_spots', dayNumber: 30 }), NO_PLAN, NONE_NEW)).toEqual({
       title: 'Фаза: развитие',
       why: 'Больше времени отстающим модулям и тем, что давно не тренировались.',
       hints: [],
     });
-    expect(phaseTexts(info({ phase: 'overload', reason: 'test_soon', daysToTest: 20 }), overloadPlan(true))).toEqual({
+    expect(phaseTexts(info({ phase: 'overload', reason: 'test_soon', daysToTest: 20 }), overloadPlan(true), NONE_NEW)).toEqual({
       title: 'Фаза: перегрузка',
       why: 'До теста 20 дн.: финишер 5 мин, модули реакции по 6 мин.',
       hints: [],
     });
-    expect(phaseTexts(info({ phase: 'overload', reason: 'day_60', dayNumber: 64 }), overloadPlan(true))).toEqual({
+    expect(phaseTexts(info({ phase: 'overload', reason: 'day_60', dayNumber: 64 }), overloadPlan(true), NONE_NEW)).toEqual({
       title: 'Фаза: перегрузка',
       why: '64-й день тренировок, дата теста не задана: финишер 5 мин, модули реакции по 6 мин.',
       hints: [],
     });
-    expect(phaseTexts(info({ phase: 'taper', reason: 'taper', daysToTest: 5 }), NO_PLAN)).toEqual({
+    expect(phaseTexts(info({ phase: 'taper', reason: 'taper', daysToTest: 5 }), NO_PLAN, NONE_NEW)).toEqual({
       title: 'Фаза: подводка',
       why: 'До теста 5 дн.: объём меньше на 40 %, без финишера и новых модулей.',
       hints: ['Тренируйся утром, в то же время, на которое назначен тест.', 'Перед тестом спи не меньше 8 часов.'],
@@ -218,19 +221,30 @@ describe('phaseTexts', () => {
   });
 
   it('the overload reason mentions the finisher only when the plan has one', () => {
-    expect(phaseTexts(info({ phase: 'overload', reason: 'test_soon', daysToTest: 20 }), overloadPlan(false)).why).toBe(
+    expect(phaseTexts(info({ phase: 'overload', reason: 'test_soon', daysToTest: 20 }), overloadPlan(false), NONE_NEW).why).toBe(
       'До теста 20 дн.: модули реакции по 6 мин.',
     );
-    expect(phaseTexts(info({ phase: 'overload', reason: 'day_60', dayNumber: 64 }), overloadPlan(false)).why).toBe(
+    expect(phaseTexts(info({ phase: 'overload', reason: 'day_60', dayNumber: 64 }), overloadPlan(false), NONE_NEW).why).toBe(
       '64-й день тренировок, дата теста не задана: модули реакции по 6 мин.',
     );
   });
 
+  it('the taper reason says «без новых модулей» only when the plan has none (B2)', () => {
+    const taper = info({ phase: 'taper', reason: 'taper', daysToTest: 5 });
+    const plan = { segments: [seg('pzmr', 'warmup', 60000), seg('szmr', 'reaction', 180000), seg('gonogo', 'reaction', 180000)] };
+    // Go/No-Go was never trained and fills a slot the trained modules could not: the plan has a new module.
+    expect(phaseTexts(taper, plan, new Set<ModuleId>(['gonogo', 'stroop'])).why).toBe('До теста 5 дн.: объём меньше на 40 %, без финишера.');
+    // Струп was never trained and was left out: the plan has none.
+    expect(phaseTexts(taper, plan, new Set<ModuleId>(['stroop'])).why).toBe(
+      'До теста 5 дн.: объём меньше на 40 %, без финишера и новых модулей.',
+    );
+  });
+
   it('the test day says the test is today', () => {
-    expect(phaseTexts(info({ phase: 'taper', reason: 'taper', daysToTest: 0 }), NO_PLAN).why).toBe(
+    expect(phaseTexts(info({ phase: 'taper', reason: 'taper', daysToTest: 0 }), NO_PLAN, NONE_NEW).why).toBe(
       'Сегодня тест: объём меньше на 40 %, без финишера и новых модулей.',
     );
-    expect(phaseTexts(info({ phase: 'taper', reason: 'taper', daysToTest: 1 }), NO_PLAN).why).toBe(
+    expect(phaseTexts(info({ phase: 'taper', reason: 'taper', daysToTest: 1 }), NO_PLAN, NONE_NEW).why).toBe(
       'До теста 1 дн.: объём меньше на 40 %, без финишера и новых модулей.',
     );
   });

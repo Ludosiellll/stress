@@ -16,7 +16,7 @@ import {
 import { readinessOfLatest, type Ability, type Readiness } from '../engine/readiness';
 import { hashString } from '../engine/rng';
 import { computeStreak } from '../engine/streak';
-import type { ReactionModuleId } from '../engine/types';
+import type { ModuleId, ReactionModuleId } from '../engine/types';
 import { moduleTitles } from '../modules/registry';
 import { budgetMinutes } from './format';
 
@@ -67,7 +67,16 @@ const PHASE_TITLES: Record<PhaseId, string> = {
 const TAPER_HINTS: readonly string[] = ['Тренируйся утром, в то же время, на которое назначен тест.', 'Перед тестом спи не меньше 8 часов.'];
 
 const LONG_REACTION = `модули реакции по ${String(OVERLOAD_REACTION_MINUTES)} мин`;
-const TAPER_RULES = `объём меньше на ${String(Math.round((1 - TAPER_VOLUME) * 100))} %, без финишера и новых модулей`;
+const TAPER_VOLUME_CUT = `объём меньше на ${String(Math.round((1 - TAPER_VOLUME) * 100))} %`;
+
+/**
+ * The taper rules as the plan has them: «без новых модулей» only when no module of the plan is untried. A user with
+ * little history gets never-trained modules in the slots the trained ones cannot fill (planTraining's fill rule).
+ */
+function taperRules(plan: Pick<SessionPlan, 'segments'>, untried: ReadonlySet<ModuleId>): string {
+  const hasNew = plan.segments.some((s) => untried.has(s.module));
+  return `${TAPER_VOLUME_CUT}, ${hasNew ? 'без финишера' : 'без финишера и новых модулей'}`;
+}
 
 /** The overload rules as the plan has them: the finisher is named only when the plan has one. */
 function overloadRules(plan: Pick<SessionPlan, 'segments'>): string {
@@ -77,9 +86,14 @@ function overloadRules(plan: Pick<SessionPlan, 'segments'>): string {
 
 /**
  * What Home says about the phase: the title, why the plan looks the way it does, and the taper reminders.
- * `plan` is the plan shown under it, so the reason never promises a finisher the plan does not have.
+ * `plan` is the plan shown under it and `untried` the modules never trained, so the reason never promises a
+ * finisher or a plan without new modules that the plan does not match.
  */
-export function phaseTexts(p: PhaseInfo, plan: Pick<SessionPlan, 'segments'>): { title: string; why: string; hints: string[] } {
+export function phaseTexts(
+  p: PhaseInfo,
+  plan: Pick<SessionPlan, 'segments'>,
+  untried: ReadonlySet<ModuleId>,
+): { title: string; why: string; hints: string[] } {
   const days = String(p.daysToTest ?? 0);
   let why: string;
   switch (p.reason) {
@@ -99,7 +113,7 @@ export function phaseTexts(p: PhaseInfo, plan: Pick<SessionPlan, 'segments'>): {
       why = `${String(p.dayNumber)}-й день тренировок, дата теста не задана: ${overloadRules(plan)}.`;
       break;
     case 'taper':
-      why = p.daysToTest === 0 ? `Сегодня тест: ${TAPER_RULES}.` : `До теста ${days} дн.: ${TAPER_RULES}.`;
+      why = p.daysToTest === 0 ? `Сегодня тест: ${taperRules(plan, untried)}.` : `До теста ${days} дн.: ${taperRules(plan, untried)}.`;
       break;
   }
   return { title: PHASE_TITLES[p.phase], why, hints: p.phase === 'taper' ? [...TAPER_HINTS] : [] };
@@ -149,7 +163,8 @@ export async function loadHomeModel(repo: Repository, today: string): Promise<Ho
   const diagnosticsStarted = sessions.filter((s) => s.kind === 'diagnostic').length;
   const phase = currentPhase({ firstSessionAt: firstSessionAt(sessions), today, testDate: settings.testDate, states });
   const plan = planTraining(states, today, hashString(`${today}:${String(sessions.length)}`), phase);
-  const texts = phaseTexts(phase, plan);
+  const untried = new Set(MODULE_IDS.filter((m) => states[m].lifetimeBlocks === 0));
+  const texts = phaseTexts(phase, plan, untried);
   return {
     plan,
     diagnosticDue: isDiagnosticDue(last?.at ?? null, today),

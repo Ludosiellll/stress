@@ -113,7 +113,7 @@ describe('Home without history', () => {
     await repo.saveSettings({ testDate: localDate(new Date()) });
     await renderHome(repo);
     expect(screen.getByText('Фаза: подводка')).toBeTruthy();
-    expect(screen.getByText('Сегодня тест: объём меньше на 40 %, без финишера и новых модулей.')).toBeTruthy();
+    expect(screen.getByText('Сегодня тест: объём меньше на 40 %, без финишера.')).toBeTruthy();
     expect(screen.queryByText(/До теста/)).toBeNull();
   });
 
@@ -135,7 +135,8 @@ describe('Home in the taper', () => {
     await seedDiagnostic(repo, 1, daysFromNow(-3), noResults({}));
     const { onStart } = await renderHome(repo);
     expect(screen.getByText('Фаза: подводка')).toBeTruthy();
-    expect(screen.getByText('До теста 5 дн.: объём меньше на 40 %, без финишера и новых модулей.')).toBeTruthy();
+    // Nothing was trained yet: the plan is made of new modules, so the reason does not say «без новых модулей».
+    expect(screen.getByText('До теста 5 дн.: объём меньше на 40 %, без финишера.')).toBeTruthy();
     const hints = within(screen.getByRole('list', { name: 'Напоминания' })).getAllByRole('listitem');
     expect(hints.map((li) => li.textContent)).toEqual([
       'Тренируйся утром, в то же время, на которое назначен тест.',
