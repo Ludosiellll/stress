@@ -383,11 +383,13 @@ describe('planTraining', () => {
           memorySlot.module !== attention.module &&
           [attention, memorySlot].every((a) => a.budgetMs === expectBudget(5)) &&
           [r1, r2, attention, memorySlot].every((x) => (x.overload === 'mix') === (!taper && states[x.module].plateau));
-        // Taper: a never-trained module takes a reaction slot only when fewer than two of the pool were trained.
+        // Taper: a never-trained module takes a slot only when its pool has too few trained ones (the memory slot's
+        // pool without the attention module).
         const taperOk =
           !taper ||
           ((trainedIn(REACTION_POOL) < 2 || [r1, r2].every((r) => states[r.module].lifetimeBlocks > 0)) &&
-            (trainedIn(ATTENTION_POOL) < 1 || states[attention.module].lifetimeBlocks > 0));
+            (trainedIn(ATTENTION_POOL) < 1 || states[attention.module].lifetimeBlocks > 0) &&
+            (trainedIn(MEMORY_SLOT_POOL.filter((m) => m !== attention.module)) < 1 || states[memorySlot.module].lifetimeBlocks > 0));
         const inPlan = new Set(s.slice(0, 6).map((x) => x.module));
         const candidates = FINISHER_POOL.filter((m) => !inPlan.has(m) && states[m].lifetimeBlocks >= 3);
         const finisherOk =
