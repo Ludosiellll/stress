@@ -1,14 +1,12 @@
 import { isPlateau, savedLevel } from './adaptive';
 import { R0, updateRating, type Rating } from './elo';
+import { BASE_ITEM_LIMIT_MS, effectiveDifficulty } from './itemLimit';
 import type { ModuleState } from './planner';
 import type { BlockFlag, FamilyId, ModuleId, SessionKind } from './types';
 
 /** Caches (§8.1) are pure functions of history; these derive them. */
 
 export const MODULE_IDS: readonly ModuleId[] = ['pzmr', 'szmr', 'gonogo', 'rdo', 'gorbov', 'schulte', 'numseries'];
-
-/** Engine copy of numseries ITEM_TIME_LIMIT_MS (engine cannot import modules; a test pins them equal). */
-export const NUMSERIES_ITEM_LIMIT_MS = 40000;
 
 const COUNTED_KINDS: ReadonlySet<SessionKind> = new Set<SessionKind>(['training', 'free']);
 
@@ -99,14 +97,20 @@ export interface DeriveItem {
   difficulty: number;
   correct: boolean;
   timeMs: number;
+  /** null: stored before 0.2.0, when every item had 40 s. */
+  timeLimitMs: number | null;
 }
 
-/** Elo per family over items in chronological order; success = correct within the item time limit. */
+/**
+ * Elo per family over items in chronological order (R36): D_eff from the stored limit, success =
+ * correct within it. Rows without a limit get 40 s, so D_eff = difficulty and W1 ratings stay as they were.
+ */
 export function deriveRatings(items: readonly DeriveItem[]): Map<FamilyId, Rating> {
   const ratings = new Map<FamilyId, Rating>();
   for (const it of items) {
     const current = ratings.get(it.family) ?? { rating: R0, n: 0 };
-    ratings.set(it.family, updateRating(current, it.difficulty, it.correct && it.timeMs <= NUMSERIES_ITEM_LIMIT_MS));
+    const limitMs = it.timeLimitMs ?? BASE_ITEM_LIMIT_MS;
+    ratings.set(it.family, updateRating(current, effectiveDifficulty(it.difficulty, limitMs), it.correct && it.timeMs <= limitMs));
   }
   return ratings;
 }

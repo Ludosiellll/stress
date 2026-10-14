@@ -304,6 +304,8 @@ export class SessionController {
       const ratings = this.counted ? updatedRatings(this.ratings, outcomes) : null;
       const at = this.now().toISOString();
       const meanTimeMs = outcomes.reduce((sum, o) => sum + o.answer.timeMs, 0) / total;
+      const limits = outcomes.flatMap((o) => (o.item.timeLimitMs === null ? [] : [o.item.timeLimitMs]));
+      const shortestLimitMs = limits.length > 0 ? Math.min(...limits) : null;
       await this.completeBlock({
         module: 'numseries',
         L: 0,
@@ -315,7 +317,7 @@ export class SessionController {
           total,
           items: outcomes.map((o) => ({ itemId: o.item.id, answer: o.item.answer, given: o.answer.given, timeMs: o.answer.timeMs })),
         }),
-        lines: seriesLines(successes, total, meanTimeMs),
+        lines: seriesLines(successes, total, meanTimeMs, shortestLimitMs),
         rows: (blockId) => ({ trials: [], items: logicItemRows(blockId, outcomes, at) }),
         onCommit: () => {
           if (ratings !== null) this.ratings = ratings;

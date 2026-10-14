@@ -57,6 +57,8 @@ export interface LogicItemRow {
   given: number | null;
   correct: boolean;
   timeMs: number;
+  /** Per-item limit (R36); null: stored before 0.2.0 (it was 40 000) or a diagnostic item (the block's total limit applies). */
+  timeLimitMs: number | null;
   at: string;
 }
 

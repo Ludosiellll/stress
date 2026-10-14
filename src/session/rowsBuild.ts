@@ -82,6 +82,7 @@ export function logicItemRows(blockId: string, outcomes: readonly SeriesOutcome[
     given: answer.given,
     correct,
     timeMs: answer.timeMs,
+    timeLimitMs: item.timeLimitMs,
     at,
   }));
 }

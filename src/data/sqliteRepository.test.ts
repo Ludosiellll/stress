@@ -1,14 +1,11 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { openSqlJs, sqlJsExecutor } from '../testing/sqlJsExecutor';
+import { applyMigrations, openSqlJs, sqlJsExecutor } from '../testing/sqlJsExecutor';
 import { repositoryContract, block, session, trial, item } from './repository.contract';
 import { SqliteRepository } from './sqliteRepository';
 
-const MIGRATION = readFileSync(new URL('../../src-tauri/migrations/0001_init.sql', import.meta.url), 'utf8');
-
 async function fresh() {
   const db = await openSqlJs();
-  db.exec(MIGRATION);
+  applyMigrations(db);
   const exec = sqlJsExecutor(db);
   return { db, exec, repo: new SqliteRepository(exec) };
 }
@@ -53,6 +50,53 @@ describe('SqliteRepository (sql.js)', () => {
     expect(await exec.select('SELECT key, value FROM settings ORDER BY key')).toEqual([
       { key: 'layout', value: '"mouse"' },
       { key: 'testDate', value: 'null' },
+    ]);
+  });
+
+  it('W1 database upgrades: an item stored before 0.2.0 reads with no per-item limit', async () => {
+    const db = await openSqlJs();
+    applyMigrations(db, 1);
+    // Rows as 0.1.0 wrote them: logic_items has no time_limit_ms yet.
+    db.run(`INSERT INTO sessions (id, started_at, ended_at, kind, phase, app_version)
+      VALUES ('s1', '2026-10-01T08:00:00.000Z', NULL, 'training', 'w1', '0.1.0')`);
+    db.run(`INSERT INTO blocks (id, session_id, module, l_before, l_after, params_json, score, flags_json, started_at, summary_json)
+      VALUES ('b1', 's1', 'numseries', 0, 0, '{"items":1,"perItemLimitMs":40000,"totalLimitMs":null}', 1, '[]', '2026-10-01T08:01:00.000Z', '{}')`);
+    db.run(`INSERT INTO logic_items (id, block_id, family, seed, difficulty, answer, given, correct, time_ms, at)
+      VALUES ('i1', 'b1', 'geom', 7, 900, 48, 48, 1, 5000.5, '2026-10-01T08:02:00.000Z')`);
+    applyMigrations(db);
+    const repo = new SqliteRepository(sqlJsExecutor(db));
+    expect(await repo.listLogicItems()).toEqual([
+      {
+        id: 'i1',
+        blockId: 'b1',
+        family: 'geom',
+        seed: 7,
+        difficulty: 900,
+        answer: 48,
+        given: 48,
+        correct: true,
+        timeMs: 5000.5,
+        timeLimitMs: null,
+        at: '2026-10-01T08:02:00.000Z',
+      },
+    ]);
+    expect(await repo.listSessions()).toHaveLength(1);
+    expect(await repo.listBlocks()).toHaveLength(1);
+    // A second run (the next start) applies nothing again.
+    applyMigrations(db);
+    expect((await repo.listLogicItems())[0]?.timeLimitMs).toBeNull();
+  });
+
+  it('stores the per-item time limit in time_limit_ms', async () => {
+    const { exec, repo } = await fresh();
+    await repo.createSession(session('s1', '2026-10-01T08:00:00.000Z'));
+    await repo.addBlock(block('b1', 's1', '2026-10-01T08:01:00.000Z'), [], [
+      item('i1', 'b1', '2026-10-01T08:01:00.000Z', { timeLimitMs: 11_900 }),
+      item('i2', 'b1', '2026-10-01T08:01:00.000Z', { timeLimitMs: null }),
+    ]);
+    expect(await exec.select('SELECT time_limit_ms FROM logic_items ORDER BY rowid')).toEqual([
+      { time_limit_ms: 11_900 },
+      { time_limit_ms: null },
     ]);
   });
 

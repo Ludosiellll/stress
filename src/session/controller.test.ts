@@ -263,7 +263,7 @@ describe('SessionController — flow', () => {
     expect(expectStep(ns.c, 'instruction')).toEqual({
       kind: 'instruction',
       module: 'numseries',
-      text: 'Найди закономерность и введи следующее число. На каждую задачу — 40 секунд.',
+      text: 'Найди закономерность и введи следующее число. На задачу до 40 секунд, на трудных уровнях меньше: остаток времени показывает полоса.',
       keysHint: 'Цифры и Enter',
     });
 
@@ -1048,7 +1048,8 @@ describe('SessionController — number series', () => {
     h.c.ackInstruction();
     const block = expectStep(h.c, 'numseries_block');
     expect(block.items).toHaveLength(10);
-    expect(block.perItemLimitMs).toBe(40_000);
+    // Starting ratings (R0) stay under every family's structural maximum: 40 s per item.
+    expect(block.items.map((it) => it.timeLimitMs)).toEqual(Array<number>(10).fill(40_000));
     expect(block.totalLimitMs).toBeNull();
     const answers = perfectSeriesAnswers(block.items);
     // Right but too slow: not a success for Elo.
@@ -1066,6 +1067,7 @@ describe('SessionController — number series', () => {
     expect(items).toHaveLength(10);
     expect(items.map((i) => i.correct)).toEqual([true, false, false, true, true, true, true, true, true, true]);
     expect(items[2]).toMatchObject({ given: null, timeMs: 40_000, family: block.items[2]?.family, seed: block.items[2]?.seed });
+    expect(items.map((i) => i.timeLimitMs)).toEqual(Array<number>(10).fill(40_000));
 
     const ratings = await h.repo.getRatings();
     expect(ratings).toEqual(deriveRatings(items)); // incremental == rebuilt from history
@@ -1074,6 +1076,28 @@ describe('SessionController — number series', () => {
     const [blockRow] = await h.repo.listBlocks();
     expect(JSON.parse(blockRow?.summaryJson ?? '')).toMatchObject({ correct: 7, total: 10 });
     expect((await h.repo.getModuleStates()).numseries.lifetimeBlocks).toBe(1);
+  });
+
+  it('numseries stores per-item limits and names the shortest', async () => {
+    const repo = new MemoryRepository();
+    await repo.saveRatings(new Map(FAMILIES.map((f) => [f, { rating: 1900, n: 60 }])));
+    const h = await begin(planFree('numseries', 21), { repo });
+    h.c.ackInstruction();
+    const block = expectStep(h.c, 'numseries_block');
+    const limits = block.items.map((it) => it.timeLimitMs ?? Number.NaN);
+    for (const limit of limits) {
+      expect(limit).toBeLessThan(40_000);
+      expect(limit).toBeGreaterThanOrEqual(8000);
+    }
+    await h.c.submitNumSeries(perfectSeriesAnswers(block.items));
+
+    const shortest = Math.min(...limits) / 1000;
+    const seconds = Number.isInteger(shortest) ? String(shortest) : shortest.toFixed(1).replace('.', ',');
+    const { view } = expectStep(h.c, 'summary');
+    expect(view.lines).toEqual(['Верно: 10 из 10', 'Среднее время: 5 с', `Самый короткий лимит: ${seconds} с`]);
+    expect((await h.repo.listLogicItems()).map((i) => i.timeLimitMs)).toEqual(limits);
+    const [stored] = await h.repo.listBlocks();
+    expect(JSON.parse(stored?.paramsJson ?? '')).toEqual({ items: 10, itemLimitsMs: limits, totalLimitMs: null });
   });
 
   it('later blocks are generated from the updated ratings', async () => {
@@ -1137,7 +1161,8 @@ describe('SessionController — diagnostics', () => {
         const schedule = diagnosticSeriesSchedule();
         expect(s.items.map((it) => it.family)).toEqual(schedule.map((e) => e.family));
         expect(s.items.map((it) => it.seed)).toEqual(schedule.map((_, i) => deriveSeed(segSeed, 'item:' + String(i))));
-        expect(s).toMatchObject({ perItemLimitMs: null, totalLimitMs: 600_000 });
+        expect(s.totalLimitMs).toBe(600_000);
+        expect(s.items.every((it) => it.timeLimitMs === null)).toBe(true);
         await h.c.submitNumSeries(perfectSeriesAnswers(s.items, 20_000));
       } else if (s.kind === 'summary') await h.c.continueAfterSummary();
       else throw new Error(`unexpected ${s.kind}`);
@@ -1342,7 +1367,7 @@ describe('SessionController — scale (e2e)', () => {
     const ds = await begin(series, { scale: 0.02 });
     expect(expectStep(ds.c, 'instruction').text).toBe('3 задачи, общее время — 12 секунд. Найди закономерность и введи следующее число.');
     ds.c.ackInstruction();
-    expect(expectStep(ds.c, 'numseries_block')).toMatchObject({ perItemLimitMs: null, totalLimitMs: 12_000 });
+    expect(expectStep(ds.c, 'numseries_block')).toMatchObject({ totalLimitMs: 12_000 });
     expect(expectStep(ds.c, 'numseries_block').items).toHaveLength(3);
 
     const d = await begin(planDiagnostic(1), { scale: 0.02 });

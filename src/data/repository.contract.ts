@@ -51,6 +51,7 @@ export function item(id: string, blockId: string, at: string, over: Partial<Logi
     given: -12,
     correct: true,
     timeMs: 12_345.5,
+    timeLimitMs: null,
     at,
     ...over,
   };
@@ -108,8 +109,8 @@ export function repositoryContract(make: () => Promise<Repository>): void {
         trial('t2', 'b1', 1, { onsetTs: null, responseTs: null, rtMs: null, outcome: 'miss', frameDropped: true }),
       ];
       const items = [
-        item('i1', 'b1', T1),
-        item('i2', 'b1', T2, { family: 'opcycle', given: null, correct: false, timeMs: 40_000, answer: 99_999, seed: 0 }),
+        item('i1', 'b1', T1, { timeLimitMs: 11_900 }),
+        item('i2', 'b1', T2, { family: 'opcycle', given: null, correct: false, timeMs: 40_000, answer: 99_999, seed: 0, timeLimitMs: null }),
       ];
       await repo.addBlock(b, trials, items);
       expect(await repo.listBlocks()).toEqual([b]);
@@ -210,6 +211,7 @@ export function repositoryContract(make: () => Promise<Repository>): void {
         ['answer', () => repo.addBlock(block('b1', 's1', T1), [], [item('i1', 'b1', T1, { answer: Number.NaN })])],
         ['given', () => repo.addBlock(block('b1', 's1', T1), [], [item('i1', 'b1', T1, { given: Number.NaN })])],
         ['seed', () => repo.addBlock(block('b1', 's1', T1), [], [item('i1', 'b1', T1, { seed: Number.NaN })])],
+        ['timeLimitMs', () => repo.addBlock(block('b1', 's1', T1), [], [item('i1', 'b1', T1, { timeLimitMs: Number.NaN })])],
       ];
       for (const [field, write] of bad) {
         await expect(write(), field).rejects.toThrow(new RegExp(`${field} is not a finite number`));
@@ -224,6 +226,18 @@ export function repositoryContract(make: () => Promise<Repository>): void {
         [item('i1', 'b1', T1, { given: null })],
       );
       expect(await repo.listBlocks()).toHaveLength(1);
+    });
+
+    it('rejects a per-item time limit that is not positive (R36) and stores nothing', async () => {
+      const repo = await make();
+      await repo.createSession(session('s1', T1));
+      for (const timeLimitMs of [0, -100]) {
+        await expect(repo.addBlock(block('b1', 's1', T1), [], [item('i1', 'b1', T1, { timeLimitMs })])).rejects.toThrow(
+          /timeLimitMs is not positive/,
+        );
+      }
+      expect(await repo.listBlocks()).toEqual([]);
+      expect(await repo.listLogicItems()).toEqual([]);
     });
 
     it('listBlockLevels returns the light rows of one module by startedAt (R26)', async () => {

@@ -1,8 +1,9 @@
 import type { DiagnosticResults } from '../engine/diagnostic';
+import { BASE_ITEM_LIMIT_MS } from '../engine/itemLimit';
 import type { Outcome, ReactionSummary, TrialSpec } from '../engine/reaction/types';
 import type { BlockFlag, InputKey, LayoutId, ModuleId, ReactionModuleId, TableModuleId } from '../engine/types';
 import type { ParamChange } from '../modules/describe';
-import type { SeriesItem } from '../modules/numseries/generate';
+import type { TimedSeriesItem } from '../modules/numseries/generate';
 import type { TableCell, TableParams, TableTaskId } from '../modules/tables/gorbov';
 import type { TableRunResult } from '../modules/tables/score';
 
@@ -29,7 +30,8 @@ export type Step =
       /** Block seed; TableView reshuffles with it. */
       seed: number;
     }
-  | { kind: 'numseries_block'; items: SeriesItem[]; perItemLimitMs: number | null; totalLimitMs: number | null }
+  /** Every item carries its own limit (training, R36); diagnostic items have none and `totalLimitMs` applies. */
+  | { kind: 'numseries_block'; items: TimedSeriesItem[]; totalLimitMs: number | null }
   | { kind: 'summary'; view: BlockSummaryView }
   /** Diagnostics: the reaction block just played was timingUnreliable and is replayed once (I1); ackNotice() starts it. */
   | { kind: 'notice'; module: ReactionModuleId; text: string }
@@ -72,7 +74,8 @@ export interface SeriesAnswer {
 }
 
 export const UNRELIABLE_REPLAY_NOTICE = 'Замер ненадёжен (пропуски кадров). Блок будет повторён.';
-export const SERIES_INSTRUCTION_TRAINING = 'Найди закономерность и введи следующее число. На каждую задачу — 40 секунд.';
+export const SERIES_INSTRUCTION_TRAINING =
+  'Найди закономерность и введи следующее число. На задачу до 40 секунд, на трудных уровнях меньше: остаток времени показывает полоса.';
 export const TABLE_KEYS_HINT = 'Мышь';
 export const SERIES_KEYS_HINT = 'Цифры и Enter';
 
@@ -156,6 +159,17 @@ export function tableLines(r: TableRunResult): string[] {
   return [time, `Ошибки: ${String(r.errors)}`];
 }
 
-export function seriesLines(correct: number, total: number, meanTimeMs: number): string[] {
-  return [`Верно: ${String(correct)} из ${String(total)}`, `Среднее время: ${String(whole(meanTimeMs / 1000))} с`];
+/** «12 с», or «11,9 с» for a limit that is not whole seconds (limits are multiples of 100 ms). */
+function limitSeconds(ms: number): string {
+  const s = ms / 1000;
+  return Number.isInteger(s) ? String(s) : decimal(s, 1);
+}
+
+/** Plus «Самый короткий лимит: 12 с» when an item of the block had less than 40 s (R36). */
+export function seriesLines(correct: number, total: number, meanTimeMs: number, shortestLimitMs: number | null): string[] {
+  const lines = [`Верно: ${String(correct)} из ${String(total)}`, `Среднее время: ${String(whole(meanTimeMs / 1000))} с`];
+  if (shortestLimitMs !== null && shortestLimitMs < BASE_ITEM_LIMIT_MS) {
+    lines.push(`Самый короткий лимит: ${limitSeconds(shortestLimitMs)} с`);
+  }
+  return lines;
 }

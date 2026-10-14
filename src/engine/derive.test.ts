@@ -3,13 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { isPlateau, savedLevel } from './adaptive';
 import {
   MODULE_IDS,
-  NUMSERIES_ITEM_LIMIT_MS,
   defaultModuleState,
   deriveModuleStates,
   deriveRatings,
   isCountedSession,
 } from './derive';
 import { R0, updateRating, type Rating } from './elo';
+import { effectiveDifficulty } from './itemLimit';
 import type { BlockFlag, FamilyId, ModuleId, SessionKind } from './types';
 
 interface S {
@@ -205,21 +205,32 @@ describe('deriveRatings', () => {
     expect(deriveRatings([])).toEqual(new Map());
   });
 
-  it('counts success only when correct within 40 s', () => {
-    expect(NUMSERIES_ITEM_LIMIT_MS).toBe(40000);
+  it('counts success only when correct within 40 s for rows without a limit', () => {
     const start: Rating = { rating: R0, n: 0 };
-    const at = (correct: boolean, timeMs: number) => deriveRatings([{ family: 'geom', difficulty: 900, correct, timeMs }]).get('geom');
+    const at = (correct: boolean, timeMs: number) =>
+      deriveRatings([{ family: 'geom', difficulty: 900, correct, timeMs, timeLimitMs: null }]).get('geom');
     expect(at(true, 40000)).toEqual(updateRating(start, 900, true));
     expect(at(true, 40000.5)).toEqual(updateRating(start, 900, false));
     expect(at(false, 1000)).toEqual(updateRating(start, 900, false));
   });
 
-  it('equals sequential updateRating per family', () => {
+  it('deriveRatings uses the stored limit and the effective difficulty', () => {
+    const start: Rating = { rating: R0, n: 0 };
+    const dEff = effectiveDifficulty(950, 11900);
+    const at = (timeMs: number) =>
+      deriveRatings([{ family: 'arith', difficulty: 950, correct: true, timeMs, timeLimitMs: 11900 }]).get('arith');
+    expect(at(11000)).toEqual(updateRating(start, dEff, true));
+    expect(at(11900)).toEqual(updateRating(start, dEff, true));
+    expect(at(12000)).toEqual(updateRating(start, dEff, false));
+  });
+
+  it('rebuild gives W1 ratings for rows without a limit', () => {
     const itemArb = fc.record({
       family: fc.constantFrom(...FAMS),
       difficulty: fc.integer({ min: 500, max: 2000 }),
       correct: fc.boolean(),
       timeMs: fc.integer({ min: 0, max: 80000 }),
+      timeLimitMs: fc.constant(null),
     });
     fc.assert(
       fc.property(fc.array(itemArb, { maxLength: 60 }), (items) => {

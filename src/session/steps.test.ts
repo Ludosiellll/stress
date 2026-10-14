@@ -109,7 +109,14 @@ describe('tableLines', () => {
 
 describe('seriesLines', () => {
   it('correct count and mean time in whole seconds', () => {
-    expect(seriesLines(7, 10, 14_400)).toEqual(['Верно: 7 из 10', 'Среднее время: 14 с']);
+    expect(seriesLines(7, 10, 14_400, null)).toEqual(['Верно: 7 из 10', 'Среднее время: 14 с']);
+    expect(seriesLines(7, 10, 14_400, 40_000)).toEqual(['Верно: 7 из 10', 'Среднее время: 14 с']);
+  });
+
+  it('names the shortest limit when it is under 40 s (limits are whole tenths of a second)', () => {
+    expect(seriesLines(9, 10, 6000, 12_000)).toEqual(['Верно: 9 из 10', 'Среднее время: 6 с', 'Самый короткий лимит: 12 с']);
+    expect(seriesLines(9, 10, 6000, 11_900)).toContain('Самый короткий лимит: 11,9 с');
+    expect(seriesLines(9, 10, 6000, 39_900)).toContain('Самый короткий лимит: 39,9 с');
   });
 });
 

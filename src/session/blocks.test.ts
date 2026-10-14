@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { diagnosticSegmentSeed, planDiagnostic } from '../engine/diagnostic';
+import { diagnosticSegmentSeed, diagnosticSeriesSchedule, planDiagnostic } from '../engine/diagnostic';
+import { R0, updateRating, type Rating } from '../engine/elo';
+import { effectiveDifficulty } from '../engine/itemLimit';
 import type { Segment } from '../engine/planner';
 import type { Outcome, ReactionSummary } from '../engine/reaction/types';
+import type { FamilyId } from '../engine/types';
 import { createRng, deriveSeed } from '../engine/rng';
+import { generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
 import { pzmr } from '../modules/reaction/pzmr';
 import { gorbovMetrics } from '../modules/tables/gorbov';
 import { perfectPlayer, playTimeline } from '../testing/sessionPlayers';
 import {
+  buildBlock,
   diagnosticBlockSeed,
   diagnosticResults,
   planBlock,
@@ -15,7 +20,9 @@ import {
   scoreReaction,
   scoreSeries,
   trainingBlockSeed,
+  updatedRatings,
 } from './blocks';
+import { logicItemRows } from './rowsBuild';
 import type { StepOf } from './steps';
 
 const counts = {} as Record<Outcome, number>;
@@ -66,7 +73,6 @@ describe('planBlock', () => {
       kind: 'numseries',
       diagnostic: true,
       count: 20,
-      perItemLimitMs: null,
       totalLimitMs: 600_000,
     });
     const noLimit: Segment = { module: 'numseries', budgetMs: 0, purpose: 'diagnostic', items: 20 };
@@ -99,11 +105,19 @@ describe('scoreReaction', () => {
   });
 });
 
-describe('scoreSeries', () => {
-  const step = (perItemLimitMs: number | null, totalLimitMs: number | null): StepOf<'numseries_block'> => ({
+describe('number series', () => {
+  const seriesItem = (i: number, timeLimitMs: number | null, difficulty = 800): TimedSeriesItem => ({
+    id: `arith:${String(i)}`,
+    family: 'arith',
+    seed: i,
+    shown: [1, 2, 3],
+    answer: 4,
+    difficulty,
+    timeLimitMs,
+  });
+  const step = (limits: Array<number | null>, totalLimitMs: number | null): StepOf<'numseries_block'> => ({
     kind: 'numseries_block',
-    items: [1, 2, 3].map((i) => ({ id: `arith:${String(i)}`, family: 'arith', seed: i, shown: [1, 2, 3], answer: 4, difficulty: 800 })),
-    perItemLimitMs,
+    items: limits.map((limit, i) => seriesItem(i + 1, limit)),
     totalLimitMs,
   });
   const answers = [
@@ -113,16 +127,78 @@ describe('scoreSeries', () => {
   ];
 
   it('per-item limit (training)', () => {
-    expect(scoreSeries(step(40_000, null), answers).map((o) => [o.correct, o.success])).toEqual([
+    expect(scoreSeries(step([40_000, 40_000, 40_000], null), answers).map((o) => [o.correct, o.success])).toEqual([
       [true, true],
       [false, false],
       [true, false],
     ]);
   });
 
+  it('scoreSeries uses each item\'s limit', () => {
+    const outcomes = scoreSeries(step([11_900, 40_000], null), [
+      { itemId: 'arith:1', given: 4, timeMs: 12_000 },
+      { itemId: 'arith:2', given: 4, timeMs: 12_000 },
+    ]);
+    expect(outcomes.map((o) => [o.correct, o.success])).toEqual([
+      [true, false],
+      [true, true],
+    ]);
+  });
+
   it('total limit (diagnostic): cumulative time', () => {
-    expect(scoreSeries(step(null, 31_000), answers).map((o) => o.success)).toEqual([true, false, false]);
-    expect(scoreSeries(step(null, null), answers).map((o) => o.success)).toEqual([true, false, true]);
+    expect(scoreSeries(step([null, null, null], 31_000), answers).map((o) => o.success)).toEqual([true, false, false]);
+    expect(scoreSeries(step([null, null, null], null), answers).map((o) => o.success)).toEqual([true, false, true]);
+  });
+
+  it('updatedRatings uses the effective difficulty', () => {
+    const start = new Map<FamilyId, Rating>([['arith', { rating: 1400, n: 30 }]]);
+    const s: StepOf<'numseries_block'> = { kind: 'numseries_block', items: [seriesItem(1, 11_900, 950), seriesItem(2, 40_000, 900)], totalLimitMs: null };
+    const outcomes = scoreSeries(s, [
+      { itemId: 'arith:1', given: 4, timeMs: 11_000 },
+      { itemId: 'arith:2', given: 4, timeMs: 20_000 },
+    ]);
+    const first = updateRating({ rating: 1400, n: 30 }, effectiveDifficulty(950, 11_900), true);
+    expect(updatedRatings(start, outcomes).get('arith')).toEqual(updateRating(first, 900, true));
+    expect(updatedRatings(new Map(), outcomes.slice(1)).get('arith')).toEqual(updateRating({ rating: R0, n: 0 }, 900, true));
+  });
+
+  it('logicItemRows store timeLimitMs', () => {
+    const outcomes = scoreSeries(step([11_900, null], null), [
+      { itemId: 'arith:1', given: 4, timeMs: 5000 },
+      { itemId: 'arith:2', given: null, timeMs: 7000 },
+    ]);
+    const rows = logicItemRows('b1', outcomes, '2026-10-14T10:00:00.000Z');
+    expect(rows.map((r) => [r.timeLimitMs, r.timeMs, r.given])).toEqual([
+      [11_900, 5000, 4],
+      [null, 7000, null],
+    ]);
+  });
+
+  it('diagnostic items have no per-item limit', () => {
+    const segment = planDiagnostic(1).segments[5] as Segment;
+    const plan = planBlock(segment, 0, 0, { layout: 'keyboard', scale: 1, diagnostic: true });
+    const seed = diagnosticBlockSeed(1, 'numseries', 0, 0);
+    const { step: built, paramsJson } = buildBlock(plan, seed, 'keyboard', new Map());
+    if (built.kind !== 'numseries_block') throw new Error(built.kind);
+    const schedule = diagnosticSeriesSchedule();
+    expect(built.items).toEqual(
+      schedule.map((e, i) => ({ ...generateItem(e.family, e.targetD, deriveSeed(seed, 'item:' + String(i))), timeLimitMs: null })),
+    );
+    expect(built.totalLimitMs).toBe(600_000);
+    expect(JSON.parse(paramsJson)).toEqual({ items: 20, itemLimitsMs: Array<null>(20).fill(null), totalLimitMs: 600_000 });
+    // The total limit applies as in W1: a slow answer is still a success while the block time lasts.
+    const slow = built.items.map((it) => ({ itemId: it.id, given: it.answer, timeMs: 50_000 }));
+    expect(scoreSeries(built, slow).map((o) => o.success)).toEqual(built.items.map((_, i) => (i + 1) * 50_000 <= 600_000));
+  });
+
+  it('training blocks store each item\'s limit in paramsJson', () => {
+    const plan = planBlock({ module: 'numseries', budgetMs: 0, purpose: 'logic' }, 0, 0, { layout: 'keyboard', scale: 1, diagnostic: false });
+    const ratings = new Map<FamilyId, Rating>([['arith', { rating: 1900, n: 50 }]]);
+    const { step: built, paramsJson } = buildBlock(plan, 9, 'keyboard', ratings);
+    if (built.kind !== 'numseries_block') throw new Error(built.kind);
+    expect(built.totalLimitMs).toBeNull();
+    expect(JSON.parse(paramsJson)).toEqual({ items: 10, itemLimitsMs: built.items.map((it) => it.timeLimitMs), totalLimitMs: null });
+    expect(built.items.every((it) => it.timeLimitMs !== null)).toBe(true);
   });
 });
 

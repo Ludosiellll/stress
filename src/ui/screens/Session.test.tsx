@@ -61,8 +61,7 @@ const TABLE: StepOf<'table_block'> = {
 
 const SERIES: StepOf<'numseries_block'> = {
   kind: 'numseries_block',
-  items: [{ id: 'arith:1', family: 'arith', seed: 1, shown: [1, 3, 5, 7, 9], answer: 11, difficulty: 800 }],
-  perItemLimitMs: 40_000,
+  items: [{ id: 'arith:1', family: 'arith', seed: 1, shown: [1, 3, 5, 7, 9], answer: 11, difficulty: 800, timeLimitMs: 40_000 }],
   totalLimitMs: null,
 };
 

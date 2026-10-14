@@ -1,24 +1,27 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { SeriesItem } from '../../modules/numseries/generate';
+import type { TimedSeriesItem } from '../../modules/numseries/generate';
 import type { StepOf } from '../../session/steps';
 import NumSeriesView from './NumSeriesView';
 
-const item = (id: string, shown: number[], answer: number): SeriesItem => ({
+const item = (id: string, shown: number[], answer: number, timeLimitMs: number | null = 40_000): TimedSeriesItem => ({
   id,
   family: 'arith',
   seed: 1,
   shown,
   answer,
   difficulty: 800,
+  timeLimitMs,
 });
 
 const A = item('arith:1', [2, 5, 11, 23, 47], 95);
 const B = item('arith:2', [3, -1, -5, -9, -13], -17);
 const C = item('arith:3', [1, 2, 3, 4, 5], 6);
+/** Diagnostic items: no per-item limit. */
+const untimed = (x: TimedSeriesItem): TimedSeriesItem => ({ ...x, timeLimitMs: null });
 
-function step(items: SeriesItem[], perItemLimitMs: number | null = 40_000, totalLimitMs: number | null = null): StepOf<'numseries_block'> {
-  return { kind: 'numseries_block', items, perItemLimitMs, totalLimitMs };
+function step(items: TimedSeriesItem[], totalLimitMs: number | null = null): StepOf<'numseries_block'> {
+  return { kind: 'numseries_block', items, totalLimitMs };
 }
 
 function answer(value: string): void {
@@ -111,10 +114,35 @@ describe('NumSeriesView', () => {
     ]);
   });
 
+  it('each item runs on its own limit', () => {
+    vi.useFakeTimers();
+    const onSubmit = vi.fn();
+    render(<NumSeriesView step={step([A, item('arith:2', [3, -1, -5, -9, -13], -17, 10_000)])} exposeAnswer={false} busy={false} onSubmit={onSubmit} />);
+    expect(screen.getByText('Осталось: 40 с')).toBeTruthy();
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    answer('95');
+    expect(screen.getByText('3, −1, −5, −9, −13, ?')).toBeTruthy();
+    expect(screen.getByText('Осталось: 10 с')).toBeTruthy();
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(screen.getByText('Осталось: 5 с')).toBeTruthy();
+    expect(onSubmit).not.toHaveBeenCalled();
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(onSubmit).toHaveBeenCalledWith([
+      { itemId: 'arith:1', given: 95, timeMs: 3000 },
+      { itemId: 'arith:2', given: null, timeMs: 10_000 },
+    ]);
+  });
+
   it('the total limit ends the block: the current and the remaining items get null', () => {
     vi.useFakeTimers();
     const onSubmit = vi.fn();
-    render(<NumSeriesView step={step([A, B, C], null, 60_000)} exposeAnswer={false} busy={false} onSubmit={onSubmit} />);
+    render(<NumSeriesView step={step([A, B, C].map(untimed), 60_000)} exposeAnswer={false} busy={false} onSubmit={onSubmit} />);
     expect(screen.getByText('Осталось: 60 с')).toBeTruthy();
     act(() => {
       vi.advanceTimersByTime(10_000);

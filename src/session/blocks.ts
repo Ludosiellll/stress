@@ -1,5 +1,6 @@
 import { diagnosticSegmentSeed, diagnosticSeriesSchedule, type DiagnosticResults } from '../engine/diagnostic';
 import { R0, updateRating, type Rating } from '../engine/elo';
+import { BASE_ITEM_LIMIT_MS, effectiveDifficulty } from '../engine/itemLimit';
 import { keyLabel, layoutKeys } from '../engine/layouts';
 import type { Segment } from '../engine/planner';
 import { resolveBlock } from '../engine/reaction/resolve';
@@ -7,7 +8,7 @@ import { summarize } from '../engine/reaction/summary';
 import type { BlockTimeline, ReactionSummary, TrialResult, TrialSpec } from '../engine/reaction/types';
 import { createRng, deriveSeed } from '../engine/rng';
 import type { FamilyId, InputKey, LayoutId, ModuleId, ReactionModuleId, TableModuleId } from '../engine/types';
-import { generateBlockItems, generateItem, ITEM_TIME_LIMIT_MS, type SeriesItem } from '../modules/numseries/generate';
+import { generateBlockItems, generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
 import type { SzmrParams } from '../modules/reaction/szmr';
 import { reactionModules } from '../modules/registry';
 import {
@@ -62,7 +63,8 @@ export type BlockPlan =
       practice: number;
     }
   | { kind: 'table'; module: TableModuleId; L: number; task: TableTaskId; params: TableParams }
-  | { kind: 'numseries'; diagnostic: boolean; count: number; perItemLimitMs: number | null; totalLimitMs: number | null };
+  /** Training items carry their own limits (R36); `totalLimitMs` is the diagnostic's block limit. */
+  | { kind: 'numseries'; diagnostic: boolean; count: number; totalLimitMs: number | null };
 
 export type BlockStep = StepOf<'reaction_block'> | StepOf<'table_block'> | StepOf<'numseries_block'>;
 
@@ -108,17 +110,10 @@ export function planBlock(segment: Segment, L: number, blockIndex: number, ctx: 
       kind: 'numseries',
       diagnostic: true,
       count: Math.min(scheduled, scaledCount(segment.items ?? scheduled, ctx.scale)),
-      perItemLimitMs: null,
       totalLimitMs: total === undefined ? null : Math.round(total * ctx.scale),
     };
   }
-  return {
-    kind: 'numseries',
-    diagnostic: false,
-    count: scaledCount(SERIES_BLOCK_ITEMS, ctx.scale),
-    perItemLimitMs: ITEM_TIME_LIMIT_MS,
-    totalLimitMs: null,
-  };
+  return { kind: 'numseries', diagnostic: false, count: scaledCount(SERIES_BLOCK_ITEMS, ctx.scale), totalLimitMs: null };
 }
 
 export function blockInstruction(plan: BlockPlan, layout: LayoutId): { text: string; keysHint: string } {
@@ -184,15 +179,16 @@ export function buildBlock(
       };
     }
     case 'numseries': {
-      const items = plan.diagnostic
+      // Diagnostic items have no per-item limit: the total limit applies, as in 0.1.0 (R19, R36).
+      const items: TimedSeriesItem[] = plan.diagnostic
         ? diagnosticSeriesSchedule()
             .slice(0, plan.count)
-            .map((e, i) => generateItem(e.family, e.targetD, deriveSeed(seed, 'item:' + String(i))))
+            .map((e, i) => ({ ...generateItem(e.family, e.targetD, deriveSeed(seed, 'item:' + String(i))), timeLimitMs: null }))
         : generateBlockItems(new Map([...ratings].map(([f, r]) => [f, r.rating])), plan.count, createRng(seed));
-      const { perItemLimitMs, totalLimitMs } = plan;
+      const { totalLimitMs } = plan;
       return {
-        step: { kind: 'numseries_block', items, perItemLimitMs, totalLimitMs },
-        paramsJson: JSON.stringify({ items: items.length, perItemLimitMs, totalLimitMs }),
+        step: { kind: 'numseries_block', items, totalLimitMs },
+        paramsJson: JSON.stringify({ items: items.length, itemLimitsMs: items.map((it) => it.timeLimitMs), totalLimitMs }),
       };
     }
   }
@@ -217,17 +213,17 @@ export function scoreReaction(specs: readonly TrialSpec[], tl: BlockTimeline): S
 }
 
 export interface SeriesOutcome {
-  item: SeriesItem;
+  item: TimedSeriesItem;
   answer: SeriesAnswer;
   /** given === answer. */
   correct: boolean;
-  /** Correct inside the per-item limit and the total limit (Elo success, diagnostic count). */
+  /** Correct inside the item's own limit and the total limit (Elo success, diagnostic count). */
   success: boolean;
 }
 
 /** Answers matched to the block's items one to one, in order, and scored. */
 export function scoreSeries(step: StepOf<'numseries_block'>, answers: readonly SeriesAnswer[]): SeriesOutcome[] {
-  const { items, perItemLimitMs, totalLimitMs } = step;
+  const { items, totalLimitMs } = step;
   if (answers.length !== items.length) {
     throw new RangeError(`submitNumSeries: ${String(answers.length)} answers for ${String(items.length)} items`);
   }
@@ -237,13 +233,13 @@ export function scoreSeries(step: StepOf<'numseries_block'>, answers: readonly S
     if (answer?.itemId !== item.id) throw new RangeError(`submitNumSeries: answer ${String(i)} is not for item ${item.id}`);
     elapsed += answer.timeMs;
     const correct = answer.given === item.answer;
-    const inTime =
-      (perItemLimitMs === null || answer.timeMs <= perItemLimitMs) && (totalLimitMs === null || elapsed <= totalLimitMs);
+    const limitMs = item.timeLimitMs;
+    const inTime = (limitMs === null || answer.timeMs <= limitMs) && (totalLimitMs === null || elapsed <= totalLimitMs);
     return { item, answer, correct, success: correct && inTime };
   });
 }
 
-/** Elo per family after the block's items, in order. */
+/** Elo per family after the block's items, in order, at each item's effective difficulty (as deriveRatings, R36). */
 export function updatedRatings(
   ratings: ReadonlyMap<FamilyId, Rating>,
   outcomes: readonly SeriesOutcome[],
@@ -251,7 +247,8 @@ export function updatedRatings(
   const next = new Map(ratings);
   for (const o of outcomes) {
     const current = next.get(o.item.family) ?? { rating: R0, n: 0 };
-    next.set(o.item.family, updateRating(current, o.item.difficulty, o.success));
+    const dEff = effectiveDifficulty(o.item.difficulty, o.item.timeLimitMs ?? BASE_ITEM_LIMIT_MS);
+    next.set(o.item.family, updateRating(current, dEff, o.success));
   }
   return next;
 }

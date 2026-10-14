@@ -14,12 +14,20 @@ const BACKUP_DIR: &str = "backups";
 
 /// Versioned schema migrations; the plugin runs them when the frontend loads the database.
 fn migrations() -> Vec<Migration> {
-    vec![Migration {
-        version: 1,
-        description: "init",
-        sql: include_str!("../migrations/0001_init.sql"),
-        kind: MigrationKind::Up,
-    }]
+    vec![
+        Migration {
+            version: 1,
+            description: "init",
+            sql: include_str!("../migrations/0001_init.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 2,
+            description: "logic_item_time_limit",
+            sql: include_str!("../migrations/0002_logic_item_time_limit.sql"),
+            kind: MigrationKind::Up,
+        },
+    ]
 }
 
 /// Backs up the database file before anything can open it. Plugins are initialized in
@@ -117,8 +125,18 @@ mod tests {
 
     /// Same settings as `Migrator::new` (what the plugin calls).
     fn migrator() -> Migrator {
+        migrator_up_to(i64::MAX)
+    }
+
+    /// The migrator of an older release: only the migrations up to `version`.
+    fn migrator_up_to(version: i64) -> Migrator {
         Migrator {
-            migrations: Cow::Owned(sqlx_migrations()),
+            migrations: Cow::Owned(
+                sqlx_migrations()
+                    .into_iter()
+                    .filter(|m| m.version <= version)
+                    .collect(),
+            ),
             ..Migrator::DEFAULT
         }
     }
@@ -132,10 +150,16 @@ mod tests {
     /// migration file instead of editing an old one.
     #[test]
     fn shipped_migration_checksums_are_pinned() {
-        let pinned: [(i64, &str); 1] = [(
-            1,
-            "accc2b179dca5ad7a8c2a5305afc88a738f6bdbcbe540fa0d3a991f45e3b790a9f717ee301c6afa43dc0cb4b3be2293b",
-        )];
+        let pinned: [(i64, &str); 2] = [
+            (
+                1,
+                "accc2b179dca5ad7a8c2a5305afc88a738f6bdbcbe540fa0d3a991f45e3b790a9f717ee301c6afa43dc0cb4b3be2293b",
+            ),
+            (
+                2,
+                "ff571ea8b8116558b3ad4eaaf83ad1cf3ec21a521a506d089d1a1e1f770d9567d910aea8f33df1d2b9f34fb5ffa5ab89",
+            ),
+        ];
         let actual: Vec<(i64, String)> = sqlx_migrations()
             .iter()
             .map(|m| (m.version, hex(&m.checksum)))
@@ -174,12 +198,64 @@ mod tests {
                 .fetch_all(&pool)
                 .await
                 .unwrap();
-            assert_eq!(applied, vec![(1,)]);
+            assert_eq!(applied, vec![(1,), (2,)]);
             let kept: (String,) = sqlx::query_as("SELECT value FROM settings WHERE key = 'layout'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
             assert_eq!(kept.0, "\"pult\"");
+        });
+    }
+
+    /// 0.1.0 → 0.2.0 for a user with history: migration 2 runs on the existing database, the old
+    /// rows stay as they were and an old number-series item has no per-item limit (reads as 40 s).
+    #[test]
+    fn upgrades_a_0_1_0_database() {
+        tauri::async_runtime::block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let options = sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(dir.path().join("trainer.db"))
+                .create_if_missing(true);
+            let pool = sqlx::SqlitePool::connect_with(options.clone())
+                .await
+                .unwrap();
+            migrator_up_to(1).run(&pool).await.unwrap();
+            sqlx::raw_sql(
+                "INSERT INTO sessions (id, started_at, ended_at, kind, phase, app_version)
+                   VALUES ('s1', '2026-10-01T08:00:00.000Z', NULL, 'training', 'w1', '0.1.0');
+                 INSERT INTO blocks (id, session_id, module, l_before, l_after, params_json, score, flags_json, started_at, summary_json)
+                   VALUES ('b1', 's1', 'numseries', 0, 0, '{}', 1, '[]', '2026-10-01T08:01:00.000Z', '{}');
+                 INSERT INTO logic_items (id, block_id, family, seed, difficulty, answer, given, correct, time_ms, at)
+                   VALUES ('i1', 'b1', 'arith', 7, 850, 12, 12, 1, 5000, '2026-10-01T08:02:00.000Z');",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+            pool.close().await;
+
+            // First start of 0.2.0 on the same file.
+            let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
+            migrator().run(&pool).await.unwrap();
+            let applied: Vec<(i64,)> =
+                sqlx::query_as("SELECT version FROM _sqlx_migrations ORDER BY version")
+                    .fetch_all(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(applied, vec![(1,), (2,)]);
+            let old: (String, f64, f64, Option<f64>) = sqlx::query_as(
+                "SELECT family, difficulty, time_ms, time_limit_ms FROM logic_items WHERE id = 'i1'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(old, ("arith".to_string(), 850.0, 5000.0, None));
+            let counts: (i64, i64) = sqlx::query_as(
+                "SELECT (SELECT COUNT(*) FROM sessions), (SELECT COUNT(*) FROM blocks)",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(counts, (1, 1));
         });
     }
 

@@ -21,16 +21,18 @@ function seriesText(shown: readonly number[]): string {
 
 /**
  * Number series one item at a time. Enter takes the answer if it is a whole number; otherwise the hint
- * asks for one and the item stays. A per-item limit (training) or a total limit (diagnostic) is shown as a
- * bar with the seconds left; when it runs out the item gets no answer (and with the total limit, so do the
- * items not reached). After the last item the answers go to `onSubmit`.
+ * asks for one and the item stays. The item's own limit (training, R36) or the total limit (diagnostic) is
+ * shown as a bar with the seconds left; when it runs out the item gets no answer (and with the total limit,
+ * so do the items not reached). After the last item the answers go to `onSubmit`.
  */
 export default function NumSeriesView({ step, exposeAnswer, busy, onSubmit }: NumSeriesViewProps) {
-  const { items, perItemLimitMs, totalLimitMs } = step;
+  const { items, totalLimitMs } = step;
   const [index, setIndex] = useState(0);
   const [text, setText] = useState('');
   const [hint, setHint] = useState(false);
-  const limitMs = perItemLimitMs ?? totalLimitMs;
+  /** The current item's limit; null for diagnostic items, where the total limit runs instead. */
+  const itemLimitMs = items[index]?.timeLimitMs ?? null;
+  const limitMs = itemLimitMs ?? totalLimitMs;
   /** Time left as of the last tick, and for which item (a per-item limit starts full on every item). */
   const [left, setLeft] = useState<{ index: number; ms: number } | null>(null);
 
@@ -65,7 +67,7 @@ export default function NumSeriesView({ step, exposeAnswer, busy, onSubmit }: Nu
     setHint(false);
   };
   const onTimeout = useEffectEvent(() => {
-    record(null, perItemLimitMs === null);
+    record(null, itemLimitMs === null);
   });
 
   useEffect(() => {
@@ -73,7 +75,7 @@ export default function NumSeriesView({ step, exposeAnswer, busy, onSubmit }: Nu
     blockStart.current ??= now;
     itemStart.current = now;
     const deadline =
-      perItemLimitMs !== null ? now + perItemLimitMs : totalLimitMs !== null ? blockStart.current + totalLimitMs : null;
+      itemLimitMs !== null ? now + itemLimitMs : totalLimitMs !== null ? blockStart.current + totalLimitMs : null;
     if (deadline === null) return;
     const tick = setInterval(() => {
       setLeft({ index, ms: Math.max(0, deadline - performance.now()) });
@@ -85,7 +87,7 @@ export default function NumSeriesView({ step, exposeAnswer, busy, onSubmit }: Nu
       clearInterval(tick);
       clearTimeout(expire);
     };
-  }, [index, perItemLimitMs, totalLimitMs]);
+  }, [index, itemLimitMs, totalLimitMs]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>): void => {
     if (e.key !== 'Enter' || e.repeat) return;
@@ -100,7 +102,7 @@ export default function NumSeriesView({ step, exposeAnswer, busy, onSubmit }: Nu
 
   const item = items[index];
   if (item === undefined) return null;
-  const leftMs = left !== null && (left.index === index || perItemLimitMs === null) ? left.ms : limitMs;
+  const leftMs = left !== null && (left.index === index || itemLimitMs === null) ? left.ms : limitMs;
   return (
     <div className="screen-center series">
       <p className="muted">

@@ -16,7 +16,7 @@ import type {
 } from './rows';
 import type { SqlExecutor } from './sqlExecutor';
 
-// Raw rows as SELECT returns them (column names from src-tauri/migrations/0001_init.sql).
+// Raw rows as SELECT returns them (column names from src-tauri/migrations/*.sql).
 interface SessionDb {
   id: string;
   started_at: string;
@@ -59,6 +59,8 @@ interface LogicItemDb {
   given: number | null;
   correct: number;
   time_ms: number;
+  /** 0002; NULL in rows stored before 0.2.0. */
+  time_limit_ms: number | null;
   at: string;
 }
 interface DiagnosticDb {
@@ -122,8 +124,8 @@ const INSERT_BLOCK = `INSERT INTO blocks (id, session_id, module, l_before, l_af
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 const INSERT_TRIAL = `INSERT INTO trials (id, block_id, idx, stimulus_json, response_json, onset_ts, response_ts, rt_ms, outcome, frame_dropped)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-const INSERT_ITEM = `INSERT INTO logic_items (id, block_id, family, seed, difficulty, answer, given, correct, time_ms, at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+const INSERT_ITEM = `INSERT INTO logic_items (id, block_id, family, seed, difficulty, answer, given, correct, time_ms, time_limit_ms, at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
 /** Repository over SQLite (tauri-plugin-sql in the app, sql.js in tests). Ties are ordered by rowid = insertion. */
 export class SqliteRepository implements Repository {
@@ -180,6 +182,7 @@ export class SqliteRepository implements Repository {
           i.given,
           bool(i.correct),
           i.timeMs,
+          i.timeLimitMs,
           i.at,
         ]);
       }
@@ -278,6 +281,7 @@ export class SqliteRepository implements Repository {
       given: r.given,
       correct: r.correct !== 0,
       timeMs: r.time_ms,
+      timeLimitMs: r.time_limit_ms,
       at: r.at,
     }));
   }

@@ -79,7 +79,8 @@ function assertFinite(what: string, fields: Record<string, number | null>): void
 
 /**
  * Trials and logic items must belong to the block they are saved with, and every number must be
- * finite (R23): NaN/Infinity would reach SQLite as JSON null through the Tauri bridge.
+ * finite (R23): NaN/Infinity would reach SQLite as JSON null through the Tauri bridge. A per-item
+ * time limit must also be positive: rating rebuilds take log2(40000 / limit) of it (R36).
  */
 export function assertBlockPayload(b: BlockRow, trials: readonly TrialRow[], items: readonly LogicItemRow[]): void {
   assertFinite(`block ${b.id}`, { score: b.score, lBefore: b.lBefore, lAfter: b.lAfter });
@@ -95,6 +96,10 @@ export function assertBlockPayload(b: BlockRow, trials: readonly TrialRow[], ite
       answer: i.answer,
       given: i.given,
       timeMs: i.timeMs,
+      timeLimitMs: i.timeLimitMs,
     });
+    if (i.timeLimitMs !== null && i.timeLimitMs <= 0) {
+      throw new Error(`logic item ${i.id}: timeLimitMs is not positive (${String(i.timeLimitMs)})`);
+    }
   }
 }

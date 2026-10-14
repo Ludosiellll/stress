@@ -1,7 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import { deriveModuleStates, deriveRatings, MODULE_IDS } from '../engine/derive';
-import { ITEM_TIME_LIMIT_MS } from '../modules/numseries/generate';
-import { NUMSERIES_ITEM_LIMIT_MS } from '../engine/derive';
 import { exportBundle, rebuildCaches, toCsv } from './export';
 import { MemoryRepository } from './memoryRepository';
 import { block, item, session, trial } from './repository.contract';
@@ -116,11 +114,5 @@ describe('rebuildCaches', () => {
     expect((await repo.getRatings()).has('powers')).toBe(false);
     expect((await repo.getRatings()).get('fib')?.n).toBe(2);
     expect((await repo.getRatings()).get('arith')?.rating).toBeLessThan(1000);
-  });
-});
-
-describe('numseries time limit', () => {
-  it('engine copy equals the module constant', () => {
-    expect(NUMSERIES_ITEM_LIMIT_MS).toBe(ITEM_TIME_LIMIT_MS);
   });
 });

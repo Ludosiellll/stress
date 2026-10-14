@@ -1,6 +1,6 @@
 import type { BlockTimeline, Press, TrialSpec } from '../engine/reaction/types';
 import type { InputKey } from '../engine/types';
-import type { SeriesItem } from '../modules/numseries/generate';
+import type { TimedSeriesItem } from '../modules/numseries/generate';
 import { taskSequence, type TableParams, type TableTaskId } from '../modules/tables/gorbov';
 import type { TableRun } from '../modules/tables/score';
 import type { SeriesAnswer } from '../session/steps';
@@ -61,7 +61,7 @@ export function perfectTableRun(
   };
 }
 
-/** Right answer to every item, `timeMs` each. */
-export function perfectSeriesAnswers(items: readonly SeriesItem[], timeMs = 5000): SeriesAnswer[] {
+/** Right answer to every item, `timeMs` each (the default 5 s is inside every per-item limit, ≥ 8 s). */
+export function perfectSeriesAnswers(items: readonly TimedSeriesItem[], timeMs = 5000): SeriesAnswer[] {
   return items.map((it) => ({ itemId: it.id, given: it.answer, timeMs }));
 }
