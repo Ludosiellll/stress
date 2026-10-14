@@ -58,7 +58,10 @@ export interface Repository {
   listAllTrials(): Promise<TrialRow[]>;
   /** By at. */
   listLogicItems(): Promise<LogicItemRow[]>;
-  /** By number. */
+  /**
+   * By at (ties: insertion), never by number: after a restore a local №1 can be newer than the restored №1…№k,
+   * and the baseline, the latest diagnostic and the due date are read from this order (W2-R33).
+   */
   listDiagnostics(): Promise<DiagnosticRow[]>;
   /** By date. */
   listWellbeing(): Promise<WellbeingRow[]>;

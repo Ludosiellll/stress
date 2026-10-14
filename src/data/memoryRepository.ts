@@ -156,7 +156,7 @@ export class MemoryRepository implements Repository {
   }
 
   listDiagnostics(): Promise<DiagnosticRow[]> {
-    return Promise.resolve(sortedCopies(this.diagnostics, (d) => d.number));
+    return Promise.resolve(sortedCopies(this.diagnostics, (d) => d.at));
   }
 
   listWellbeing(): Promise<WellbeingRow[]> {

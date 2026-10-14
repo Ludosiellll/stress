@@ -272,7 +272,7 @@ export function repositoryContract(make: () => Promise<Repository>): void {
   });
 
   describe('diagnostics and wellbeing', () => {
-    it('round-trips diagnostics ordered by number', async () => {
+    it('round-trips diagnostics ordered by at', async () => {
       const repo = await make();
       await repo.createSession(session('s1', T1, { kind: 'diagnostic' }));
       const d2: DiagnosticRow = { id: 'd2', sessionId: 's1', number: 2, at: T3, resultsJson: '{"pzmr":{"medianRt":250}}' };
@@ -280,6 +280,24 @@ export function repositoryContract(make: () => Promise<Repository>): void {
       await repo.addDiagnostic(d2);
       await repo.addDiagnostic(d1);
       expect(await repo.listDiagnostics()).toEqual([d1, d2]);
+    });
+
+    it('lists diagnostics by at, not by number: a restored older №1…№2 come before a newer local №1 (W2-R33)', async () => {
+      const repo = await make();
+      await repo.addSessions([session('old', T1, { kind: 'diagnostic' }), session('new', T3, { kind: 'diagnostic' })]);
+      const local: DiagnosticRow = { id: 'local-1', sessionId: 'new', number: 1, at: T3, resultsJson: '{}' };
+      const restored1: DiagnosticRow = { id: 'old-1', sessionId: 'old', number: 1, at: T1, resultsJson: '{}' };
+      const restored2: DiagnosticRow = { id: 'old-2', sessionId: 'old', number: 2, at: T2, resultsJson: '{}' };
+      await repo.addDiagnostic(local);
+      await repo.addDiagnostics([restored1, restored2]);
+      expect((await repo.listDiagnostics()).map((d) => d.id)).toEqual(['old-1', 'old-2', 'local-1']);
+    });
+
+    it('diagnostics with the same at keep the order they were stored in', async () => {
+      const repo = await make();
+      await repo.createSession(session('s1', T1, { kind: 'diagnostic' }));
+      await repo.addDiagnostics([2, 1, 3].map((n) => ({ id: `d${String(n)}`, sessionId: 's1', number: n, at: T2, resultsJson: '{}' })));
+      expect((await repo.listDiagnostics()).map((d) => d.id)).toEqual(['d2', 'd1', 'd3']);
     });
 
     it('rejects a diagnostic of an unknown session', async () => {
@@ -343,7 +361,7 @@ export function repositoryContract(make: () => Promise<Repository>): void {
       await repo.addSessions([session('s1', T1, { kind: 'diagnostic' })]);
       await expect(repo.addDiagnostics([diag('d1', 's1', 1), diag('d2', 'ghost', 2)])).rejects.toThrow();
       expect(await repo.listDiagnostics()).toEqual([]);
-      await repo.addDiagnostics([diag('d2', 's1', 2), diag('d1', 's1', 1)]);
+      await repo.addDiagnostics([diag('d1', 's1', 1), diag('d2', 's1', 2)]);
       expect(await repo.listDiagnostics()).toEqual([diag('d1', 's1', 1), diag('d2', 's1', 2)]);
       await expect(repo.addDiagnostics([diag('d3', 's1', 3), diag('d1', 's1', 1)])).rejects.toThrow();
       expect((await repo.listDiagnostics()).map((d) => d.id)).toEqual(['d1', 'd2']);

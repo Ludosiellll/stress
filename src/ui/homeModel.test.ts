@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { parseExportBundle } from '../data/bundleSchema';
+import { exportBundle } from '../data/export';
+import { importBundle } from '../data/importBundle';
 import { MemoryRepository } from '../data/memoryRepository';
 import { block, session } from '../data/repository.contract';
 import type { DiagnosticRow } from '../data/rows';
@@ -56,6 +59,29 @@ describe('readinessOf', () => {
 
 describe('loadHomeModel', () => {
   const TODAY = '2026-10-14';
+
+  it('after restoring older diagnostics next to a newer №1, baseline, latest and due follow the dates (W2-R33)', async () => {
+    const diag = async (repo: MemoryRepository, id: string, number: number, at: string, pzmrMedianRt: number) => {
+      await repo.createSession(session(`s-${id}`, at, { kind: 'diagnostic' }));
+      await repo.addDiagnostic({ id, sessionId: `s-${id}`, number, at, resultsJson: JSON.stringify({ ...EMPTY, pzmrMedianRt }) });
+    };
+    // The old computer: two diagnostics in September. The fresh install: its own №1 today.
+    const old = new MemoryRepository();
+    await diag(old, 'old-1', 1, '2026-09-01T10:00:00.000Z', 400);
+    await diag(old, 'old-2', 2, '2026-09-15T10:00:00.000Z', 300);
+    const target = new MemoryRepository();
+    await diag(target, 'new-1', 1, `${TODAY}T08:00:00.000Z`, 280);
+    const file = parseExportBundle(await exportBundle(old, '0.2.0'));
+    if (!file.ok) throw new Error(file.error);
+    expect((await importBundle(target, file.bundle, { pause: () => Promise.resolve() })).error).toBeNull();
+
+    const model = await loadHomeModel(target, TODAY);
+    // Due is read from today's diagnostic, not from the restored one of 2026-09-15.
+    expect(model.diagnosticDue).toBe(false);
+    // The baseline is the restored №1 (400 ms), the latest is today's 280 ms.
+    expect(model.readiness?.abilities.reaction).toBe(readiness({ ...EMPTY, pzmrMedianRt: 280 }, { ...EMPTY, pzmrMedianRt: 400 }).abilities.reaction);
+    expect(model.readiness?.abilities.reaction).toBe(100);
+  });
 
   it('an abandoned diagnostic: the next one keeps its number but gets new seeds (I5)', async () => {
     const repo = new MemoryRepository();

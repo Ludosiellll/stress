@@ -308,7 +308,7 @@ export class SqliteRepository implements Repository {
   }
 
   async listDiagnostics(): Promise<DiagnosticRow[]> {
-    const rows = await this.db.select<DiagnosticDb>('SELECT * FROM diagnostics ORDER BY number, rowid');
+    const rows = await this.db.select<DiagnosticDb>('SELECT * FROM diagnostics ORDER BY at, rowid');
     return rows.map((r) => ({ id: r.id, sessionId: r.session_id, number: r.number, at: r.at, resultsJson: r.results_json }));
   }
 
