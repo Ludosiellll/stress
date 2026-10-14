@@ -32,7 +32,19 @@ function parse(text: string): ExportBundle {
 }
 
 function bundleOf(p: Partial<ExportBundle>): ExportBundle {
-  return { appVersion: '0.2.0', exportedAt: T1, sessions: [], blocks: [], trials: [], logicItems: [], diagnostics: [], wellbeing: [], settings: {}, ...p };
+  return {
+    appVersion: '0.2.0',
+    exportedAt: T1,
+    sessions: [],
+    blocks: [],
+    trials: [],
+    logicItems: [],
+    diagnostics: [],
+    wellbeing: [],
+    settings: {},
+    settingsSkipped: [],
+    ...p,
+  };
 }
 
 async function history(repo: Repository) {
@@ -46,7 +58,7 @@ async function history(repo: Repository) {
   };
 }
 
-type Writer = 'addBlock' | 'addSessions' | 'addDiagnostics' | 'addWellbeingRows' | 'saveSettings';
+type Writer = 'addBlock' | 'addSessions' | 'addDiagnostics' | 'addWellbeingRows' | 'saveSettings' | 'saveRatings';
 
 /** `repo` whose `method` goes through `around` (its arguments and the original call); every other call is untouched. */
 function wrap(repo: Repository, method: Writer, around: (args: unknown[], original: () => Promise<void>) => Promise<void>): Repository {
@@ -99,6 +111,7 @@ describe.each(TARGETS)('importBundle into %s', (_name, make) => {
       diagnostics: counts(file.diagnostics.length, 0),
       wellbeing: counts(file.wellbeing.length, 0),
       settingsFilled: [],
+      settingsSkipped: [],
       error: null,
     });
   });
@@ -117,6 +130,7 @@ describe.each(TARGETS)('importBundle into %s', (_name, make) => {
       diagnostics: counts(0, file.diagnostics.length),
       wellbeing: counts(0, file.wellbeing.length),
       settingsFilled: [],
+      settingsSkipped: [],
       error: null,
     });
     expect(await history(target)).toEqual(before);
@@ -147,6 +161,7 @@ describe.each(TARGETS)('importBundle into %s', (_name, make) => {
       diagnostics: counts(file.diagnostics.length, 0),
       wellbeing: counts(file.wellbeing.length, 0),
       settingsFilled: [],
+      settingsSkipped: [],
       error: null,
     });
     const merged = await history(target);
@@ -173,6 +188,7 @@ describe.each(TARGETS)('importBundle into %s', (_name, make) => {
       diagnostics: counts(0, 0),
       wellbeing: counts(0, 0),
       settingsFilled: [],
+      settingsSkipped: [],
       error: `Блок 3 из ${String(n)} не записан: disk I/O error. Записанное раньше сохранено; запусти восстановление ещё раз — добавленное пропустится.`,
     });
     const written = await history(target);
@@ -390,6 +406,48 @@ describe('importBundle', () => {
     expect(report.blocks).toEqual({ ...counts(1, 0), failed: 0 });
     expect(await target.storedSettingKeys()).toEqual(new Set());
     expect((await target.getModuleStates()).pzmr.lifetimeBlocks).toBe(1);
+  });
+
+  it('W2-R32: settings the file could not give are reported, and the rest is restored', async () => {
+    const parsedFile = parseExportBundle(
+      JSON.stringify({ ...JSON.parse(await exportBundle(source, '0.2.0')), settings: { testDate: '14.12.2026', layout: 'pult' } }),
+    );
+    if (!parsedFile.ok) throw new Error(parsedFile.error);
+    const target = new MemoryRepository();
+    const report = await importBundle(target, parsedFile.bundle, { pause: noPause });
+    expect(report).toMatchObject({ settingsFilled: ['layout'], settingsSkipped: ['testDate'], error: null });
+    expect(report.sessions).toEqual(counts(file.sessions.length, 0));
+    expect((await target.getSettings()).testDate).toBeNull();
+  });
+
+  it('W2-R32: a failed cache rebuild is folded into the report; counts and earlier errors are kept', async () => {
+    const b = bundleOf({ sessions: [session('s1', T1)], blocks: [block('b1', 's1', T1)] });
+    const target = new MemoryRepository();
+    const report = await importBundle(failOnCall(target, 'saveRatings', 1, 'disk I/O error.'), b, { pause: noPause });
+    expect(report.error).toBe(
+      'Уровни и рейтинги не пересчитаны: disk I/O error. Записанное сохранено, они пересчитаются при следующем запуске.',
+    );
+    expect(report.sessions).toEqual(counts(1, 0));
+    expect(report.blocks).toEqual({ ...counts(1, 0), failed: 0 });
+    expect(await target.listIds('blocks')).toEqual(new Set(['b1']));
+
+    // A stop and a failed rebuild: both are told, the stop first.
+    const stopped = failOnCall(failOnCall(new MemoryRepository(), 'saveRatings', 1, 'disk I/O error'), 'addDiagnostics', 1, 'locked');
+    const both = await importBundle(stopped, { ...b, diagnostics: [diagnostic('d1', 's1', 1)] }, { pause: noPause });
+    expect(both.error).toBe(
+      'Не удалось записать контрольные диагностики: locked. ' +
+        'Уровни и рейтинги не пересчитаны: disk I/O error. Записанное сохранено, они пересчитаются при следующем запуске.',
+    );
+    expect(both.blocks).toEqual({ ...counts(1, 0), failed: 0 });
+  });
+
+  it('W2-R32: a throwing callback still rejects with its own error when the rebuild fails too', async () => {
+    const target = failOnCall(new MemoryRepository(), 'saveRatings', 1, 'disk I/O error');
+    const onProgress = (): void => {
+      throw new Error('view unmounted');
+    };
+    const b = bundleOf({ sessions: [session('s1', T1)], blocks: [block('b1', 's1', T1)] });
+    await expect(importBundle(target, b, { pause: noPause, onProgress })).rejects.toThrow('view unmounted');
   });
 
   it('blocks go to addBlock in file order, each with its own trials by idx and its own items', async () => {

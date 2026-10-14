@@ -1,4 +1,4 @@
-import type { ExportBundle } from './bundleSchema';
+import type { ExportBundle, RestoredSetting } from './bundleSchema';
 import { rebuildCaches } from './export';
 import type { HistoryTable, Repository } from './repository';
 import type { LogicItemRow, Settings, TrialRow } from './rows';
@@ -47,8 +47,10 @@ export interface ImportReport {
   diagnostics: ImportCounts;
   wellbeing: ImportCounts;
   /** Settings taken from the file: only keys never saved on this computer, and only when the value differs. */
-  settingsFilled: Array<'testDate' | 'layout'>;
-  /** Why the restore stopped early; null when every row was processed. */
+  settingsFilled: RestoredSetting[];
+  /** Settings the file has with a value that cannot be used (ExportBundle.settingsSkipped). */
+  settingsSkipped: RestoredSetting[];
+  /** Why the restore stopped early, or that the caches were not rebuilt; null when everything went through. */
   error: string | null;
 }
 
@@ -117,8 +119,8 @@ function groupByBlock<T extends { blockId: string }>(rows: readonly T[]): Map<st
 /**
  * Writes the rows of a checked bundle (parseExportBundle) that are not stored yet, then rebuilds the caches if
  * anything was added (also when the restore stopped early). Settings come last: testDate and layout are taken
- * only if never saved here. Rejects only when rebuildCaches, onProgress or pause throws; the rows written stay
- * (and the next start rebuilds the caches if this rebuild failed).
+ * only if never saved here. A failed rebuild joins report.error with the counts kept (the next start rebuilds the
+ * caches). Rejects only when onProgress or pause throws; the rows written stay.
  */
 export async function importBundle(repo: Repository, bundle: ExportBundle, o: ImportOptions = {}): Promise<ImportReport> {
   const known = await knownIds(repo);
@@ -133,6 +135,7 @@ export async function importBundle(repo: Repository, bundle: ExportBundle, o: Im
     diagnostics: { imported: 0, skipped: bundle.diagnostics.length - diagnostics.length },
     wellbeing: { imported: 0, skipped: bundle.wellbeing.length - wellbeing.length },
     settingsFilled: [],
+    settingsSkipped: [...bundle.settingsSkipped],
     error: null,
   };
 
@@ -142,9 +145,19 @@ export async function importBundle(repo: Repository, bundle: ExportBundle, o: Im
   } finally {
     // Also after an early stop, or when a callback threw: the caches follow every row written.
     const added = report.sessions.imported + report.blocks.imported + report.diagnostics.imported + report.wellbeing.imported;
-    if (added > 0) await rebuildCaches(repo);
+    if (added > 0) await rebuildInto(repo, report);
   }
   return report;
+}
+
+/** rebuildCaches; a failure is added to report.error and never hides the report or an error already thrown (W2-R32). */
+async function rebuildInto(repo: Repository, report: ImportReport): Promise<void> {
+  try {
+    await rebuildCaches(repo);
+  } catch (e) {
+    const failure = `Уровни и рейтинги не пересчитаны: ${reason(e)}. Записанное сохранено, они пересчитаются при следующем запуске.`;
+    report.error = report.error === null ? failure : `${report.error} ${failure}`;
+  }
 }
 
 /** Writes `rows` in batches of IMPORT_CHUNK; when a batch fails, false and the report's error «{failure}: {reason}.». */
