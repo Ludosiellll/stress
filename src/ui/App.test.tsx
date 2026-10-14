@@ -42,10 +42,11 @@ describe('App', () => {
     expect(within(session).getByText('Проверка экрана и питания…')).toBeTruthy();
   });
 
-  it('opens free training and the progress stub and returns home', async () => {
+  it('opens the progress screen and free training and returns home', async () => {
     await renderApp();
     fireEvent.click(screen.getByRole('button', { name: 'Прогресс' }));
     expect(screen.getByRole('region', { name: 'Прогресс' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Контрольные диагностики' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Назад' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Свободная тренировка' }));
     expect(await screen.findByRole('region', { name: 'Свободная тренировка' })).toBeTruthy();

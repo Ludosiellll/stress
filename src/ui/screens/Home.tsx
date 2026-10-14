@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { moduleTitles } from '../../modules/registry';
 import type { SessionPlan } from '../../engine/planner';
-import type { Ability } from '../../engine/readiness';
 import { useApp } from '../AppContext';
 import { logEvent } from '../errorLog';
 import { localDate } from '../format';
 import { loadHomeModel, type HomeModel } from '../homeModel';
+import ReadinessBlock from '../views/ReadinessBlock';
 
 export interface HomeProps {
   onStart: (plan: SessionPlan) => void;
@@ -14,45 +14,7 @@ export interface HomeProps {
   onSettings: () => void;
 }
 
-const ABILITIES: readonly (readonly [Ability, string])[] = [
-  ['reaction', 'Реакция'],
-  ['attention', 'Внимание'],
-  ['switching', 'Переключение'],
-  ['memory', 'Память'],
-  ['logic', 'Логика'],
-];
-
 const INTERACTIVE = 'button, a, input, select, textarea, [role="radio"]';
-
-function abilityText(ability: Ability, value: number | null): string {
-  if (value !== null) return String(Math.round(value));
-  return ability === 'memory' ? 'появится позже' : 'нет данных';
-}
-
-function Readiness({ model }: { model: HomeModel }) {
-  const r = model.readiness;
-  return (
-    <section aria-labelledby="readiness-title">
-      <h2 id="readiness-title">Индекс готовности</h2>
-      {r === null ? (
-        <p>Пройди диагностику, чтобы увидеть индекс</p>
-      ) : (
-        <>
-          <dl className="readiness">
-            {ABILITIES.map(([id, label]) => (
-              <div key={id}>
-                <dt>{label}</dt>
-                <dd>{abilityText(id, r.abilities[id])}</dd>
-              </div>
-            ))}
-          </dl>
-          <p>Общий индекс: {r.overall === null ? 'нет данных' : Math.round(r.overall)}</p>
-          <p className="muted">60 — уровень твоей первой диагностики. Таблица Горбова оценивается по опубликованным нормам.</p>
-        </>
-      )}
-    </section>
-  );
-}
 
 export default function Home({ onStart, onFree, onProgress, onSettings }: HomeProps) {
   const { repo } = useApp();
@@ -164,7 +126,7 @@ export default function Home({ onStart, onFree, onProgress, onSettings }: HomePr
         </div>
         <p className="muted">Enter — начать тренировку.</p>
       </section>
-      <Readiness model={model} />
+      <ReadinessBlock readiness={model.readiness} />
       <section aria-label="Серия и дата теста">
         <p>Серия: {model.streak} дн.</p>
         {model.daysToTest !== null && <p>До теста: {model.daysToTest} дн.</p>}

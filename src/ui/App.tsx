@@ -6,11 +6,11 @@ import { AppContext } from './AppContext';
 import { bootstrap } from './bootstrap';
 import Free from './screens/Free';
 import Home from './screens/Home';
-import Placeholder from './screens/Placeholder';
+import Progress from './screens/Progress';
 import Session from './screens/Session';
 import Settings from './screens/Settings';
 
-/** Current screen. Task 16 replaces the placeholder for 'progress'. */
+/** Current screen. */
 type Route =
   | { screen: 'home' }
   | { screen: 'session'; plan: SessionPlan }
@@ -42,7 +42,7 @@ function Screens({ route, go }: { route: Route; go: (next: Route) => void }) {
     case 'free':
       return <Free onStart={(plan) => { go({ screen: 'session', plan }); }} onBack={home} />;
     case 'progress':
-      return <Placeholder title="Прогресс" onBack={home} />;
+      return <Progress onBack={home} />;
     case 'settings':
       return <Settings onBack={home} />;
   }

@@ -18,13 +18,24 @@ export interface HomeModel {
 
 const NO_ABILITIES: Record<Ability, number | null> = { reaction: null, attention: null, switching: null, memory: null, logic: null };
 
-function parseResults(row: DiagnosticRow): DiagnosticResults | null {
+/** The stored results of a diagnostic, or null when the row does not hold a JSON object. */
+export function parseResults(row: DiagnosticRow): DiagnosticResults | null {
   try {
     const value = JSON.parse(row.resultsJson) as unknown;
     return typeof value === 'object' && value !== null ? (value as DiagnosticResults) : null;
   } catch {
     return null;
   }
+}
+
+/** Readiness from the stored diagnostics (first = baseline, last = latest); null until the first one exists. */
+export function readinessOf(diagnostics: readonly DiagnosticRow[]): HomeModel['readiness'] {
+  const first = diagnostics[0];
+  const last = diagnostics[diagnostics.length - 1];
+  if (first === undefined || last === undefined) return null;
+  const latest = parseResults(last);
+  const baseline = parseResults(first);
+  return latest !== null && baseline !== null ? readiness(latest, baseline) : { abilities: NO_ABILITIES, overall: null };
 }
 
 /** Everything Home shows, computed from the repository at the given local date (YYYY-MM-DD). */
@@ -35,21 +46,13 @@ export async function loadHomeModel(repo: Repository, today: string): Promise<Ho
     repo.listDiagnostics(),
     repo.getSettings(),
   ]);
-  const first = diagnostics[0];
   const last = diagnostics[diagnostics.length - 1];
-  const latest = last === undefined ? null : parseResults(last);
-  const baseline = first === undefined ? null : parseResults(first);
   const trainingDays = sessions.flatMap((s) => (s.kind === 'training' && s.endedAt !== null ? [s.endedAt] : []));
   return {
     plan: planTraining(states, today, hashString(`${today}:${String(sessions.length)}`)),
     diagnosticDue: isDiagnosticDue(last?.at ?? null, today),
     diagnosticPlan: planDiagnostic(diagnostics.length + 1),
-    readiness:
-      last === undefined
-        ? null
-        : latest !== null && baseline !== null
-          ? readiness(latest, baseline)
-          : { abilities: NO_ABILITIES, overall: null },
+    readiness: readinessOf(diagnostics),
     streak: computeStreak(trainingDays, today),
     daysToTest: daysUntil(settings.testDate, today),
   };
