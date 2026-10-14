@@ -5,7 +5,6 @@ import { MODULE_IDS } from '../engine/derive';
 import { planDiagnostic, type DiagnosticMetrics, type DiagnosticResults } from '../engine/diagnostic';
 import { BASE_DAYS, CALIBRATION_BLOCKS, currentPhase, type PhaseId, type PhaseInfo } from '../engine/phases';
 import {
-  FINISHER_MINUTES,
   OVERLOAD_REACTION_MINUTES,
   TAPER_VOLUME,
   isDiagnosticDue,
@@ -110,11 +109,20 @@ const PHASE_TITLES: Record<PhaseId, string> = {
 
 const TAPER_HINTS: readonly string[] = ['Тренируйся утром, в то же время, на которое назначен тест.', 'Перед тестом спи не меньше 8 часов.'];
 
-const OVERLOAD_RULES = `финишер ${String(FINISHER_MINUTES.overload)} мин, модули реакции по ${String(OVERLOAD_REACTION_MINUTES)} мин`;
-const TAPER_CUT = `${String(Math.round((1 - TAPER_VOLUME) * 100))} %`;
+const LONG_REACTION = `модули реакции по ${String(OVERLOAD_REACTION_MINUTES)} мин`;
+const TAPER_RULES = `объём меньше на ${String(Math.round((1 - TAPER_VOLUME) * 100))} %, без финишера и новых модулей`;
 
-/** What Home says about the phase: the title, why the plan looks the way it does, and the taper reminders. */
-export function phaseTexts(p: PhaseInfo): { title: string; why: string; hints: string[] } {
+/** The overload rules as the plan has them: the finisher is named only when the plan has one. */
+function overloadRules(plan: Pick<SessionPlan, 'segments'>): string {
+  const finisher = plan.segments.find((s) => s.overload === 'finisher');
+  return finisher === undefined ? LONG_REACTION : `финишер ${budgetMinutes(finisher.budgetMs)} мин, ${LONG_REACTION}`;
+}
+
+/**
+ * What Home says about the phase: the title, why the plan looks the way it does, and the taper reminders.
+ * `plan` is the plan shown under it, so the reason never promises a finisher the plan does not have.
+ */
+export function phaseTexts(p: PhaseInfo, plan: Pick<SessionPlan, 'segments'>): { title: string; why: string; hints: string[] } {
   const days = String(p.daysToTest ?? 0);
   let why: string;
   switch (p.reason) {
@@ -128,13 +136,13 @@ export function phaseTexts(p: PhaseInfo): { title: string; why: string; hints: s
       why = 'Больше времени отстающим модулям и тем, что давно не тренировались.';
       break;
     case 'test_soon':
-      why = `До теста ${days} дн.: ${OVERLOAD_RULES}.`;
+      why = `До теста ${days} дн.: ${overloadRules(plan)}.`;
       break;
     case 'day_60':
-      why = `${String(p.dayNumber)}-й день тренировок, дата теста не задана: ${OVERLOAD_RULES}.`;
+      why = `${String(p.dayNumber)}-й день тренировок, дата теста не задана: ${overloadRules(plan)}.`;
       break;
     case 'taper':
-      why = `До теста ${days} дн.: объём меньше на ${TAPER_CUT}, без финишера и новых модулей.`;
+      why = p.daysToTest === 0 ? `Сегодня тест: ${TAPER_RULES}.` : `До теста ${days} дн.: ${TAPER_RULES}.`;
       break;
   }
   return { title: PHASE_TITLES[p.phase], why, hints: p.phase === 'taper' ? [...TAPER_HINTS] : [] };
@@ -178,9 +186,10 @@ export async function loadHomeModel(repo: Repository, today: string): Promise<Ho
   // Seeds count every diagnostic ever started, so an abandoned one is not replayed with the same tables (I5).
   const diagnosticsStarted = sessions.filter((s) => s.kind === 'diagnostic').length;
   const phase = currentPhase({ firstSessionAt: firstSessionAt(sessions), today, testDate: settings.testDate, states });
-  const texts = phaseTexts(phase);
+  const plan = planTraining(states, today, hashString(`${today}:${String(sessions.length)}`), phase);
+  const texts = phaseTexts(phase, plan);
   return {
-    plan: planTraining(states, today, hashString(`${today}:${String(sessions.length)}`), phase),
+    plan,
     diagnosticDue: isDiagnosticDue(last?.at ?? null, today),
     diagnosticPlan: planDiagnostic(diagnostics.length + 1, diagnosticsStarted + 1),
     readiness: readinessOf(diagnostics),

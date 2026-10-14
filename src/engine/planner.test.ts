@@ -272,6 +272,18 @@ describe('planTraining', () => {
     ]);
   });
 
+  it('taper: a plateau module gets no overload blocks (the taper cuts the load)', () => {
+    const plateau = { plateau: true };
+    const plan = planTraining(
+      trained({ pzmr: plateau, szmr: plateau, gonogo: plateau, gorbov: plateau, memory: plateau }),
+      TODAY,
+      1,
+      phaseInfo('taper', { daysToTest: 5 }),
+    );
+    expect(modules(plan)).toEqual(['pzmr', 'szmr', 'gonogo', 'gorbov', 'memory', 'numseries']);
+    expect(plan.segments.every((s) => s.overload === undefined)).toBe(true);
+  });
+
   it('reaction slots: the two highest priorities of szmr, gonogo, rdo, pomeh; ties keep pool order', () => {
     expect(reaction(planTraining(allStates(), TODAY, 1, DEV))).toEqual(['szmr', 'gonogo']);
     const atNorm = (m: ModuleId): Partial<ModuleState> => ({ lSaved: L_NORM[m], lastTrainedAt: '2026-10-13' });
@@ -370,7 +382,7 @@ describe('planTraining', () => {
           MEMORY_SLOT_POOL.includes(memorySlot.module) &&
           memorySlot.module !== attention.module &&
           [attention, memorySlot].every((a) => a.budgetMs === expectBudget(5)) &&
-          [r1, r2, attention, memorySlot].every((x) => (x.overload === 'mix') === states[x.module].plateau);
+          [r1, r2, attention, memorySlot].every((x) => (x.overload === 'mix') === (!taper && states[x.module].plateau));
         // Taper: a never-trained module takes a reaction slot only when fewer than two of the pool were trained.
         const taperOk =
           !taper ||

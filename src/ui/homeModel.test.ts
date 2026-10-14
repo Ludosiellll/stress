@@ -4,6 +4,7 @@ import { block, session } from '../data/repository.contract';
 import type { DiagnosticRow } from '../data/rows';
 import { diagnosticSegmentSeed, type DiagnosticResults } from '../engine/diagnostic';
 import type { PhaseInfo } from '../engine/phases';
+import type { Segment, SessionPlan } from '../engine/planner';
 import { readiness } from '../engine/readiness';
 import { MODULE_IDS } from '../engine/types';
 import { loadHomeModel, mergedBaseline, parseResults, phaseTexts, planLine, readinessOf } from './homeModel';
@@ -133,7 +134,9 @@ describe('loadHomeModel', () => {
     expect(m.phase).toMatchObject({ phase: 'overload', reason: 'test_soon', daysToTest: 20 });
     expect(m.plan.phase).toBe('overload');
     expect(m.plan.segments.filter((s) => s.purpose === 'reaction').map((s) => s.budgetMs)).toEqual([360000, 360000]);
-    expect(m.phaseWhy).toBe('До теста 20 дн.: финишер 5 мин, модули реакции по 6 мин.');
+    // No module has 3 blocks yet: the plan has no finisher, and the reason does not promise one.
+    expect(m.plan.segments.some((s) => s.purpose === 'finisher')).toBe(false);
+    expect(m.phaseWhy).toBe('До теста 20 дн.: модули реакции по 6 мин.');
     expect(m.daysToTest).toBe(20);
 
     // A date in the past is ignored by the phase; the line under the plan keeps W1's «0 дн.».
@@ -165,37 +168,75 @@ describe('phaseTexts', () => {
     ...over,
   });
 
+  const seg = (module: Segment['module'], purpose: Segment['purpose'], budgetMs: number, over: Partial<Segment> = {}): Segment => ({
+    module,
+    budgetMs,
+    purpose,
+    ...over,
+  });
+  /** The overload-phase plan: reaction modules 6 min each, with or without the 5-minute finisher. */
+  const overloadPlan = (finisher: boolean): Pick<SessionPlan, 'segments'> => ({
+    segments: [
+      seg('pzmr', 'warmup', 120000),
+      seg('szmr', 'reaction', 360000),
+      seg('gonogo', 'reaction', 360000),
+      seg('gorbov', 'attention', 300000),
+      seg('memory', 'attention', 300000),
+      seg('numseries', 'logic', 600000),
+      ...(finisher ? [seg('rdo', 'finisher', 300000, { overload: 'finisher' })] : []),
+    ],
+  });
+  const NO_PLAN: Pick<SessionPlan, 'segments'> = { segments: [] };
+
   it('gives the title, the reason and the taper hints', () => {
-    expect(phaseTexts(info({ dayNumber: 3 }))).toEqual({
+    expect(phaseTexts(info({ dayNumber: 3 }), NO_PLAN)).toEqual({
       title: 'Фаза: база',
       why: 'День 3 из 14: калибровка уровней и стартовая диагностика.',
       hints: [],
     });
-    expect(phaseTexts(info({ reason: 'calibration', dayNumber: 25, uncalibrated: ['stroop', 'taskswitch', 'pomeh', 'memory'] }))).toEqual({
+    expect(phaseTexts(info({ reason: 'calibration', dayNumber: 25, uncalibrated: ['stroop', 'taskswitch', 'pomeh', 'memory'] }), NO_PLAN)).toEqual({
       title: 'Фаза: база',
       why: 'Нужно откалибровать (по 3 блока): Струп, Переключение правил, Помехоустойчивость, Память.',
       hints: [],
     });
-    expect(phaseTexts(info({ phase: 'development', reason: 'weak_spots', dayNumber: 30 }))).toEqual({
+    expect(phaseTexts(info({ phase: 'development', reason: 'weak_spots', dayNumber: 30 }), NO_PLAN)).toEqual({
       title: 'Фаза: развитие',
       why: 'Больше времени отстающим модулям и тем, что давно не тренировались.',
       hints: [],
     });
-    expect(phaseTexts(info({ phase: 'overload', reason: 'test_soon', daysToTest: 20 }))).toEqual({
+    expect(phaseTexts(info({ phase: 'overload', reason: 'test_soon', daysToTest: 20 }), overloadPlan(true))).toEqual({
       title: 'Фаза: перегрузка',
       why: 'До теста 20 дн.: финишер 5 мин, модули реакции по 6 мин.',
       hints: [],
     });
-    expect(phaseTexts(info({ phase: 'overload', reason: 'day_60', dayNumber: 64 }))).toEqual({
+    expect(phaseTexts(info({ phase: 'overload', reason: 'day_60', dayNumber: 64 }), overloadPlan(true))).toEqual({
       title: 'Фаза: перегрузка',
       why: '64-й день тренировок, дата теста не задана: финишер 5 мин, модули реакции по 6 мин.',
       hints: [],
     });
-    expect(phaseTexts(info({ phase: 'taper', reason: 'taper', daysToTest: 5 }))).toEqual({
+    expect(phaseTexts(info({ phase: 'taper', reason: 'taper', daysToTest: 5 }), NO_PLAN)).toEqual({
       title: 'Фаза: подводка',
       why: 'До теста 5 дн.: объём меньше на 40 %, без финишера и новых модулей.',
       hints: ['Тренируйся утром, в то же время, на которое назначен тест.', 'Перед тестом спи не меньше 8 часов.'],
     });
+  });
+
+  it('the overload reason mentions the finisher only when the plan has one', () => {
+    expect(phaseTexts(info({ phase: 'overload', reason: 'test_soon', daysToTest: 20 }), overloadPlan(false)).why).toBe(
+      'До теста 20 дн.: модули реакции по 6 мин.',
+    );
+    expect(phaseTexts(info({ phase: 'overload', reason: 'day_60', dayNumber: 64 }), overloadPlan(false)).why).toBe(
+      '64-й день тренировок, дата теста не задана: модули реакции по 6 мин.',
+    );
+  });
+
+  it('the test day says the test is today', () => {
+    expect(phaseTexts(info({ phase: 'taper', reason: 'taper', daysToTest: 0 }), NO_PLAN).why).toBe(
+      'Сегодня тест: объём меньше на 40 %, без финишера и новых модулей.',
+    );
+    expect(phaseTexts(info({ phase: 'taper', reason: 'taper', daysToTest: 1 }), NO_PLAN).why).toBe(
+      'До теста 1 дн.: объём меньше на 40 %, без финишера и новых модулей.',
+    );
   });
 });
 

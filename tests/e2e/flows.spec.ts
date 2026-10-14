@@ -73,7 +73,7 @@ test('a test date in 20 days shows the overload phase on Home', async ({ page })
   await page.getByLabel('Дата теста').fill(await pageDate(page, 20));
   await page.getByRole('button', { name: 'Назад' }).click();
   await expect(page.getByText('Фаза: перегрузка')).toBeVisible();
-  await expect(page.getByText('До теста 20 дн.: финишер 5 мин, модули реакции по 6 мин.')).toBeVisible();
+  await expect(page.getByText('До теста 20 дн.: модули реакции по 6 мин.')).toBeVisible();
   await expect(page.getByText('До теста: 20 дн.')).toBeVisible();
   // No module has 3 blocks yet, so there is no finisher; the reaction segments are 6 minutes long.
   await expect(page.getByRole('list', { name: 'План на сегодня' }).getByRole('listitem')).toHaveText([

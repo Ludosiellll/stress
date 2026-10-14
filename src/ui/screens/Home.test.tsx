@@ -83,8 +83,37 @@ describe('Home without history', () => {
     await renderHome(repo);
     expect(screen.getByText('До теста: 10 дн.')).toBeTruthy();
     expect(screen.getByText('Фаза: перегрузка')).toBeTruthy();
-    expect(screen.getByText('До теста 10 дн.: финишер 5 мин, модули реакции по 6 мин.')).toBeTruthy();
+    // Nothing is calibrated yet: no finisher in the plan, none in the reason.
+    expect(screen.getByText('До теста 10 дн.: модули реакции по 6 мин.')).toBeTruthy();
     expect(planLines()[1]).toBe('Сложная реакция (СЗМР) — 6 мин');
+    expect(planLines()).toHaveLength(6);
+  });
+
+  it('the overload reason names the finisher that is in the plan', async () => {
+    const repo = new MemoryRepository();
+    await repo.saveSettings({ testDate: localDate(daysFromNow(10)) });
+    // РДО is calibrated (3 blocks) and not among today's reaction picks, so it becomes the finisher.
+    await repo.saveModuleState({
+      module: 'rdo',
+      lSaved: 10,
+      sessionEndLevels: [10],
+      savedHistory: [10],
+      plateau: false,
+      lastTrainedAt: daysFromNow(-1).toISOString(),
+      lifetimeBlocks: 3,
+    });
+    await renderHome(repo);
+    expect(screen.getByText('До теста 10 дн.: финишер 5 мин, модули реакции по 6 мин.')).toBeTruthy();
+    expect(planLines()[6]).toBe('Реакция на движущийся объект — 5 мин — финишер с перегрузкой');
+  });
+
+  it('on the test day the reason says the test is today', async () => {
+    const repo = new MemoryRepository();
+    await repo.saveSettings({ testDate: localDate(new Date()) });
+    await renderHome(repo);
+    expect(screen.getByText('Фаза: подводка')).toBeTruthy();
+    expect(screen.getByText('Сегодня тест: объём меньше на 40 %, без финишера и новых модулей.')).toBeTruthy();
+    expect(screen.queryByText(/До теста 0 дн\./)).toBeNull();
   });
 });
 

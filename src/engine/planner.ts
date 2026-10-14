@@ -31,7 +31,7 @@ export interface Segment {
   purpose: SegmentPurpose;
   /**
    * finisher: starts at L_saved + OVERLOAD_LEVEL_STEP and every block is an overload block; mix (a module on a
-   * plateau): odd blocks are overload blocks at the segment level + OVERLOAD_LEVEL_STEP. Overload blocks never
+   * plateau, never in the taper): odd blocks are overload blocks at the segment level + OVERLOAD_LEVEL_STEP. Overload blocks never
    * move L_saved, fatigue, the g = 2 rule or the module's level in the session.
    */
   overload?: 'finisher' | 'mix';
@@ -132,7 +132,7 @@ function pick(
  * overload phase); an attention module and a memory-or-attention module 5 min each; number series 10 min; then the
  * finisher (3 min in development, 5 in overload; none in base and taper). The taper scales every budget by 0.6
  * (to 30 s) and skips never-trained modules. A reaction, attention or memory segment whose module is on a plateau
- * mixes in overload blocks; the warm-up and the finisher never do.
+ * mixes in overload blocks; the warm-up and the finisher never do, and nothing does in the taper (it cuts the load).
  */
 export function planTraining(
   states: Record<ModuleId, ModuleState>,
@@ -144,7 +144,7 @@ export function planTraining(
   const ctx = { states, todayIso, taper };
   const budget = (minutes: number): number => (taper ? taperBudget(minutes * MS_PER_MIN) : minutes * MS_PER_MIN);
   const slot = (module: ModuleId, minutes: number, purpose: SegmentPurpose): Segment =>
-    states[module].plateau
+    states[module].plateau && !taper
       ? { module, budgetMs: budget(minutes), purpose, overload: 'mix' }
       : { module, budgetMs: budget(minutes), purpose };
 
