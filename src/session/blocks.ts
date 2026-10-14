@@ -6,7 +6,7 @@ import { FINISHER_AUDIO, mergeAudio } from '../engine/audio/stressors';
 import { OVERLOAD_LEVEL_STEP, type Segment } from '../engine/planner';
 import { COND_PAIRS, MIN_COND_RTS, condCost, conditionStats, type CondPair, type ConditionStats } from '../engine/reaction/conditions';
 import { resolveBlock } from '../engine/reaction/resolve';
-import { summarize } from '../engine/reaction/summary';
+import { isCleanHitRt, summarize } from '../engine/reaction/summary';
 import type { BlockTimeline, ReactionSummary, TrialResult, TrialSpec } from '../engine/reaction/types';
 import { createRng, deriveSeed } from '../engine/rng';
 import {
@@ -310,7 +310,7 @@ function overloadStressors(s: BlockStressors): BlockStressors {
 export interface ScoredReaction {
   results: TrialResult[];
   summary: ReactionSummary;
-  /** RTs of `press` hits outside practice whose onset frame was not dropped (FatigueBlock.hitRts). */
+  /** Clean hit RTs (isCleanHitRt): `press` hits outside practice whose onset frame was not dropped (FatigueBlock.hitRts). */
   hitRts: number[];
   /** Per trial condition ({} for modules without conditions). */
   conditions: ConditionStats;
@@ -321,9 +321,7 @@ export function scoreReaction(specs: readonly TrialSpec[], tl: BlockTimeline): S
   const results = resolveBlock(specs, tl);
   const summary = summarize(results);
   if (summary.n === 0) return null;
-  const hitRts = results.flatMap((r) =>
-    !r.practice && !r.frameDropped && r.kind === 'press' && r.outcome === 'hit' && r.rtMs !== null ? [r.rtMs] : [],
-  );
+  const hitRts = results.flatMap((r) => (isCleanHitRt(r) ? [r.rtMs] : []));
   return { results, summary, hitRts, conditions: conditionStats(specs, results) };
 }
 

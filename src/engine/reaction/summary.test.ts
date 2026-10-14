@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { cv, sd } from '../stats';
 import { resolveBlock } from './resolve';
-import { summarize } from './summary';
+import { isCleanHitRt, summarize } from './summary';
 import type { Outcome, ReactionSummary, TrialResult, TrialSpec } from './types';
 
 function res(over: Partial<TrialResult> = {}): TrialResult {
@@ -21,6 +21,23 @@ function res(over: Partial<TrialResult> = {}): TrialResult {
 
 const miss = (over: Partial<TrialResult> = {}) =>
   res({ outcome: 'miss', success: false, rtMs: null, key: null, ...over });
+
+describe('isCleanHitRt', () => {
+  it('takes the RT of a press hit outside practice whose onset frame was not dropped', () => {
+    expect(isCleanHitRt(res())).toBe(true);
+  });
+
+  it.each<[string, Partial<TrialResult>]>([
+    ['a practice hit', { practice: true }],
+    ['a hit on a dropped onset frame', { frameDropped: true }],
+    ['a timed hit', { kind: 'timed', errorMs: 10 }],
+    ['a wrong key', { outcome: 'wrong', success: false }],
+    ['a late press', { outcome: 'late', success: false }],
+    ['a hit without an RT', { rtMs: null }],
+  ])('leaves out %s', (_name, over) => {
+    expect(isCleanHitRt(res(over))).toBe(false);
+  });
+});
 
 const ZERO_COUNTS: Record<Outcome, number> = {
   hit: 0,

@@ -7,6 +7,14 @@ const MIN_DROPPED = 2;
 const MAX_DROPPED_RATIO = 0.05;
 
 /**
+ * An RT that block and condition statistics use: a hit of a `press` trial outside practice whose onset frame was
+ * not dropped (its onset time is certain). One rule for summarize, conditionStats and the fatigue RTs.
+ */
+export function isCleanHitRt(r: TrialResult): r is TrialResult & { rtMs: number } {
+  return !r.practice && !r.frameDropped && r.kind === 'press' && r.outcome === 'hit' && r.rtMs !== null;
+}
+
+/**
  * Block summary over non-practice trials. RT statistics use hits of `press` trials only, and leave out
  * trials whose onset frame was dropped (their onset time is uncertain); those still count for score and counts.
  * Error statistics use every result with an errorMs (timed trials answered with the right key, no false starts).
@@ -34,7 +42,7 @@ export function summarize(results: readonly TrialResult[]): ReactionSummary {
     counts[r.outcome]++;
     if (r.success) successes++;
     if (r.frameDropped) dropped++;
-    if (r.kind === 'press' && r.outcome === 'hit' && r.rtMs !== null && !r.frameDropped) rts.push(r.rtMs);
+    if (isCleanHitRt(r)) rts.push(r.rtMs);
     if (r.errorMs !== null) errors.push(r.errorMs);
   }
   const hasRt = rts.length > 0;

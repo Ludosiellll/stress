@@ -1,5 +1,6 @@
 import { median } from '../stats';
 import type { ReactionModuleId } from '../types';
+import { isCleanHitRt } from './summary';
 import type { TrialCond, TrialResult, TrialSpec } from './types';
 
 /** Fewer RTs than this give no median for a condition. */
@@ -29,7 +30,7 @@ export interface CondStats {
   n: number;
   /** n − successes. */
   errors: number;
-  /** Median RT of `press` hits whose onset frame was not dropped; null below MIN_COND_RTS of them. */
+  /** Median of the clean hit RTs (isCleanHitRt); null below MIN_COND_RTS of them. */
   medianRt: number | null;
 }
 
@@ -51,7 +52,7 @@ export function conditionStats(specs: readonly TrialSpec[], results: readonly Tr
     }
     a.n++;
     if (r.success) a.successes++;
-    if (r.kind === 'press' && r.outcome === 'hit' && r.rtMs !== null && !r.frameDropped) a.rts.push(r.rtMs);
+    if (isCleanHitRt(r)) a.rts.push(r.rtMs);
   });
   const stats: ConditionStats = {};
   for (const [cond, a] of acc) {
