@@ -565,6 +565,7 @@ legend {
 .sessions td:last-child,
 .sessions th:last-child {
   text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---------- restore from an export file (Task 14) ---------- */

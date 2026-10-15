@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { EMPTY_METRICS } from '../engine/diagnostic';
+import { EMPTY_METRICS, planDiagnostic } from '../engine/diagnostic';
+import { SZMR_TWO_CHOICE_BELOW_L } from './blockHistory';
 import { DIAGNOSTIC_ROW_IDS, diagnosticChange, diagnosticNorm, diagnosticValue } from './diagnosticCompare';
 
 const D = { ...EMPTY_METRICS, pzmrMedianRt: 251.4, pzmrMeanRt: 262.4, szmrMedianRt: 402, szmrMeanRt: 401.6, gonogoScore: 93.3,
@@ -27,6 +28,27 @@ describe('diagnosticCompare', () => {
     expect(diagnosticChange('memory', 6, 7)).toBe('−1, хуже');
     expect(diagnosticChange('stroop', 90, 100)).toBe('−10 мс, лучше');
     expect(diagnosticChange('stroop', 3, 0)).toBe('без изменений');
+  });
+
+  it('exactly 2 % in seconds is a change, despite floating point (A-R20)', () => {
+    expect(diagnosticChange('gorbovV', 35.7, 35)).toBe('+0,7 с, хуже');
+    expect(diagnosticChange('gorbovP', 71.4, 70)).toBe('+1,4 с, хуже');
+    // Every previous value 0,1…400,0 s: the smallest change of at least 2 % counts, one tenth less does not.
+    const wrong: string[] = [];
+    for (let t = 1; t <= 4000; t++) {
+      const min = Math.ceil(t / 50);
+      for (const sign of [1, -1]) {
+        const at = (k: number): string => diagnosticChange('gorbovV', (t + sign * k) / 10, t / 10);
+        if (at(min) === 'без изменений') wrong.push(`${String(t)}${sign > 0 ? '+' : '−'}${String(min)}`);
+        if (min > 1 && at(min - 1) !== 'без изменений') wrong.push(`${String(t)}${sign > 0 ? '+' : '−'}${String(min - 1)}`);
+      }
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  it('the diagnostic plays СЗМР below the level of the 2-choice norm its «Ориентир» uses', () => {
+    const szmr = planDiagnostic(1).segments.find((s) => s.module === 'szmr');
+    expect(szmr?.fixedL).toBeLessThan(SZMR_TWO_CHOICE_BELOW_L);
   });
 
   it('no difference in the shown rounding is no change, also from a previous 0 (A-R3)', () => {

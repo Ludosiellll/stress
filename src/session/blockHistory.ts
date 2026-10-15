@@ -64,7 +64,7 @@ export type BlockHistory = Map<VariantKey, HistoryEntry[]>;
 export type HistoryRow = Pick<BlockRow, 'sessionId' | 'module' | 'lBefore' | 'flags' | 'startedAt' | 'paramsJson' | 'summaryJson'>;
 
 /** СЗМР plays 2 colours on 2 keys below this level; the 2-choice norm applies only there. */
-const SZMR_TWO_CHOICE_BELOW_L = 8;
+export const SZMR_TWO_CHOICE_BELOW_L = 8;
 /** A training memory block gives a span only with this many exact rows out of MEMORY_TRIALS. */
 const MEMORY_SPAN_MIN_EXACT = 4;
 const MS_PER_DAY = 86_400_000;

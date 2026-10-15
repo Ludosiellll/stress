@@ -87,6 +87,15 @@ const UNITS: Readonly<Record<DiagnosticRowId, Unit>> = Object.freeze({
 
 const HIGHER_IS_BETTER: ReadonlySet<DiagnosticRowId> = new Set(['gonogo', 'numseries', 'memory']);
 
+/**
+ * |Δ| < 2 % of |before| in exact integers (A-R20): seconds compare in tenths, as shown, because 0,02·35 in floating
+ * point is above 0,7. Whole-unit rows are integers already.
+ */
+function underTwoPercent(unit: Unit, delta: number, before: number): boolean {
+  const scale = unit === 'с' ? 10 : 1;
+  return Math.round(Math.abs(delta) * scale) * 50 < Math.round(Math.abs(before) * scale);
+}
+
 /** «−3,7 с», «+2,0 с»: one decimal, the minus sign U+2212. */
 function signedSeconds(x: number): string {
   const text = decimal(Math.abs(x), 1);
@@ -101,7 +110,7 @@ function signedSeconds(x: number): string {
 export function diagnosticChange(id: DiagnosticRowId, now: number, before: number): string {
   const unit = UNITS[id];
   const delta = unit === 'с' ? round1(now - before) : whole(now - before);
-  if (delta === 0 || Math.abs(delta) < 0.02 * Math.abs(before) || (unit === 'мс' && Math.abs(delta) < 5)) return 'без изменений';
+  if (delta === 0 || underTwoPercent(unit, delta, before) || (unit === 'мс' && Math.abs(delta) < 5)) return 'без изменений';
   const better = HIGHER_IS_BETTER.has(id) ? delta > 0 : delta < 0;
   const value = unit === 'с' ? `${signedSeconds(delta)} с` : unit === '' ? signedMs(delta) : `${signedMs(delta)} ${unit}`;
   return `${value}, ${better ? 'лучше' : 'хуже'}`;
@@ -116,6 +125,7 @@ const ROW_NORMS: Partial<Record<DiagnosticRowId, NormId>> = { gorbovV: 'gorbovSi
  */
 export function diagnosticNorm(d: DiagnosticMetrics, id: DiagnosticRowId): string | null {
   if (id === 'pzmr' || id === 'szmr') {
+    // The СЗМР norm is the 2-choice one: valid because the diagnostic plays СЗМР below SZMR_TWO_CHOICE_BELOW_L.
     const mean = id === 'pzmr' ? d.pzmrMeanRt : d.szmrMeanRt;
     if (mean === null) return null;
     const shown = whole(mean);
