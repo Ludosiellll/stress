@@ -48,6 +48,15 @@ class Clock {
 
 const instant = (): Promise<void> => Promise.resolve();
 
+/** Counts the reads of the whole block history. */
+class SpyRepo extends MemoryRepository {
+  listBlocksCalls = 0;
+  override listBlocks(): Promise<BlockRow[]> {
+    this.listBlocksCalls++;
+    return super.listBlocks();
+  }
+}
+
 interface Harness {
   c: SessionController;
   repo: Repository;
@@ -403,6 +412,15 @@ describe('SessionController — levels and persistence', () => {
       lines: ['Медиана: 300 мс', 'Среднее: 300 мс', 'Разброс (SD): 0 мс', 'Стабильность (CV): 0,00', 'Фальстарты: 0', 'Пропуски: 0'],
       flags: ['calibration'],
       showLevel: true,
+      assessment: {
+        step: 'Ступень 1 из 5+ — начальная (уровень 2; формат теста — 14)',
+        goal: 'До ступени 2 «на подходе к формату теста»: уровень 7 (+5). Там: окно ответа: 808 → 497 мс',
+        norms: [
+          'Норма (ориентир), среднее: 300 мс — низкий; ниже среднего — до 277 мс. Мальцев 2026, юноши 18–21; норма для аппаратной кнопки + 30 мс на клавиатуру',
+          'Норма (ориентир), разброс (SD): 0 мс — высокий. Мальцев 2026, юноши 18–21, аппаратная кнопка',
+        ],
+        history: 'Первый такой блок — будет с чем сравнивать',
+      },
     });
   });
 
@@ -671,22 +689,18 @@ describe('SessionController — levels and persistence', () => {
     expect(next.view.lAfter).toBeCloseTo(8 + (14 / 15 - 0.8) / 0.2, 9);
   });
 
-  it('state writes read the module levels, never the whole block history (R26); caches equal a rebuild', async () => {
-    class SpyRepo extends MemoryRepository {
-      listBlocksCalls = 0;
-      override listBlocks(): Promise<BlockRow[]> {
-        this.listBlocksCalls++;
-        return super.listBlocks();
-      }
-    }
+  it('state writes never read the whole block history (R26); it is read once at session start (О11)', async () => {
     const repo = new SpyRepo();
     const clock = new Clock();
     for (let day = 0; day < 2; day++) {
       const plan = firstDayPlan(await repo.getModuleStates(), clock.now().toISOString(), 42 + day);
-      await drive(await begin(plan, { repo, clock }), { blockMs: 150_000 });
+      const h = await begin(plan, { repo, clock });
+      const atStart = repo.listBlocksCalls;
+      await drive(h, { blockMs: 150_000 });
+      expect(repo.listBlocksCalls).toBe(atStart);
       clock.advance(DAY);
     }
-    expect(repo.listBlocksCalls).toBe(0);
+    expect(repo.listBlocksCalls).toBe(2);
     expect(await repo.getModuleStates()).toEqual(deriveModuleStates(await repo.listSessions(), await repo.listBlocks()));
     expect(await repo.getRatings()).toEqual(deriveRatings(await repo.listLogicItems()));
   });
@@ -746,6 +760,62 @@ describe('SessionController — levels and persistence', () => {
     await h.c.continueAfterSummary();
     h.c.ackInstruction();
     expect(expectStep(h.c, 'reaction_block').L).toBe(first.view.lAfter);
+  });
+});
+
+describe('SessionController — assessment', () => {
+  it('the next block of the variant compares with the one before it', async () => {
+    const h = await begin(planFree('rdo', 1));
+    const first = await playReaction(h);
+    expect(first.view.assessment?.history).toBe('Первый такой блок — будет с чем сравнивать');
+    await h.c.continueAfterSummary();
+    const second = await playReaction(h);
+    expect(second.view.assessment?.history).toMatch(/^Раньше в этом блоке: прошлый раз \d+ мс \(ур\. 0\) · лучший \d+ мс · в среднем за 7 дней \d+ мс/);
+  });
+
+  it('history from earlier sessions is read at session start', async () => {
+    const repo = new MemoryRepository();
+    const yesterday = new Date(new Date(T0).getTime() - DAY).toISOString();
+    await repo.createSession(session('s0', yesterday, { kind: 'free' }));
+    await repo.addBlock(block('b0', 's0', yesterday, { module: 'rdo', lBefore: 3, summaryJson: '{"meanAbsErrorMs":25}' }), [], []);
+    const h = await begin(planFree('rdo', 1), { repo });
+    const { view } = await playReaction(h);
+    expect(view.assessment?.history?.startsWith('Раньше в этом блоке: прошлый раз 25 мс (ур. 3) · лучший 25 мс')).toBe(true);
+  });
+
+  it('a history read failure is logged and the session runs without a history line', async () => {
+    const repo = new MemoryRepository();
+    vi.spyOn(repo, 'listBlocks').mockRejectedValueOnce(new Error('disk I/O error'));
+    const h = await begin(planFree('pzmr', 1), { repo });
+    expect(h.c.step.kind).toBe('instruction');
+    const log = await repo.listLog(5);
+    expect(log.some((r) => r.level === 'error' && r.message.includes('block history could not be read') && r.detail.includes('disk I/O error'))).toBe(
+      true,
+    );
+    const { view } = await playReaction(h);
+    expect(view.assessment?.history).toBeNull();
+    expect(view.assessment?.step).not.toBeNull();
+  });
+
+  it('a diagnostic reads no block history; its summaries carry norms only', async () => {
+    const repo = new SpyRepo();
+    const h = await begin(planDiagnostic(1), { repo, scale: 0.02 });
+    const first = await playReaction(h);
+    await drive(h);
+    expect(repo.listBlocksCalls).toBe(0);
+    expect(first.view.module).toBe('pzmr');
+    const a = first.view.assessment;
+    expect(a).toMatchObject({ step: null, goal: null, history: null });
+    expect(a?.norms).toHaveLength(2);
+    expect(a?.norms[0]?.startsWith('Норма (ориентир), среднее:')).toBe(true);
+    expect(a?.norms[1]?.startsWith('Норма (ориентир), разброс (SD):')).toBe(true);
+  });
+
+  it('number series in free training show the step by rating', async () => {
+    const h = await begin(planFree('numseries', 1));
+    h.c.ackInstruction();
+    await h.c.submitNumSeries(perfectSeriesAnswers(expectStep(h.c, 'numseries_block').items));
+    expect(expectStep(h.c, 'summary').view.assessment?.step).toMatch(/^Ступень \d( из 5\+)? — .+ \(рейтинг \d+; формат теста — 1376\)$/);
   });
 });
 
@@ -1104,6 +1174,10 @@ describe('SessionController — save errors', () => {
 
     // The dropped block left no trace: block 4 is still calibration (lifetime 0 + blocks 1 and 3 < 3).
     await h.c.submitReaction(playTimeline(third.specs, perfectPlayer));
+    // Nor did it enter the history: block 3 compares with block 1 (with block 2 it would read «(ур. 2)»).
+    expect(expectStep(h.c, 'summary').view.assessment?.history).toBe(
+      'Раньше в этом блоке: прошлый раз 300 мс (ур. 0) · лучший 300 мс · в среднем за 7 дней 300 мс',
+    );
     await h.c.continueAfterSummary();
     const fourth = await playReaction(h);
     expect(fourth.view.flags).toEqual(['calibration']);

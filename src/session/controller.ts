@@ -16,6 +16,8 @@ import { memorySpan, scoreMemoryTrial, type MemoryAnswer } from '../modules/memo
 import { moduleTitles, reactionModules } from '../modules/registry';
 import type { TableTaskId } from '../modules/tables/gorbov';
 import { scoreTableRun, type TableRun } from '../modules/tables/score';
+import { assessBlock, meanFamilyRating } from './assessment';
+import { appendBlock, buildBlockHistory, type BlockHistory } from './blockHistory';
 import {
   blockInstruction,
   buildBlock,
@@ -119,6 +121,8 @@ interface FinishedBlock {
   summaryJson: string;
   lines: string[];
   task?: TableTaskId;
+  /** Number series in training and free sessions: meanFamilyRating after the block (the step by rating). */
+  meanRating?: number;
   rows: (blockId: string) => { trials: TrialRow[]; items: LogicItemRow[] };
   /** In-memory effects beyond the level (diagnostic metrics, ratings), applied once the block is stored. */
   onCommit?: () => void;
@@ -150,6 +154,8 @@ const errorText = (e: unknown): string => (e instanceof Error ? e.message : Stri
  *   training and free sessions the module state derived from the module's history (listBlockLevels) and, for
  *   number series, the ratings. Writes are tried 3 times (pauses 100 and 500 ms), then `save_error` keeps
  *   everything in memory until `retrySave` succeeds or `abandonPending` gives up on it.
+ * - Assessment (the «Оценка» of a block summary): training and free sessions read the whole block history once
+ *   at start (О11) and append each block once it is stored, so a dropped block never enters it.
  * - Training and free segments start a new block only while the budget (from the first instruction ack) is
  *   not used up; diagnostic segments play a fixed number of blocks (`runs`, default 1).
  * - An instruction comes before the first block of a segment, before every Gorbov run, and again whenever
@@ -192,6 +198,11 @@ export class SessionController {
   /** A diagnostic: the stored ones before it, in order (the readiness note of the done step, W2-R31). */
   /** null: they could not be read; the done step then says nothing about deferred parts. */
   private readonly earlierDiagnostics: DiagnosticMetrics[] | null;
+  /**
+   * Training and free sessions: the block history read at start, with every block of this session appended once it
+   * is stored. null: a diagnostic, or the read failed (no history line then, О10).
+   */
+  private readonly history: BlockHistory | null;
 
   private constructor(
     o: SessionStartOptions,
@@ -199,6 +210,7 @@ export class SessionController {
     states: Record<ModuleId, ModuleState>,
     ratings: Map<FamilyId, Rating>,
     earlierDiagnostics: DiagnosticMetrics[] | null,
+    history: BlockHistory | null,
   ) {
     this.repo = o.repo;
     this.plan = o.plan;
@@ -210,6 +222,7 @@ export class SessionController {
     this.states = states;
     this.ratings = ratings;
     this.earlierDiagnostics = earlierDiagnostics;
+    this.history = history;
   }
 
   /** Creates the session row and shows the first instruction (or `save_error` if the row cannot be written). */
@@ -219,12 +232,14 @@ export class SessionController {
     if (o.plan.kind === 'diagnostic' && o.plan.diagnosticNumber === undefined) {
       throw new RangeError('a diagnostic plan needs diagnosticNumber');
     }
-    const [states, ratings, earlier] = await Promise.all([
+    const diagnostic = o.plan.kind === 'diagnostic';
+    const [states, ratings, earlier, history] = await Promise.all([
       o.repo.getModuleStates(),
       o.repo.getRatings(),
-      o.plan.kind === 'diagnostic' ? SessionController.earlierDiagnostics(o) : [],
+      diagnostic ? SessionController.readOrLog(o, 'earlier diagnostics', () => SessionController.earlierDiagnostics(o.repo)) : [],
+      diagnostic ? null : SessionController.readOrLog(o, 'block history', () => SessionController.blockHistory(o.repo)),
     ]);
-    const c = new SessionController(o, scale, states, ratings, earlier);
+    const c = new SessionController(o, scale, states, ratings, earlier, history);
     const row = sessionRow(c.sessionId, o.now().toISOString(), o.plan.kind, o.appVersion, o.plan.phase ?? 'none');
     await c.save(
       { what: 'session start', stage: () => 'session_start', onSaved: () => c.enterSegment(0), onAbandon: null },
@@ -234,20 +249,31 @@ export class SessionController {
   }
 
   /**
-   * The stored diagnostics' metrics, for the done step's note on deferred parts only. A failed read must not stop
-   * the diagnostic: it is logged (when the log can be written) and the note is left out (null).
+   * A read at session start that must not stop the session: a failure is logged (when the log can be written) and
+   * reads as null, so what depends on it is left out (the deferred-parts note, the history line).
    */
-  private static async earlierDiagnostics(o: SessionStartOptions): Promise<DiagnosticMetrics[] | null> {
+  private static async readOrLog<T>(o: SessionStartOptions, what: string, read: () => Promise<T>): Promise<T | null> {
     try {
-      return (await o.repo.listDiagnostics()).flatMap((d) => parseResults(d) ?? []);
+      return await read();
     } catch (e) {
       try {
-        await o.repo.appendLog(errorLogRow(o.now().toISOString(), 'session: earlier diagnostics could not be read', { error: errorText(e) }));
+        await o.repo.appendLog(errorLogRow(o.now().toISOString(), `session: ${what} could not be read`, { error: errorText(e) }));
       } catch {
         // The database is failing already; the read failure simply goes unlogged.
       }
       return null;
     }
+  }
+
+  /** The stored diagnostics' metrics, for the done step's note on deferred parts only. */
+  private static async earlierDiagnostics(repo: Repository): Promise<DiagnosticMetrics[]> {
+    return (await repo.listDiagnostics()).flatMap((d) => parseResults(d) ?? []);
+  }
+
+  /** The whole block history, read once per training or free session (О11); state writes read only listBlockLevels. */
+  private static async blockHistory(repo: Repository): Promise<BlockHistory> {
+    const [blocks, sessions] = await Promise.all([repo.listBlocks(), repo.listSessions()]);
+    return buildBlockHistory(blocks, sessions);
   }
 
   get step(): Step {
@@ -366,6 +392,7 @@ export class SessionController {
           items: outcomes.map((o) => ({ itemId: o.item.id, answer: o.item.answer, given: o.answer.given, timeMs: o.answer.timeMs })),
         }),
         lines: seriesLines(successes, total, meanTimeMs, shortestLimitMs),
+        ...(ratings === null ? {} : { meanRating: meanFamilyRating(ratings) }),
         rows: (blockId) => ({ trials: [], items: logicItemRows(blockId, outcomes, at) }),
         onCommit: () => {
           if (ratings !== null) this.ratings = ratings;
@@ -665,6 +692,7 @@ export class SessionController {
     const id = uuidv4();
     const row = blockRow(id, this.sessionId, { module: b.module, lBefore: b.L, lAfter, score: b.score, flags }, active, b.summaryJson);
     const { trials, items } = b.rows(id);
+    const assessment = assessBlock(row, { kind: this.plan.kind, history: this.history, now: this.now(), meanRating: b.meanRating ?? null });
     const view = {
       module: b.module,
       title: moduleTitles[b.module],
@@ -675,6 +703,7 @@ export class SessionController {
       lines,
       flags,
       showLevel: this.counted && b.level !== null,
+      assessment,
     };
 
     let committed = false;
@@ -694,6 +723,7 @@ export class SessionController {
         run: () => {
           committed = true;
           this.record({ module: b.module, score: b.score, flags, hitRts: b.hitRts }, lAfter);
+          if (this.history !== null) appendBlock(this.history, row, this.plan.kind);
           b.onCommit?.();
           return Promise.resolve();
         },

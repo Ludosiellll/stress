@@ -10,6 +10,7 @@ import type { BlockStressors } from '../modules/reaction/common';
 import type { TimedSeriesItem } from '../modules/numseries/generate';
 import type { TableCell, TableParams, TableTaskId } from '../modules/tables/gorbov';
 import type { TableRunResult } from '../modules/tables/score';
+import type { BlockAssessment } from './assessment';
 
 /** What the session screen shows now; the UI renders `controller.step` and reports back through the controller. */
 export type Step =
@@ -84,6 +85,8 @@ export interface BlockSummaryView {
   flags: BlockFlag[];
   /** Training and free blocks of modules with a level; diagnostics play at a fixed level and hide it (M5). */
   showLevel: boolean;
+  /** The «Оценка» lines (assessBlock); absent: no section. */
+  assessment?: BlockAssessment;
 }
 
 /** One number-series answer; `given` null = no valid answer (time ran out). */

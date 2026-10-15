@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { BlockSummaryView } from '../../session/steps';
 import { nextTask } from '../../testing/domFakes';
@@ -60,6 +60,28 @@ describe('BlockSummary', () => {
     );
     expect(screen.queryByText(/Уровень/)).toBeNull();
     expect(screen.getByText('Успешно: 70 %')).toBeTruthy();
+  });
+
+  it('shows the assessment in order under the metrics', () => {
+    const assessment = { step: 'S', goal: 'G', norms: ['N1', 'N2'], history: 'H' };
+    render(<BlockSummary view={{ ...VIEW, assessment }} busy={false} onContinue={vi.fn()} />);
+    expect(screen.getByRole('heading', { name: 'Оценка' })).toBeTruthy();
+    const list = screen.getByRole('list', { name: 'Оценка' });
+    expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['S', 'G', 'N1', 'N2', 'H']);
+    const metrics = screen.getByRole('list', { name: 'Показатели' });
+    expect(metrics.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('leaves out empty lines; no section without an assessment', () => {
+    const { rerender } = render(
+      <BlockSummary view={{ ...VIEW, assessment: { step: null, goal: null, norms: ['N1'], history: null } }} busy={false} onContinue={vi.fn()} />,
+    );
+    expect(within(screen.getByRole('list', { name: 'Оценка' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['N1']);
+    for (const view of [VIEW, { ...VIEW, assessment: { step: null, goal: null, norms: [], history: null } }]) {
+      rerender(<BlockSummary view={view} busy={false} onContinue={vi.fn()} />);
+      expect(screen.queryByRole('list', { name: 'Оценка' })).toBeNull();
+      expect(screen.queryByRole('heading', { name: 'Оценка' })).toBeNull();
+    }
   });
 
   it('Enter or the button continues; nothing while busy', async () => {

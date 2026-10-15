@@ -1,5 +1,6 @@
 import type { BlockFlag } from '../../engine/types';
 import { changeText } from '../../modules/describe';
+import type { BlockAssessment } from '../../session/assessment';
 import type { BlockSummaryView } from '../../session/steps';
 import { decimal } from '../format';
 import { fromControl, isEnter, useKeyDown } from '../keys';
@@ -21,13 +22,20 @@ const FLAG_TEXT: Record<BlockFlag, string> = {
 /** Notes, not warnings. */
 const NOTE_FLAGS: ReadonlySet<BlockFlag> = new Set<BlockFlag>(['calibration', 'overload']);
 
-/** Result of the block that just ended: level, changed parameters, score, metrics, flags. Enter goes on. */
+/** The «Оценка» lines in order: step, goal, norms, history; empty ones are left out. */
+function assessmentLines(a: BlockAssessment | undefined): string[] {
+  if (a === undefined) return [];
+  return [a.step, a.goal, ...a.norms, a.history].filter((line): line is string => line !== null);
+}
+
+/** Result of the block that just ended: level, changed parameters, score, metrics, assessment, flags. Enter goes on. */
 export default function BlockSummary({ view, busy, onContinue }: BlockSummaryProps) {
   useKeyDown((e) => {
     if (busy || !isEnter(e) || fromControl(e)) return;
     e.preventDefault();
     onContinue();
   });
+  const assessment = assessmentLines(view.assessment);
 
   return (
     <div className="screen-center summary">
@@ -50,6 +58,16 @@ export default function BlockSummary({ view, busy, onContinue }: BlockSummaryPro
           <li key={line}>{line}</li>
         ))}
       </ul>
+      {assessment.length > 0 && (
+        <section className="assessment">
+          <h3>Оценка</h3>
+          <ul aria-label="Оценка">
+            {assessment.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </section>
+      )}
       {view.flags.map((f) => (
         <p key={f} className={NOTE_FLAGS.has(f) ? 'muted' : 'warning'}>
           {FLAG_TEXT[f]}
