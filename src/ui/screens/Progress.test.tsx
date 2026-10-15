@@ -181,7 +181,10 @@ describe('Progress edge cases', () => {
     expect(cells(rows[0] as HTMLElement)).toEqual(['ПЗМР', '1 — начальная (ур. 3,5; формат теста — 14)', '262 мс / 262 мс', 'средний', 'ур. 7 (+3,5)']);
     expect(cells(rows[1] as HTMLElement)).toEqual(['Сложная реакция (СЗМР)', '—', 'ещё не тренировался', '—', '—']);
     // Only the number column is right-aligned; «Ориентир» and «Цель» are text (A-R12).
-    expect(within(rows[0] as HTMLElement).getAllByRole('cell').map((c) => c.className)).toEqual(['', '', 'num', '', '']);
+    const first = within(rows[0] as HTMLElement).getAllByRole('cell');
+    expect(first.map((c) => c.classList.contains('num'))).toEqual([false, false, true, false, false]);
+    // …and it never breaks a cell («ещё не тренировался») over two lines; the e2e screens test measures it.
+    expect(first.map((c) => c.classList.contains('nowrap'))).toEqual([false, false, true, false, false]);
     expect(table.nextElementSibling?.textContent).toBe(
       'Ступень — по сохранённому уровню. Ориентир — опубликованные нормы, ориентировочно; источники — в руководстве.',
     );

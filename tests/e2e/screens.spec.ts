@@ -1,7 +1,7 @@
 import type { JSHandle, Page } from '@playwright/test';
 import { chooseExportFile, exportedFile, openApp, pageDate, playSession, setPressDelay } from './bot';
 import { NORM_HINTS } from '../../src/engine/norms';
-import { E2E_URL, expect, freshPage, shot, test } from './fixtures';
+import { E2E_URL, expect, freshPage, lineCount, shot, test } from './fixtures';
 
 /**
  * Screenshots of every screen at 1280×800 into test-results/screens/<name>.png for the visual check
@@ -445,6 +445,13 @@ test('screens: a training session with pause, wellbeing and done; schulte', asyn
   await page.getByRole('button', { name: 'Прогресс' }).click();
   const schulte = page.getByRole('table', { name: 'Оценка по модулям' }).getByRole('row', { name: /^Таблицы Шульте — 5×5/ });
   await expect(schulte.getByRole('cell').filter({ hasText: /^\d+,\d с \/ \d+,\d с$/ })).toHaveCount(1);
+  // Trained and untrained modules side by side: the right-aligned column («282 мс / 282 мс», «ещё не
+  // тренировался») keeps each cell on one line.
+  const cells = page.getByRole('table', { name: 'Оценка по модулям' }).locator('tbody td.num');
+  await expect(cells.filter({ hasText: 'ещё не тренировался' })).not.toHaveCount(0);
+  for (const cell of await cells.all()) {
+    expect(await lineCount(cell), await cell.innerText()).toBe(1);
+  }
   await shot(page, 'progress-assessment', true);
 });
 

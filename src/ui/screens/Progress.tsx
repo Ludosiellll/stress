@@ -65,7 +65,7 @@ function Assessment({ model }: { model: ProgressModel }) {
             <tr key={a.module}>
               <td>{a.title}</td>
               <td>{a.step}</td>
-              <td className="num">{a.lastBest}</td>
+              <td className="num nowrap">{a.lastBest}</td>
               <td>{a.norm}</td>
               <td>{a.goal}</td>
             </tr>

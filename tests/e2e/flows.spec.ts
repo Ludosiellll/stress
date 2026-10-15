@@ -315,4 +315,8 @@ test('progress shows charts after a diagnostic', async ({ page }) => {
   const assessment = page.getByRole('table', { name: 'Оценка по модулям' });
   await expect(assessment.locator('tbody tr')).toHaveCount(11);
   await expect(assessment.getByText('ещё не тренировался')).toHaveCount(11);
+  // The right-aligned column keeps each cell on one line, text ones too.
+  for (const cell of await assessment.locator('tbody td.num').all()) {
+    expect(await lineCount(cell), await cell.innerText()).toBe(1);
+  }
 });
