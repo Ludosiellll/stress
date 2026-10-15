@@ -31,6 +31,7 @@ import {
 } from '../modules/memory/params';
 import { generateBlockItems, generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
 import { stressorsOf, type BlockStressors, type ReactionModule } from '../modules/reaction/common';
+import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
 import { reactionModules } from '../modules/registry';
 import {
   generateGorbovTable,
@@ -132,6 +133,7 @@ export interface PlanContext {
   /** The user's layout. */
   layout: LayoutId;
   scale: number;
+  /** A diagnostic block: reaction modules play DIAGNOSTIC_PARAMS, memory the span protocol, number series the schedule. */
   diagnostic: boolean;
 }
 
@@ -151,7 +153,8 @@ export function planBlock(segment: Segment, segmentL: number, blockIndex: number
   const L = overload && segment.overload === 'mix' ? segmentL + OVERLOAD_LEVEL_STEP : segmentL;
   if (isReactionModule(module)) {
     const mod = reactionModules[module];
-    const params = mod.params(L);
+    // A diagnostic plays the frozen 0.2.0 parameters, whatever params(L) becomes (training-fixes spec §2.0).
+    const params = ctx.diagnostic ? DIAGNOSTIC_PARAMS[module] : mod.params(L);
     const { keys, effectiveLayout } = layoutKeys(ctx.layout, mod.keyCount(params));
     return {
       kind: 'reaction',

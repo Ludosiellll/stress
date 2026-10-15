@@ -1,20 +1,22 @@
 import fc from 'fast-check';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { deriveRatings } from '../engine/derive';
 import { EMPTY_METRICS, diagnosticSegmentSeed, diagnosticSeriesSchedule, planDiagnostic } from '../engine/diagnostic';
 import { R0, updateRating, type Rating } from '../engine/elo';
 import { effectiveDifficulty } from '../engine/itemLimit';
 import { FINISHER_AUDIO } from '../engine/audio/stressors';
+import { noiseFrame } from '../engine/noise';
 import { OVERLOAD_LEVEL_STEP, type Segment } from '../engine/planner';
 import { MIN_COND_RTS, condPairOf, type CondPair } from '../engine/reaction/conditions';
 import type { Outcome, ReactionSummary } from '../engine/reaction/types';
-import { REACTION_MODULE_IDS, type FamilyId, type ReactionModuleId } from '../engine/types';
+import { REACTION_MODULE_IDS, isReactionModule, type FamilyId, type ReactionModuleId } from '../engine/types';
 import { createRng, deriveSeed } from '../engine/rng';
 import { generateMemoryTrials, spanProtocolTrials } from '../modules/memory/generate';
 import { memoryModeForBlock, memoryParams } from '../modules/memory/params';
 import { FAMILIES } from '../modules/numseries/families';
 import { generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
 import { NO_STRESSORS } from '../modules/reaction/common';
+import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
 import { pomeh } from '../modules/reaction/pomeh';
 import { pzmr } from '../modules/reaction/pzmr';
 import { reactionModules } from '../modules/registry';
@@ -240,6 +242,51 @@ describe('planBlock', () => {
     expect(JSON.parse(paramsJson)).toEqual({ protocol: 'span', mode: 'digits', length: 3, itemMs: 1000, gapMs: 250, trials: 20 });
     const short = buildBlock(planBlock(segment, 0, 0, { ...ctx, scale: 0.02 }), 42, 'keyboard', new Map()).step as StepOf<'memory_block'>;
     expect(short.trials).toEqual(spanProtocolTrials(createRng(42)).slice(0, 3));
+  });
+});
+
+describe('diagnostic reaction blocks', () => {
+  const ctx = { layout: 'keyboard', scale: 1, diagnostic: true } as const;
+  /** Block 0, attempt 0 of every reaction segment of diagnostic n. */
+  const diagnosticSteps = (n: number) =>
+    planDiagnostic(n).segments.flatMap((seg) => {
+      if (!isReactionModule(seg.module)) return [];
+      const { step } = buildBlock(planBlock(seg, seg.fixedL ?? 0, 0, ctx), diagnosticBlockSeed(n, seg.module, 0, 0), 'keyboard', new Map());
+      if (step.kind !== 'reaction_block') throw new Error('expected a reaction block');
+      return [step];
+    });
+
+  it('diagnostic reaction blocks are those of 0.2.0', () => {
+    for (const n of [1, 2, 3]) {
+      for (const { module, specs, layers } of diagnosticSteps(n)) {
+        // The layer fields are listed one by one: a new field (noiseGate, …) must not change the snapshot.
+        expect({ specs, noise: layers.noise, audio: layers.audio, gate: layers.gate }).toMatchSnapshot(`${String(n)} ${module}`);
+      }
+    }
+  });
+
+  it('a diagnostic block takes DIAGNOSTIC_PARAMS, never params(fixedL)', () => {
+    const spy = vi.spyOn(reactionModules.gonogo, 'params');
+    try {
+      const seg = planDiagnostic(1).segments.find((s) => s.module === 'gonogo') as Segment;
+      expect(planBlock(seg, seg.fixedL ?? 0, 0, ctx)).toMatchObject({ kind: 'reaction', L: 10, params: DIAGNOSTIC_PARAMS.gonogo });
+      expect(spy).not.toHaveBeenCalled();
+      planBlock(freeSegment('gonogo'), 7, 0, { ...ctx, diagnostic: false });
+      expect(spy).toHaveBeenCalledWith(7);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('the distractors of the diagnostic Помехоустойчивость are those of 0.2.0', () => {
+    const box = { halfW: 16 / 9 / 2, halfH: 0.5 };
+    for (const n of [1, 2, 3]) {
+      const step = diagnosticSteps(n).find((s) => s.module === 'pomeh');
+      if (step === undefined) throw new Error('expected a pomeh block');
+      for (const t of [0, 610, 1220]) {
+        expect(noiseFrame(DIAGNOSTIC_PARAMS.pomeh.noise, step.layers.seed, t, box)).toMatchSnapshot(`${String(n)} pomeh noise ${String(t)} ms`);
+      }
+    }
   });
 });
 

@@ -1,0 +1,28 @@
+import { describe, expect, it } from 'vitest';
+import { DIAGNOSTIC_PARAMS } from './diagnosticParams';
+
+describe('DIAGNOSTIC_PARAMS', () => {
+  it('the diagnostic parameters are those of 0.2.0 (spec §2.0)', () => {
+    expect(DIAGNOSTIC_PARAMS.pzmr).toEqual({ windowMs: 1000, isiMin: 500, isiMax: 2500 });
+    expect(DIAGNOSTIC_PARAMS.szmr).toEqual({ windowMs: 1500, nColors: 2, nKeys: 2, shapeDistractor: false, inversion: false });
+    expect(DIAGNOSTIC_PARAMS.gonogo).toEqual({ windowMs: 446, noGoRatio: 0.2, noGoStimulus: 'green_circle' });
+    expect(DIAGNOSTIC_PARAMS.rdo).toEqual({ periodMs: 3000, toleranceMs: 60, isiMin: 800, isiMax: 1500 });
+    expect(DIAGNOSTIC_PARAMS.pomeh).toEqual({
+      windowMs: 456,
+      mode: 'simple',
+      isiMin: 500,
+      isiMax: 2500,
+      noise: { distractors: 7, lifetimeMs: 610, flicker: true, farOnly: true, forbidden: [{ shape: 'circle', color: 'red' }] },
+      audio: null,
+    });
+    expect(DIAGNOSTIC_PARAMS.stroop).toEqual({ windowMs: 1099, nColors: 3, incongruentRatio: 0.66, legend: true, isiMin: 500, isiMax: 2000 });
+    expect(DIAGNOSTIC_PARAMS.taskswitch).toEqual({ windowMs: 1369, rules: ['color', 'shape'], switchProb: 0.3, cueLeadMs: 475 });
+    expect(Object.isFrozen(DIAGNOSTIC_PARAMS.pomeh.noise)).toBe(true);
+  });
+
+  it('is frozen all the way down', () => {
+    const frozenDeep = (v: unknown): boolean =>
+      typeof v !== 'object' || v === null || (Object.isFrozen(v) && Object.values(v).every(frozenDeep));
+    expect(frozenDeep(DIAGNOSTIC_PARAMS)).toBe(true);
+  });
+});

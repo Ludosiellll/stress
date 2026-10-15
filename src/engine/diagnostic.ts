@@ -121,6 +121,23 @@ export function diagnosticSeriesSchedule(): { family: FamilyId; targetD: number 
 }
 
 /**
+ * The reaction segments of the diagnostic, as in 0.2.0: planDiagnostic builds them from this table, and the
+ * test-format runs take their volume from it. fixedL is the level the diagnostic stores and shows; the block plays
+ * DIAGNOSTIC_PARAMS (src/modules/reaction/diagnosticParams.ts), never params(fixedL).
+ */
+export const DIAGNOSTIC_VOLUME: Readonly<
+  Record<ReactionModuleId, Readonly<{ fixedL: number; trialCount: number; practiceTrials: number }>>
+> = Object.freeze({
+  pzmr: Object.freeze({ fixedL: 0, trialCount: 50, practiceTrials: 5 }),
+  szmr: Object.freeze({ fixedL: 0, trialCount: 70, practiceTrials: 5 }),
+  gonogo: Object.freeze({ fixedL: 10, trialCount: 60, practiceTrials: 5 }),
+  rdo: Object.freeze({ fixedL: 0, trialCount: 50, practiceTrials: 5 }),
+  pomeh: Object.freeze({ fixedL: 8, trialCount: 40, practiceTrials: 5 }),
+  stroop: Object.freeze({ fixedL: 8, trialCount: 48, practiceTrials: 5 }),
+  taskswitch: Object.freeze({ fixedL: 5, trialCount: 48, practiceTrials: 5 }),
+});
+
+/**
  * Diagnostic number n (shown and stored). Its blocks are generated from seedIndex: it defaults to n, and
  * callers pass «diagnostic sessions ever started + 1» so a diagnostic abandoned halfway is not replayed with
  * the same tables and series next time (I5). budgetMs is 0 everywhere: the volume is fixed (R16), the
@@ -135,21 +152,22 @@ export function planDiagnostic(n: number, seedIndex: number = n): SessionPlan {
     purpose: 'diagnostic',
     ...extra,
   });
+  const reaction = (module: ReactionModuleId): Segment => segment(module, { ...DIAGNOSTIC_VOLUME[module] });
   return {
     kind: 'diagnostic',
     seed: hashString('diag:' + String(seedIndex)),
     diagnosticNumber: n,
     diagnosticSeedIndex: seedIndex,
     segments: [
-      segment('pzmr', { fixedL: 0, trialCount: 50, practiceTrials: 5 }),
-      segment('szmr', { fixedL: 0, trialCount: 70, practiceTrials: 5 }),
-      segment('gonogo', { fixedL: 10, trialCount: 60, practiceTrials: 5 }),
-      segment('rdo', { fixedL: 0, trialCount: 50, practiceTrials: 5 }),
+      reaction('pzmr'),
+      reaction('szmr'),
+      reaction('gonogo'),
+      reaction('rdo'),
       segment('gorbov', { fixedL: 0, runs: 3 }),
       segment('numseries', { items: SERIES_ITEMS, totalTimeLimitMs: 600_000 }),
-      segment('pomeh', { fixedL: 8, trialCount: 40, practiceTrials: 5 }),
-      segment('stroop', { fixedL: 8, trialCount: 48, practiceTrials: 5 }),
-      segment('taskswitch', { fixedL: 5, trialCount: 48, practiceTrials: 5 }),
+      reaction('pomeh'),
+      reaction('stroop'),
+      reaction('taskswitch'),
       segment('memory', {}),
     ],
   };

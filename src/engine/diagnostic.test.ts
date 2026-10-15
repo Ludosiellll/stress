@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DIAGNOSTIC_VOLUME,
   EMPTY_METRICS,
   diagnosticSegmentSeed,
   diagnosticSeriesSchedule,
+  isReactionId,
   parseResults,
   planDiagnostic,
   type DiagnosticResults,
@@ -44,6 +46,30 @@ describe('planDiagnostic', () => {
     const later = planDiagnostic(2, 5);
     expect(later).toMatchObject({ diagnosticNumber: 2, diagnosticSeedIndex: 5, seed: hashString('diag:5') });
     expect(later.segments).toEqual(planDiagnostic(2).segments);
+  });
+
+  it('DIAGNOSTIC_VOLUME: 50+5, 70+5, 60+5, 50+5, 40+5, 48+5, 48+5 at the 0.2.0 levels', () => {
+    expect(DIAGNOSTIC_VOLUME).toEqual({
+      pzmr: { fixedL: 0, trialCount: 50, practiceTrials: 5 },
+      szmr: { fixedL: 0, trialCount: 70, practiceTrials: 5 },
+      gonogo: { fixedL: 10, trialCount: 60, practiceTrials: 5 },
+      rdo: { fixedL: 0, trialCount: 50, practiceTrials: 5 },
+      pomeh: { fixedL: 8, trialCount: 40, practiceTrials: 5 },
+      stroop: { fixedL: 8, trialCount: 48, practiceTrials: 5 },
+      taskswitch: { fixedL: 5, trialCount: 48, practiceTrials: 5 },
+    });
+    expect(Object.isFrozen(DIAGNOSTIC_VOLUME) && Object.values(DIAGNOSTIC_VOLUME).every(Object.isFrozen)).toBe(true);
+    // planDiagnostic reads it: the reaction segments carry exactly these volumes.
+    const reaction = planDiagnostic(1).segments.flatMap(({ module }) => (isReactionId(module) ? [module] : []));
+    expect(reaction).toEqual(['pzmr', 'szmr', 'gonogo', 'rdo', 'pomeh', 'stroop', 'taskswitch']);
+    for (const module of reaction) {
+      expect(planDiagnostic(1).segments.find((s) => s.module === module)).toEqual({
+        module,
+        budgetMs: 0,
+        purpose: 'diagnostic',
+        ...DIAGNOSTIC_VOLUME[module],
+      });
+    }
   });
 
   it('is deterministic and number-dependent', () => {
