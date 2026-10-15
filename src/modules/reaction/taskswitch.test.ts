@@ -1,6 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { layoutKeys } from '../../engine/layouts';
+import { noiseFrame } from '../../engine/noise';
 import { createRng } from '../../engine/rng';
 import { RULE_WORDS, type SwitchRule, type TrialSpec } from '../../engine/reaction/types';
 import type { LayoutId } from '../../engine/types';
@@ -279,7 +280,35 @@ describe('taskswitch texts', () => {
     expect(taskswitch.describeParams(taskswitch.params(20))).toEqual([
       { label: 'Окно ответа', value: '311 мс' },
       { label: 'Нагрузка', value: '3 правила, смены без подсказки, звук' },
-      { label: 'Подсказка заранее', value: '0 мс' },
     ]);
+  });
+
+  it('describeParams: from band 3 the cue comes with the figure, a constant, so the cue lead is no longer listed', () => {
+    expect(taskswitch.describeParams(taskswitch.params(11.99)).map((e) => e.label)).toContain('Подсказка заранее');
+    for (const [L, share] of [
+      [12, '44 %'],
+      [15.99, '50 %'],
+    ] as const) {
+      expect(taskswitch.params(L).cueLeadMs).toBe(0);
+      expect(taskswitch.describeParams(taskswitch.params(L))).toEqual([
+        { label: 'Окно ответа', value: `${String(taskswitch.params(L).windowMs)} мс` },
+        { label: 'Нагрузка', value: '3 правила, подсказка вместе с фигурой' },
+        { label: 'Доля смен', value: share },
+      ]);
+    }
+  });
+});
+
+describe('taskswitch noise', () => {
+  it('the noise never draws a white figure: the rule word above the figure is white (band 6 on)', () => {
+    for (const L of [24, 36, 60]) {
+      const noise = taskswitch.params(L).noise;
+      if (noise === null) throw new Error(`expected noise at L ${String(L)}`);
+      for (let seed = 0; seed < 300; seed++) {
+        for (const d of noiseFrame(noise, seed, seed * 41, { halfW: 0.9, halfH: 0.5 })) {
+          expect(d.color, `L ${String(L)}, seed ${String(seed)}`).not.toBe('white');
+        }
+      }
+    }
   });
 });

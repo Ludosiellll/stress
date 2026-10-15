@@ -17,6 +17,7 @@ import {
   longBlockTrials,
   ms,
   percent,
+  SHAPES,
   stressorNotes,
   type ReactionModule,
 } from './common';
@@ -57,6 +58,8 @@ export interface TaskSwitchParams {
 const BLOCK_SIZE = 20;
 /** Trials per rule in a run (Р12). */
 const RUN_LENGTH = 4;
+/** From this band the rule word comes with the figure (cue lead 0). */
+const CUE_WITH_FIGURE_BAND = 3;
 
 const UNCUED = '3 правила, смены без подсказки';
 
@@ -74,8 +77,14 @@ const BANDS = ladder([
   [`${UNCUED}, звук, помехи, 60 сигналов`, 1],
 ]);
 
-/** Every figure the module shows: far noise takes none of their colours (Р12). */
-const FIGURES = (['red', 'blue'] as const).flatMap((color) => (['circle', 'square'] as const).map((shape) => ({ shape, color })));
+/**
+ * What the noise never draws: every figure the module shows (far noise takes none of their colours, Р12), and white in
+ * any shape, the colour of the rule word above the figure, which a figure would otherwise cover (T-R46).
+ */
+const NOISE_FORBIDDEN = [
+  ...(['red', 'blue'] as const).flatMap((color) => (['circle', 'square'] as const).map((shape) => ({ shape, color }))),
+  ...SHAPES.map((shape) => ({ shape, color: 'white' as const })),
+];
 /** ISI = cueLeadMs + [ISI_MIN, ISI_MAX]: the blank pause before the cue stays 500–1500 ms at every level. */
 const ISI_MIN = 500;
 const ISI_MAX = 1500;
@@ -124,9 +133,9 @@ export const taskswitch: ReactionModule<TaskSwitchParams> = {
       trials: longBlockTrials(b, 7, BLOCK_SIZE),
       rules: RULES.slice(0, b >= 2 ? 3 : 2),
       switchProb: Math.min(0.5, 0.2 + 0.02 * L),
-      cueLeadMs: b >= 3 ? 0 : Math.round(900 * 0.88 ** L),
+      cueLeadMs: b >= CUE_WITH_FIGURE_BAND ? 0 : Math.round(900 * 0.88 ** L),
       runs: b >= 4,
-      noise: b >= 6 ? farNoise(FIGURES) : null,
+      noise: b >= 6 ? farNoise(NOISE_FORBIDDEN) : null,
       audio: b >= 5 ? bandSound() : null,
     };
   },
@@ -184,11 +193,14 @@ export const taskswitch: ReactionModule<TaskSwitchParams> = {
     return text.join(' ') + stressorNotes(p, overload);
   },
 
-  /** The rules, the cue with the figure and the runs are in the band label (Р14). */
+  /**
+   * The rules, the cue with the figure and the runs are in the band label (Р14). The switch share goes with runs, the
+   * cue lead from band 3, where it is the constant 0 (T-R47): neither is a smooth lever any more.
+   */
   describeParams: (p) => [
     { label: 'Окно ответа', value: ms(p.windowMs) },
     { label: 'Нагрузка', value: p.bandLabel },
     ...(p.runs ? [] : [{ label: 'Доля смен', value: percent(p.switchProb) }]),
-    { label: 'Подсказка заранее', value: ms(p.cueLeadMs) },
+    ...(p.band >= CUE_WITH_FIGURE_BAND ? [] : [{ label: 'Подсказка заранее', value: ms(p.cueLeadMs) }]),
   ],
 };
