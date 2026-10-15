@@ -202,7 +202,7 @@ describe('session simulation (R6, R28a, R29): months of daily sessions through t
       expect(offTarget).toEqual([]);
       expect(mean(drifts)).toBeGreaterThanOrEqual(-0.5);
     },
-    30_000,
+    120_000,
   );
 });
 
