@@ -120,8 +120,9 @@ function validate(o: RunnerOptions): void {
  * - An in-window press ends the trial at the press time, and the stimulus is hidden in the next frame.
  *   Otherwise the trial ends at onset + windowMs and is hidden in the first frame at or after that time.
  *   A press that `resolveBlock` gives to the previous trial as its late answer (rule 3b, T-R32: under FALSE_START_MS
- *   after the onset, the previous trial a `press` trial past its window with no press since its onset) does not end
- *   the trial. The check runs in `press()`; the frame loop is unchanged.
+ *   after the onset, the previous trial a `press` trial past its window without a response) does not end the trial.
+ *   `press()` keeps, per trial, whether the resolver gives it a response, by the resolver's own rules, so a press
+ *   that already answered an earlier trial never counts for a later one (T-R40); the frame loop is unchanged.
  * - Every press while the block runs is recorded, whatever the phase. After the last trial, presses stamped up to
  *   end + LATE_GRACE_MS are still recorded; the block is done in the first frame at or after that time plus
  *   `nominalFrameMs`, so a press already in flight at the grace end is not lost.
@@ -160,6 +161,8 @@ export class ReactionBlockRunner {
   /** Per trial: the delta of its onset frame, judged when the block is done. */
   private readonly onsetDeltas: (number | null)[] = [];
   private readonly presses: Press[] = [];
+  /** Per shown trial: whether resolveBlock gives it a response (in its window or late) from the presses so far. */
+  private readonly answered: boolean[] = [];
   private result: RunnerEnd | null = null;
   private settle: { resolve: (end: RunnerEnd) => void; reject: (err: Error) => void } | null = null;
 
@@ -188,21 +191,36 @@ export class ReactionBlockRunner {
     const ph = this.phase;
     if (ph.kind === 'idle' || ph.kind === 'finished') return;
     if (ph.kind === 'grace' && p.ts > ph.until) return;
-    if (ph.kind === 'shown' && ph.answeredAt === null && p.ts >= ph.onset && p.ts <= ph.deadline && !this.answersPrevious(ph, p.ts)) {
-      ph.answeredAt = p.ts;
-    }
+    const to = this.claim(p.ts);
+    if (ph.kind === 'shown' && ph.answeredAt === null && to === ph.i && p.ts <= ph.deadline) ph.answeredAt = p.ts;
     this.presses.push({ key: p.key, ts: p.ts });
   }
 
   /**
-   * Rule 3b of resolveBlock (T-R32) for a press at `ts` while trial i is shown. Input arrives in time order, so the
-   * previous trial is unanswered when no press recorded so far is stamped at or after its onset.
+   * The trial resolveBlock gives a press stamped `ts` to as its response, now marked answered; null when it gives it
+   * to none (before the first onset, a false start of the next trial, a second press in a window). Input arrives in
+   * time order, so the presses are seen in the resolver's order: the press belongs to the last trial shown at or
+   * before `ts` (rule 1), answers the previous trial late under rule 3b, is the response in the window (rule 2) or the
+   * late response of an unanswered `press` trial (rule 3).
    */
-  private answersPrevious(ph: Shown, ts: number): boolean {
-    if (ph.i === 0 || ts >= ph.onset + FALSE_START_MS) return false;
-    const prev = this.specs[ph.i - 1] as TrialSpec;
-    const prevOnset = this.onsets[ph.i - 1] as number;
-    return prev.expected.kind === 'press' && ts > prevOnset + prev.windowMs && !this.presses.some((q) => q.ts >= prevOnset);
+  private claim(ts: number): number | null {
+    let k = this.onsets.length - 1;
+    while (k >= 0 && (this.onsets[k] as number) > ts) k--;
+    if (k < 0) return null;
+    const spec = this.specs[k] as TrialSpec;
+    const onset = this.onsets[k] as number;
+    let to: number | null = null;
+    if (k > 0 && ts < onset + FALSE_START_MS && this.unansweredPressPast(k - 1, ts)) to = k - 1;
+    else if (ts <= onset + spec.windowMs) to = this.answered[k] === true ? null : k;
+    else if (this.unansweredPressPast(k, ts)) to = k;
+    if (to !== null) this.answered[to] = true;
+    return to;
+  }
+
+  /** Trial k is a `press` trial without a response and `ts` is past its window: the press can be its late answer. */
+  private unansweredPressPast(k: number, ts: number): boolean {
+    const spec = this.specs[k] as TrialSpec;
+    return spec.expected.kind === 'press' && this.answered[k] !== true && ts > (this.onsets[k] as number) + spec.windowMs;
   }
 
   abort(reason: AbortReason): void {
@@ -297,6 +315,7 @@ export class ReactionBlockRunner {
     const spec = this.specs[i] as TrialSpec;
     this.onsets.push(ts);
     this.onsetDeltas.push(this.frameDelta);
+    this.answered.push(false);
     const leadMs = this.presentationLeadMs ?? this.frameInterval();
     // Phase first: a renderer callback that presses or aborts sees the trial as shown.
     this.phase = { kind: 'shown', i, onset: ts, deadline: ts + spec.windowMs, answeredAt: null, leadMs };

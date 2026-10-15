@@ -1,3 +1,4 @@
+import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { FALSE_START_MS, resolveBlock } from '../engine/reaction/resolve';
 import type { BlockTimeline, Stimulus, TrialSpec } from '../engine/reaction/types';
@@ -574,6 +575,77 @@ describe('ReactionBlockRunner: a press just after an onset (T-R32)', () => {
       expect(hide1).toBe(h.clock.firstFrameAtOrAfter(onset1 + 50));
       expect(results[1]).toMatchObject({ outcome: 'false_start' });
     }
+  });
+});
+
+describe('ReactionBlockRunner: chained late answers (T-R40)', () => {
+  /** Presses Space at `offsets[i]` ms after the onset of each trial i, each delivered before the first frame at or after it. */
+  function pressAfterOnsets(specs: readonly TrialSpec[], offsets: readonly (readonly number[])[], frameMs?: number): Harness {
+    let shown = 0;
+    const h = setup(specs, {
+      ...(frameMs === undefined ? {} : { frameMs, nominalFrameMs: frameMs }),
+      onShow: (at) => {
+        for (const d of offsets[shown++] ?? []) h.pressAt(at + d);
+      },
+    });
+    return h;
+  }
+
+  it('a press that answered the trial before the previous one leaves the previous one unanswered', async () => {
+    // ISI 300, window 300: the press 50 ms after onset 1 is the late answer of trial 0, the one 50 ms after onset 2
+    // the late answer of trial 1. Neither ends the trial it fell into.
+    const specs = [pressTrial(300, 300), pressTrial(300, 300), pressTrial(300, 300)];
+    const h = pressAfterOnsets(specs, [[], [50], [50]]);
+    h.clock.runOut();
+    const tl = await timelineOf(h);
+    const [, hide1, hide2] = h.at('hide');
+    expect(hide1).toBe(h.clock.firstFrameAtOrAfter((tl.onsets[1] as number) + 300));
+    expect(hide2).toBe(h.clock.firstFrameAtOrAfter((tl.onsets[2] as number) + 300));
+    expect(resolveBlock(specs, tl).map((r) => r.outcome)).toEqual(['late', 'late', 'miss']);
+  });
+
+  it('a false-started trial is still answered late by a press just after the next onset: it stays a false start, the next trial has none', async () => {
+    // Trial 0 is answered at 150 ms; the press 350 ms after its onset falls in the ISI of trial 1: a false start of
+    // trial 1. Trial 1 then gets no press in its window, and the press 50 ms after onset 2 is its late answer.
+    const specs = [pressTrial(500, 300), pressTrial(400, 300), pressTrial(400, 300)];
+    const h = pressAfterOnsets(specs, [[150, 350], [], [50]]);
+    h.clock.runOut();
+    const tl = await timelineOf(h);
+    const results = resolveBlock(specs, tl);
+    expect(results.map((r) => r.outcome)).toEqual(['hit', 'false_start', 'miss']);
+    expect(results[1]?.rtMs).toBeCloseTo((tl.onsets[2] as number) + 50 - (tl.onsets[1] as number), 9);
+    expect(h.at('hide')[2]).toBe(h.clock.firstFrameAtOrAfter((tl.onsets[2] as number) + 300));
+  });
+
+  it('the runner ends a trial early exactly when resolveBlock gives it the press that ends it', async () => {
+    // A 5 ms frame grid; trial times are multiples of 5 and press times are not, so every press lands between frames.
+    const FRAME_MS = 5;
+    const grid = (min: number, max: number) => fc.integer({ min, max }).map((k) => k * FRAME_MS);
+    const trial = fc
+      .record({ isiMs: grid(0, 80), windowMs: grid(10, 80), withhold: fc.boolean() })
+      .map(({ isiMs, windowMs, withhold }) => (withhold ? withholdTrial(isiMs, windowMs) : pressTrial(isiMs, windowMs)));
+    const offsets = fc.array(fc.integer({ min: 0, max: 179 }).map((k) => k * FRAME_MS + 2), { maxLength: 3 });
+    await fc.assert(
+      fc.asyncProperty(fc.array(fc.tuple(trial, offsets), { minLength: 1, maxLength: 6 }), async (block) => {
+        const specs = block.map(([t]) => t);
+        const h = pressAfterOnsets(
+          specs,
+          block.map(([, o]) => [...o].sort((a, b) => a - b)),
+          FRAME_MS,
+        );
+        h.clock.runOut();
+        const tl = await timelineOf(h);
+        const hides = h.at('hide');
+        resolveBlock(specs, tl).forEach((r, i) => {
+          const onset = tl.onsets[i] as number;
+          const { windowMs } = specs[i] as TrialSpec;
+          // The trial ends at the press the resolver gives it in its window, otherwise at its deadline.
+          const end = r.rtMs !== null && r.rtMs <= windowMs ? onset + r.rtMs : onset + windowMs;
+          expect(hides[i], `trial ${String(i)}`).toBe(h.clock.firstFrameAtOrAfter(end));
+        });
+      }),
+      { numRuns: 1000 },
+    );
   });
 });
 
