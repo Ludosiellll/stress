@@ -7,7 +7,7 @@ type Points = ReadonlyArray<readonly [number, number]>;
 
 /**
  * Published Gorbov-Shulte bands, piecewise linear, (value in seconds -> score).
- * Source: common.md «Индекс готовности (§7.5)», spec §7.5, research note Test_Battery_Research_BY.md.
+ * Source: common.md «Индекс готовности (§7.5)», spec §7.5, research note Test_Battery_Research.md.
  */
 export const BAND_GORBOV_V: Points = [[29, 100], [37, 80], [50, 60], [60, 40], [70, 20]];
 /** P = t3 (seconds). Not part of any ability in W1; exported for the progress screen. */
