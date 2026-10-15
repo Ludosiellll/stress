@@ -1654,6 +1654,20 @@ describe('SessionController — diagnostics', () => {
     expect(second.indexDeferred).toBe(false);
   });
 
+  it('a diagnostic starts when the earlier diagnostics cannot be read: no deferred note, the error is logged (B9)', async () => {
+    const repo = new MemoryRepository();
+    vi.spyOn(repo, 'listDiagnostics').mockRejectedValueOnce(new Error('disk I/O error'));
+    const h = await begin(planDiagnostic(1), { repo, scale: 0.02 });
+    expect(h.c.step.kind).toBe('instruction');
+    expect((await repo.listSessions()).map((r) => r.kind)).toEqual(['diagnostic']);
+    const log = await repo.listLog(5);
+    expect(log.some((r) => r.level === 'error' && r.message.includes('earlier diagnostics') && r.detail.includes('disk I/O error'))).toBe(true);
+    await drive(h);
+    const done = expectStep(h.c, 'done');
+    expect(done.diagnostic).not.toBeNull();
+    expect(done.indexDeferred).toBe(false);
+  });
+
   it('gorbov metrics need all three runs completed; series count only inside the total limit', async () => {
     const h = await begin(planDiagnostic(3), { scale: 0.02 });
     let run = 0;

@@ -190,14 +190,15 @@ export class SessionController {
   /** What the stored diagnostic blocks add to DiagnosticResults. */
   private readonly diagParts: DiagnosticPart[] = [];
   /** A diagnostic: the stored ones before it, in order (the readiness note of the done step, W2-R31). */
-  private readonly earlierDiagnostics: DiagnosticMetrics[];
+  /** null: they could not be read; the done step then says nothing about deferred parts. */
+  private readonly earlierDiagnostics: DiagnosticMetrics[] | null;
 
   private constructor(
     o: SessionStartOptions,
     scale: number,
     states: Record<ModuleId, ModuleState>,
     ratings: Map<FamilyId, Rating>,
-    earlierDiagnostics: DiagnosticMetrics[],
+    earlierDiagnostics: DiagnosticMetrics[] | null,
   ) {
     this.repo = o.repo;
     this.plan = o.plan;
@@ -218,18 +219,35 @@ export class SessionController {
     if (o.plan.kind === 'diagnostic' && o.plan.diagnosticNumber === undefined) {
       throw new RangeError('a diagnostic plan needs diagnosticNumber');
     }
-    const [states, ratings, diagnostics] = await Promise.all([
+    const [states, ratings, earlier] = await Promise.all([
       o.repo.getModuleStates(),
       o.repo.getRatings(),
-      o.plan.kind === 'diagnostic' ? o.repo.listDiagnostics() : [],
+      o.plan.kind === 'diagnostic' ? SessionController.earlierDiagnostics(o) : [],
     ]);
-    const c = new SessionController(o, scale, states, ratings, diagnostics.flatMap((d) => parseResults(d) ?? []));
+    const c = new SessionController(o, scale, states, ratings, earlier);
     const row = sessionRow(c.sessionId, o.now().toISOString(), o.plan.kind, o.appVersion, o.plan.phase ?? 'none');
     await c.save(
       { what: 'session start', stage: () => 'session_start', onSaved: () => c.enterSegment(0), onAbandon: null },
       [{ label: 'createSession', run: () => o.repo.createSession(row) }],
     );
     return c;
+  }
+
+  /**
+   * The stored diagnostics' metrics, for the done step's note on deferred parts only. A failed read must not stop
+   * the diagnostic: it is logged (when the log can be written) and the note is left out (null).
+   */
+  private static async earlierDiagnostics(o: SessionStartOptions): Promise<DiagnosticMetrics[] | null> {
+    try {
+      return (await o.repo.listDiagnostics()).flatMap((d) => parseResults(d) ?? []);
+    } catch (e) {
+      try {
+        await o.repo.appendLog(errorLogRow(o.now().toISOString(), 'session: earlier diagnostics could not be read', { error: errorText(e) }));
+      } catch {
+        // The database is failing already; the read failure simply goes unlogged.
+      }
+      return null;
+    }
   }
 
   get step(): Step {
@@ -592,7 +610,8 @@ export class SessionController {
   private done(diagnostic: DiagnosticResults | null): void {
     let seriesTotal: number | null = null;
     for (const p of this.diagParts) if (p.module === 'numseries') seriesTotal = p.total;
-    const indexDeferred = diagnostic !== null && readinessOfLatest(this.earlierDiagnostics, diagnostic).deferred;
+    const earlier = this.earlierDiagnostics;
+    const indexDeferred = diagnostic !== null && earlier !== null && readinessOfLatest(earlier, diagnostic).deferred;
     this.current = { kind: 'done', sessionId: this.sessionId, diagnostic, seriesTotal, indexDeferred };
   }
 
