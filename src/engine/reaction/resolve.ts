@@ -57,6 +57,16 @@ function timingErrorOf(expected: Expected, outcome: Outcome, r: Press | null, rt
   return rtMs - expected.targetOffsetMs;
 }
 
+/** Rule 3b: `press` answers `prev` late instead of going to `trial`, the next one. */
+function answersPrevious(prev: Trial, trial: Trial, press: Press): boolean {
+  return (
+    press.ts < trial.onset + FALSE_START_MS &&
+    prev.spec.expected.kind === 'press' &&
+    prev.response === null &&
+    press.ts > prev.onset + prev.spec.windowMs
+  );
+}
+
 /**
  * Turns what happened in a block (onsets + presses) into one result per trial, in trial order.
  * Rules (task 6 contract):
@@ -65,6 +75,10 @@ function timingErrorOf(expected: Expected, outcome: Outcome, r: Press | null, rt
  * 2. The first press with ts ≤ onset + windowMs is the trial's response; later ones in the window are ignored.
  * 3. After the window, the first press is the `late` response of an unanswered `press` trial;
  *    any other press marks the next trial as a false start (ignored after the last trial).
+ *    3b (T-R32). A press less than FALSE_START_MS after an onset, past the window of the previous trial, is still the
+ *    `late` response of that trial when it is an unanswered `press` trial: it cannot be a reaction to the new
+ *    stimulus, and under a short ISI a slow answer would otherwise become a false start of the next trial.
+ *    `withhold` and `timed` trials take no late response, so for them the press stays with the next trial.
  * 4. A false-start mark overrides the outcome; rtMs/key still come from the trial's response, if any.
  */
 export function resolveBlock(specs: readonly TrialSpec[], tl: BlockTimeline): TrialResult[] {
@@ -85,8 +99,12 @@ export function resolveBlock(specs: readonly TrialSpec[], tl: BlockTimeline): Tr
       next = trials[cur + 1];
     }
     const trial = trials[cur];
+    const prev = trials[cur - 1];
     if (trial === undefined) {
       if (next) next.falseStart = true;
+    } else if (prev !== undefined && answersPrevious(prev, trial, press)) {
+      prev.response = press;
+      prev.late = true;
     } else if (press.ts <= trial.onset + trial.spec.windowMs) {
       trial.response ??= press;
     } else if (trial.spec.expected.kind === 'press' && trial.response === null) {

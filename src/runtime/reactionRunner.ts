@@ -1,3 +1,4 @@
+import { FALSE_START_MS } from '../engine/reaction/resolve';
 import type { BlockTimeline, Press, Stimulus, TrialSpec } from '../engine/reaction/types';
 import { medianOfSorted } from '../engine/stats';
 import { isDroppedFrame } from '../engine/timing';
@@ -61,13 +62,15 @@ export interface RunnerOptions {
   onTrial?: (i: number) => void;
 }
 
+/** leadMs: the RDO presentation lead, fixed at the onset. */
+type Shown = { kind: 'shown'; i: number; onset: number; deadline: number; answeredAt: number | null; leadMs: number };
+
 type Phase =
   | { kind: 'idle' }
   | { kind: 'starting' }
   /** cueAt: when the cue of trial i is due; null when it has none or was already drawn. */
   | { kind: 'waiting'; i: number; onsetAt: number; cueAt: number | null }
-  /** leadMs: the RDO presentation lead, fixed at the onset. */
-  | { kind: 'shown'; i: number; onset: number; deadline: number; answeredAt: number | null; leadMs: number }
+  | Shown
   /** Presses stamped ≤ until are recorded; the block closes at closeAt (one frame later, for input in flight). */
   | { kind: 'grace'; until: number; closeAt: number }
   | { kind: 'finished' };
@@ -116,6 +119,9 @@ function validate(o: RunnerOptions): void {
  *   stimulus frame, and a press during the cue is a press before the onset.
  * - An in-window press ends the trial at the press time, and the stimulus is hidden in the next frame.
  *   Otherwise the trial ends at onset + windowMs and is hidden in the first frame at or after that time.
+ *   A press that `resolveBlock` gives to the previous trial as its late answer (rule 3b, T-R32: under FALSE_START_MS
+ *   after the onset, the previous trial a `press` trial past its window with no press since its onset) does not end
+ *   the trial. The check runs in `press()`; the frame loop is unchanged.
  * - Every press while the block runs is recorded, whatever the phase. After the last trial, presses stamped up to
  *   end + LATE_GRACE_MS are still recorded; the block is done in the first frame at or after that time plus
  *   `nominalFrameMs`, so a press already in flight at the grace end is not lost.
@@ -182,10 +188,21 @@ export class ReactionBlockRunner {
     const ph = this.phase;
     if (ph.kind === 'idle' || ph.kind === 'finished') return;
     if (ph.kind === 'grace' && p.ts > ph.until) return;
-    this.presses.push({ key: p.key, ts: p.ts });
-    if (ph.kind === 'shown' && ph.answeredAt === null && p.ts >= ph.onset && p.ts <= ph.deadline) {
+    if (ph.kind === 'shown' && ph.answeredAt === null && p.ts >= ph.onset && p.ts <= ph.deadline && !this.answersPrevious(ph, p.ts)) {
       ph.answeredAt = p.ts;
     }
+    this.presses.push({ key: p.key, ts: p.ts });
+  }
+
+  /**
+   * Rule 3b of resolveBlock (T-R32) for a press at `ts` while trial i is shown. Input arrives in time order, so the
+   * previous trial is unanswered when no press recorded so far is stamped at or after its onset.
+   */
+  private answersPrevious(ph: Shown, ts: number): boolean {
+    if (ph.i === 0 || ts >= ph.onset + FALSE_START_MS) return false;
+    const prev = this.specs[ph.i - 1] as TrialSpec;
+    const prevOnset = this.onsets[ph.i - 1] as number;
+    return prev.expected.kind === 'press' && ts > prevOnset + prev.windowMs && !this.presses.some((q) => q.ts >= prevOnset);
   }
 
   abort(reason: AbortReason): void {

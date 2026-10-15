@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveBlock } from '../engine/reaction/resolve';
+import { FALSE_START_MS, resolveBlock } from '../engine/reaction/resolve';
 import type { BlockTimeline, Stimulus, TrialSpec } from '../engine/reaction/types';
 import {
   LATE_GRACE_MS,
@@ -474,6 +474,106 @@ describe('ReactionBlockRunner: trial end', () => {
     expect(h.calls).toEqual(ref.calls);
     expect(tl.onsets[1]).toBe(h.clock.firstFrameAtOrAfter((tl.onsets[0] as number) + 300 + 800));
     expect(tl.presses).toEqual([{ key: 'Space', ts: late }]);
+  });
+});
+
+describe('ReactionBlockRunner: a press just after an onset (T-R32)', () => {
+  /** Presses Space `offsets` ms after the onset of trial `i`, each delivered before the first frame at or after it. */
+  function pressAfterOnset(specs: readonly TrialSpec[], i: number, offsets: readonly number[]): Harness {
+    let shown = 0;
+    const h = setup(specs, {
+      onShow: (at) => {
+        if (shown++ === i) for (const d of offsets) h.pressAt(at + d);
+      },
+    });
+    return h;
+  }
+
+  /** The hide of trial 1 and the results of a two-trial block that ran out. */
+  async function second(h: Harness, specs: readonly TrialSpec[]) {
+    const tl = await timelineOf(h);
+    return { onset1: tl.onsets[1] as number, hide1: h.at('hide')[1], results: resolveBlock(specs, tl) };
+  }
+
+  it('the late answer of an unanswered trial, under FALSE_START_MS after the next onset, does not end the next trial', async () => {
+    const specs = [pressTrial(500, 300), pressTrial(400)];
+    const h = pressAfterOnset(specs, 1, [FALSE_START_MS - 1, 300]);
+    h.clock.runOut();
+    const { onset1, hide1, results } = await second(h, specs);
+    expect(hide1).toBe(h.clock.firstFrameAtOrAfter(onset1 + 300));
+    expect(results).toMatchObject([{ outcome: 'late' }, { outcome: 'hit' }]);
+    expect(results[1]?.rtMs).toBeCloseTo(300, 9);
+  });
+
+  it('at FALSE_START_MS after the onset the press ends the trial', async () => {
+    const specs = [pressTrial(500, 300), pressTrial(400)];
+    const h = pressAfterOnset(specs, 1, [FALSE_START_MS]);
+    h.clock.runOut();
+    const { onset1, hide1, results } = await second(h, specs);
+    expect(hide1).toBe(h.clock.firstFrameAtOrAfter(onset1 + FALSE_START_MS));
+    expect(results).toMatchObject([{ outcome: 'miss' }, { outcome: 'hit' }]);
+  });
+
+  it('practice trials follow the same rule', async () => {
+    const specs = [{ ...pressTrial(500, 300), practice: true }, pressTrial(400)];
+    const h = pressAfterOnset(specs, 1, [50]);
+    h.clock.runOut();
+    const { onset1, hide1, results } = await second(h, specs);
+    expect(hide1).toBe(h.clock.firstFrameAtOrAfter(onset1 + 1000));
+    expect(results).toMatchObject([{ outcome: 'late', practice: true }, { outcome: 'miss' }]);
+  });
+
+  it('after an answered trial the press is a false start and ends the next trial', async () => {
+    const specs = [pressTrial(500, 300), pressTrial(400)];
+    let shown = 0;
+    const h = setup(specs, {
+      onShow: (at) => {
+        if (shown++ === 0) h.pressAt(at + 250);
+        else h.pressAt(at + 50);
+      },
+    });
+    h.clock.runOut();
+    const { onset1, hide1, results } = await second(h, specs);
+    expect(hide1).toBe(h.clock.firstFrameAtOrAfter(onset1 + 50));
+    expect(results).toMatchObject([{ outcome: 'hit' }, { outcome: 'false_start' }]);
+  });
+
+  it('a late answer stamped before the onset but delivered after it answers the previous trial', async () => {
+    const specs = [pressTrial(500, 300), pressTrial(400)];
+    let shown = 0;
+    const h = setup(specs, {
+      onShow: (at) => {
+        if (shown++ !== 1) return;
+        h.clock.input(at + 1, () => {
+          h.runner.press({ key: 'Space', ts: at - 5 });
+        });
+        h.pressAt(at + 50);
+      },
+    });
+    h.clock.runOut();
+    const { onset1, hide1, results } = await second(h, specs);
+    expect(hide1).toBe(h.clock.firstFrameAtOrAfter(onset1 + 50));
+    expect(results).toMatchObject([{ outcome: 'late' }, { outcome: 'false_start' }]);
+  });
+
+  it('of two presses right after the onset, the first answers the previous trial and the second ends this one', async () => {
+    const specs = [pressTrial(500, 300), pressTrial(400)];
+    const h = pressAfterOnset(specs, 1, [20, 60]);
+    h.clock.runOut();
+    const { onset1, hide1, results } = await second(h, specs);
+    expect(hide1).toBe(h.clock.firstFrameAtOrAfter(onset1 + 60));
+    expect(results).toMatchObject([{ outcome: 'late' }, { outcome: 'false_start' }]);
+  });
+
+  it('after a timed (РДО) or a withhold trial the press is a false start and ends the next trial', async () => {
+    for (const first of [rdoTrial(500, 300), withholdTrial(500, 300)]) {
+      const specs = [first, pressTrial(400)];
+      const h = pressAfterOnset(specs, 1, [50]);
+      h.clock.runOut();
+      const { onset1, hide1, results } = await second(h, specs);
+      expect(hide1).toBe(h.clock.firstFrameAtOrAfter(onset1 + 50));
+      expect(results[1]).toMatchObject({ outcome: 'false_start' });
+    }
   });
 });
 

@@ -1,6 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { FALSE_START_MS, resolveBlock } from './resolve';
+import { stabilityOf } from './stability';
 import type { BlockTimeline, Expected, Outcome, Press, Stimulus, TrialSpec } from './types';
 
 function press(key = 'Space', windowMs = 1000): TrialSpec {
@@ -179,6 +180,93 @@ describe('rule 3: presses after the window', () => {
     const r = resolveBlock([press(), withhold(500)], timeline([1000, 3000], [space(1250), space(4000), space(4100)]));
     expect(r).toMatchObject([{ outcome: 'hit' }, { outcome: 'correct_reject', rtMs: null }]);
     expect(single(press(), [space(1250), space(2500)])).toMatchObject([{ outcome: 'hit', rtMs: 250 }]);
+  });
+});
+
+describe('rule 3b: a press just after an onset answers the previous trial (T-R32)', () => {
+  /** Trial 0 (press, window 500) at 1000 ms; trial 1 at `onset1`. */
+  const pair = (second: TrialSpec, onset1: number, presses: Press[], first: TrialSpec = press('Space', 500)) =>
+    resolveBlock([first, second], timeline([1000, onset1], presses));
+
+  it('a press under FALSE_START_MS after the next onset is the late answer of an unanswered press trial', () => {
+    expect(pair(press(), 3000, [space(3000 + FALSE_START_MS - 1)])).toMatchObject([
+      { outcome: 'late', success: false, rtMs: 2000 + FALSE_START_MS - 1, key: 'Space' },
+      { outcome: 'miss', rtMs: null, key: null },
+    ]);
+  });
+
+  it('at FALSE_START_MS after the next onset the press belongs to the next trial', () => {
+    expect(pair(press(), 3000, [space(3000 + FALSE_START_MS)])).toMatchObject([
+      { outcome: 'miss', rtMs: null },
+      { outcome: 'hit', rtMs: FALSE_START_MS },
+    ]);
+  });
+
+  it('the next trial still takes its own answer after the claimed press', () => {
+    expect(pair(press(), 1900, [space(1950), space(2200)])).toMatchObject([
+      { outcome: 'late', rtMs: 950 },
+      { outcome: 'hit', rtMs: 300 },
+    ]);
+  });
+
+  it('within window + 1000 ms it is a late answer in R, beyond it a lapse (F2)', () => {
+    const near = pair(press(), 1900, [space(1950)]);
+    const far = pair(press(), 3000, [space(3050)]);
+    const specs = [press('Space', 500), press()];
+    expect(near[0]).toMatchObject({ outcome: 'late', rtMs: 950 });
+    expect(stabilityOf(specs, near)).toMatchObject({ lapses: 1 }); // trial 1 missed; trial 0 is in R
+    expect(far[0]).toMatchObject({ outcome: 'late', rtMs: 2050 });
+    expect(stabilityOf(specs, far)).toMatchObject({ lapses: 2 }); // trial 0 is a lapse too
+  });
+
+  it('a slow go answer just after a no-go onset is not a press on the no-go', () => {
+    expect(pair(withhold(), 1900, [space(1950)])).toMatchObject([
+      { outcome: 'late', rtMs: 950 },
+      { outcome: 'correct_reject', rtMs: null, key: null },
+    ]);
+  });
+
+  it('when the previous trial is already answered, the press is a false start of the next', () => {
+    expect(pair(press(), 3000, [space(1300), space(3050)])).toMatchObject([
+      { outcome: 'hit', rtMs: 300 },
+      { outcome: 'false_start', rtMs: 50 },
+    ]);
+    // Answered late in the ISI: the same.
+    expect(pair(press(), 3000, [space(2500), space(3050)])).toMatchObject([
+      { outcome: 'late', rtMs: 1500 },
+      { outcome: 'false_start', rtMs: 50 },
+    ]);
+    // Two presses right after the onset: the first answers trial 0, the second is a false start of trial 1.
+    expect(pair(press(), 3000, [space(3020), space(3060)])).toMatchObject([
+      { outcome: 'late', rtMs: 2020 },
+      { outcome: 'false_start', rtMs: 60 },
+    ]);
+  });
+
+  it('practice trials follow the same rule', () => {
+    const r = pair(press(), 3000, [space(3050), space(3300)], { ...press('Space', 500), practice: true });
+    expect(r).toMatchObject([
+      { outcome: 'late', rtMs: 2050, practice: true },
+      { outcome: 'hit', rtMs: 300, practice: false },
+    ]);
+  });
+
+  it('timed (РДО) and withhold trials are not answered late: the press stays a false start of the next trial', () => {
+    expect(pair(timed(300, 20), 3000, [space(3050)], timed(300, 20, 500))).toMatchObject([
+      { outcome: 'miss', rtMs: null },
+      { outcome: 'false_start', rtMs: 50 },
+    ]);
+    expect(pair(press(), 3000, [space(3050)], withhold(500))).toMatchObject([
+      { outcome: 'correct_reject', rtMs: null },
+      { outcome: 'false_start', rtMs: 50 },
+    ]);
+  });
+
+  it('a press inside the previous window is not claimed (overlapping timelines keep rule 1)', () => {
+    expect(resolveBlock([press(), press()], timeline([1000, 1500], [space(1550)]))).toMatchObject([
+      { outcome: 'miss', rtMs: null },
+      { outcome: 'false_start', rtMs: 50 },
+    ]);
   });
 });
 
