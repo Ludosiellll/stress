@@ -1,5 +1,332 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions are those of 0.2.0 > 1 gonogo keys 1`] = `
+{
+  "L": 10,
+  "instruction": {
+    "keysHint": "Пробел",
+    "text": "На красный круг нажимай Пробел. На зелёный круг не нажимай ничего.",
+  },
+  "keys": [
+    "Space",
+  ],
+  "layout": "keyboard",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions are those of 0.2.0 > 1 pomeh keys 1`] = `
+{
+  "L": 8,
+  "instruction": {
+    "keysHint": "Пробел",
+    "text": "Когда в центре появится красный круг, нажми Пробел. Иногда вокруг будут появляться другие фигуры, на них не реагируй. Вместе с фигурами будет мерцать фон.",
+  },
+  "keys": [
+    "Space",
+  ],
+  "layout": "keyboard",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions are those of 0.2.0 > 1 pzmr keys 1`] = `
+{
+  "L": 0,
+  "instruction": {
+    "keysHint": "Пробел",
+    "text": "Когда появится красный круг, как можно быстрее нажми Пробел. Не нажимай заранее: это фальстарт.",
+  },
+  "keys": [
+    "Space",
+  ],
+  "layout": "keyboard",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions are those of 0.2.0 > 1 rdo keys 1`] = `
+{
+  "L": 0,
+  "instruction": {
+    "keysHint": "Пробел",
+    "text": "Метка бежит по кругу. Нажми Пробел точно в момент, когда она дойдёт до отметки. Важна точность, а не скорость.",
+  },
+  "keys": [
+    "Space",
+  ],
+  "layout": "keyboard",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions are those of 0.2.0 > 1 stroop keys 1`] = `
+{
+  "L": 8,
+  "instruction": {
+    "keysHint": "D, F, J",
+    "text": "Отвечай по цвету букв, а не по слову: красный — D, зелёный — F, синий — J. Подсказка клавиш — внизу экрана.",
+  },
+  "keys": [
+    "KeyD",
+    "KeyF",
+    "KeyJ",
+  ],
+  "layout": "keyboard",
+  "legend": "красный — D · зелёный — F · синий — J",
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions are those of 0.2.0 > 1 szmr keys 1`] = `
+{
+  "L": 0,
+  "instruction": {
+    "keysHint": "F, J",
+    "text": "Каждому цвету соответствует своя клавиша: красный — F, зелёный — J. Нажимай нужную как можно быстрее.",
+  },
+  "keys": [
+    "KeyF",
+    "KeyJ",
+  ],
+  "layout": "keyboard",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions are those of 0.2.0 > 1 taskswitch keys 1`] = `
+{
+  "L": 5,
+  "instruction": {
+    "keysHint": "F, J",
+    "text": "Над фигурой написано правило. ЦВЕТ: красная — F, синяя — J. ФОРМА: круг — F, квадрат — J. Правило может смениться в любой момент.",
+  },
+  "keys": [
+    "KeyF",
+    "KeyJ",
+  ],
+  "layout": "keyboard",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions are those of 0.2.0 > 2 gonogo keys 1`] = `
+{
+  "L": 10,
+  "instruction": {
+    "keysHint": "Пробел",
+    "text": "На красный круг нажимай Пробел. На зелёный круг не нажимай ничего.",
+  },
+  "keys": [
+    "Space",
+  ],
+  "layout": "keyboard",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions are those of 0.2.0 > 2 pomeh keys 1`] = `
+{
+  "L": 8,
+  "instruction": {
+    "keysHint": "Пробел",
+    "text": "Когда в центре появится красный круг, нажми Пробел. Иногда вокруг будут появляться другие фигуры, на них не реагируй. Вместе с фигурами будет мерцать фон.",
+  },
+  "keys": [
+    "Space",
+  ],
+  "layout": "keyboard",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions are those of 0.2.0 > 2 pzmr keys 1`] = `
+{
+  "L": 0,
+  "instruction": {
+    "keysHint": "Пробел",
+    "text": "Когда появится красный круг, как можно быстрее нажми Пробел. Не нажимай заранее: это фальстарт.",
+  },
+  "keys": [
+    "Space",
+  ],
+  "layout": "keyboard",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions are those of 0.2.0 > 2 rdo keys 1`] = `
+{
+  "L": 0,
+  "instruction": {
+    "keysHint": "Пробел",
+    "text": "Метка бежит по кругу. Нажми Пробел точно в момент, когда она дойдёт до отметки. Важна точность, а не скорость.",
+  },
+  "keys": [
+    "Space",
+  ],
+  "layout": "keyboard",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions are those of 0.2.0 > 2 stroop keys 1`] = `
+{
+  "L": 8,
+  "instruction": {
+    "keysHint": "D, F, J",
+    "text": "Отвечай по цвету букв, а не по слову: красный — D, зелёный — F, синий — J. Подсказка клавиш — внизу экрана.",
+  },
+  "keys": [
+    "KeyD",
+    "KeyF",
+    "KeyJ",
+  ],
+  "layout": "keyboard",
+  "legend": "красный — D · зелёный — F · синий — J",
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions are those of 0.2.0 > 2 szmr keys 1`] = `
+{
+  "L": 0,
+  "instruction": {
+    "keysHint": "F, J",
+    "text": "Каждому цвету соответствует своя клавиша: красный — F, зелёный — J. Нажимай нужную как можно быстрее.",
+  },
+  "keys": [
+    "KeyF",
+    "KeyJ",
+  ],
+  "layout": "keyboard",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions are those of 0.2.0 > 2 taskswitch keys 1`] = `
+{
+  "L": 5,
+  "instruction": {
+    "keysHint": "F, J",
+    "text": "Над фигурой написано правило. ЦВЕТ: красная — F, синяя — J. ФОРМА: круг — F, квадрат — J. Правило может смениться в любой момент.",
+  },
+  "keys": [
+    "KeyF",
+    "KeyJ",
+  ],
+  "layout": "keyboard",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions are those of 0.2.0 > 3 gonogo keys 1`] = `
+{
+  "L": 10,
+  "instruction": {
+    "keysHint": "Пробел",
+    "text": "На красный круг нажимай Пробел. На зелёный круг не нажимай ничего.",
+  },
+  "keys": [
+    "Space",
+  ],
+  "layout": "keyboard",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions are those of 0.2.0 > 3 pomeh keys 1`] = `
+{
+  "L": 8,
+  "instruction": {
+    "keysHint": "Пробел",
+    "text": "Когда в центре появится красный круг, нажми Пробел. Иногда вокруг будут появляться другие фигуры, на них не реагируй. Вместе с фигурами будет мерцать фон.",
+  },
+  "keys": [
+    "Space",
+  ],
+  "layout": "keyboard",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions are those of 0.2.0 > 3 pzmr keys 1`] = `
+{
+  "L": 0,
+  "instruction": {
+    "keysHint": "Пробел",
+    "text": "Когда появится красный круг, как можно быстрее нажми Пробел. Не нажимай заранее: это фальстарт.",
+  },
+  "keys": [
+    "Space",
+  ],
+  "layout": "keyboard",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions are those of 0.2.0 > 3 rdo keys 1`] = `
+{
+  "L": 0,
+  "instruction": {
+    "keysHint": "Пробел",
+    "text": "Метка бежит по кругу. Нажми Пробел точно в момент, когда она дойдёт до отметки. Важна точность, а не скорость.",
+  },
+  "keys": [
+    "Space",
+  ],
+  "layout": "keyboard",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions are those of 0.2.0 > 3 stroop keys 1`] = `
+{
+  "L": 8,
+  "instruction": {
+    "keysHint": "D, F, J",
+    "text": "Отвечай по цвету букв, а не по слову: красный — D, зелёный — F, синий — J. Подсказка клавиш — внизу экрана.",
+  },
+  "keys": [
+    "KeyD",
+    "KeyF",
+    "KeyJ",
+  ],
+  "layout": "keyboard",
+  "legend": "красный — D · зелёный — F · синий — J",
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions are those of 0.2.0 > 3 szmr keys 1`] = `
+{
+  "L": 0,
+  "instruction": {
+    "keysHint": "F, J",
+    "text": "Каждому цвету соответствует своя клавиша: красный — F, зелёный — J. Нажимай нужную как можно быстрее.",
+  },
+  "keys": [
+    "KeyF",
+    "KeyJ",
+  ],
+  "layout": "keyboard",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions are those of 0.2.0 > 3 taskswitch keys 1`] = `
+{
+  "L": 5,
+  "instruction": {
+    "keysHint": "F, J",
+    "text": "Над фигурой написано правило. ЦВЕТ: красная — F, синяя — J. ФОРМА: круг — F, квадрат — J. Правило может смениться в любой момент.",
+  },
+  "keys": [
+    "KeyF",
+    "KeyJ",
+  ],
+  "layout": "keyboard",
+  "legend": null,
+}
+`;
+
 exports[`diagnostic reaction blocks > diagnostic reaction blocks are those of 0.2.0 > 1 gonogo 1`] = `
 {
   "audio": null,
@@ -17851,4 +18178,73 @@ exports[`diagnostic reaction blocks > the distractors of the diagnostic Поме
     "y": -0.27367390864526453,
   },
 ]
+`;
+
+exports[`diagnostic reaction blocks > the span protocol and the Горбов runs of the diagnostic keep their 0.2.0 parameters > gorbov run 0 1`] = `
+{
+  "L": 0,
+  "kind": "table",
+  "module": "gorbov",
+  "overload": false,
+  "params": {
+    "reshuffleEvery": null,
+    "size": 7,
+    "timeLimitMs": 120000,
+  },
+  "task": "black_up",
+}
+`;
+
+exports[`diagnostic reaction blocks > the span protocol and the Горбов runs of the diagnostic keep their 0.2.0 parameters > gorbov run 1 1`] = `
+{
+  "L": 0,
+  "kind": "table",
+  "module": "gorbov",
+  "overload": false,
+  "params": {
+    "reshuffleEvery": null,
+    "size": 7,
+    "timeLimitMs": 120000,
+  },
+  "task": "red_down",
+}
+`;
+
+exports[`diagnostic reaction blocks > the span protocol and the Горбов runs of the diagnostic keep their 0.2.0 parameters > gorbov run 2 1`] = `
+{
+  "L": 0,
+  "kind": "table",
+  "module": "gorbov",
+  "overload": false,
+  "params": {
+    "reshuffleEvery": null,
+    "size": 7,
+    "timeLimitMs": 192000,
+  },
+  "task": "alternate",
+}
+`;
+
+exports[`diagnostic reaction blocks > the span protocol and the Горбов runs of the diagnostic keep their 0.2.0 parameters > memory plan 1`] = `
+{
+  "L": 0,
+  "count": 20,
+  "kind": "memory",
+  "mode": "digits",
+  "overload": false,
+  "params": {
+    "gapMs": 250,
+    "itemMs": 1000,
+    "length": 3,
+  },
+  "protocol": "span",
+}
+`;
+
+exports[`diagnostic reaction blocks > the span protocol and the Горбов runs of the diagnostic keep their 0.2.0 parameters > span protocol params 1`] = `
+{
+  "gapMs": 250,
+  "itemMs": 1000,
+  "length": 3,
+}
 `;

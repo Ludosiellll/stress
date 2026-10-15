@@ -9,9 +9,9 @@ import { noiseFrame } from '../engine/noise';
 import { OVERLOAD_LEVEL_STEP, type Segment } from '../engine/planner';
 import { MIN_COND_RTS, condPairOf, type CondPair } from '../engine/reaction/conditions';
 import type { Outcome, ReactionSummary } from '../engine/reaction/types';
-import { REACTION_MODULE_IDS, isReactionModule, type FamilyId, type ReactionModuleId } from '../engine/types';
+import { REACTION_MODULE_IDS, isReactionModule, type FamilyId, type ModuleId, type ReactionModuleId } from '../engine/types';
 import { createRng, deriveSeed } from '../engine/rng';
-import { generateMemoryTrials, spanProtocolTrials } from '../modules/memory/generate';
+import { generateMemoryTrials, SPAN_PROTOCOL_PARAMS, spanProtocolTrials } from '../modules/memory/generate';
 import { memoryModeForBlock, memoryParams } from '../modules/memory/params';
 import { FAMILIES } from '../modules/numseries/families';
 import { generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
@@ -249,14 +249,22 @@ describe('planBlock', () => {
 
 describe('diagnostic reaction blocks', () => {
   const ctx = { layout: 'keyboard', scale: 1, diagnostic: true } as const;
-  /** Block 0, attempt 0 of every reaction segment of diagnostic n. */
-  const diagnosticSteps = (n: number) =>
+  /** Plan and step of block 0, attempt 0 of every reaction segment of diagnostic n. */
+  const diagnosticBlocks = (n: number) =>
     planDiagnostic(n).segments.flatMap((seg) => {
       if (!isReactionModule(seg.module)) return [];
-      const { step } = buildBlock(planBlock(seg, seg.fixedL ?? 0, 0, ctx), diagnosticBlockSeed(n, seg.module, 0, 0), 'keyboard', new Map());
+      const plan = planBlock(seg, seg.fixedL ?? 0, 0, ctx);
+      const { step } = buildBlock(plan, diagnosticBlockSeed(n, seg.module, 0, 0), 'keyboard', new Map());
       if (step.kind !== 'reaction_block') throw new Error('expected a reaction block');
-      return [step];
+      return [{ plan, step }];
     });
+  const diagnosticSteps = (n: number) => diagnosticBlocks(n).map((b) => b.step);
+  /** The diagnostic segment of `module` (diagnostic 1; the segments of every diagnostic are the same). */
+  const diagnosticSegment = (module: ModuleId): Segment => {
+    const seg = planDiagnostic(1).segments.find((s) => s.module === module);
+    if (seg === undefined) throw new Error(`expected a ${module} segment`);
+    return seg;
+  };
 
   it('diagnostic reaction blocks are those of 0.2.0', () => {
     for (const n of [1, 2, 3]) {
@@ -264,6 +272,26 @@ describe('diagnostic reaction blocks', () => {
         // The layer fields are listed one by one: a new field (noiseGate, …) must not change the snapshot.
         expect({ specs, noise: layers.noise, audio: layers.audio, gate: layers.gate }).toMatchSnapshot(`${String(n)} ${module}`);
       }
+    }
+  });
+
+  it('diagnostic keys, legends and instructions are those of 0.2.0', () => {
+    // The key mapping and the layout of the day (F9) must not reach a diagnostic: every diagnostic is pinned, as its
+    // plan seed differs.
+    for (const n of [1, 2, 3]) {
+      for (const { plan, step } of diagnosticBlocks(n)) {
+        const { keys, layout, legend, L } = step;
+        expect({ keys, layout, legend, L, instruction: blockInstruction(plan, 'keyboard') }).toMatchSnapshot(`${String(n)} ${step.module} keys`);
+      }
+    }
+  });
+
+  it('the span protocol and the Горбов runs of the diagnostic keep their 0.2.0 parameters', () => {
+    expect(SPAN_PROTOCOL_PARAMS).toMatchSnapshot('span protocol params');
+    expect(planBlock(diagnosticSegment('memory'), 0, 0, ctx)).toMatchSnapshot('memory plan');
+    const gorbov = diagnosticSegment('gorbov');
+    for (const run of [0, 1, 2]) {
+      expect(planBlock(gorbov, gorbov.fixedL ?? 0, run, ctx)).toMatchSnapshot(`gorbov run ${String(run)}`);
     }
   });
 

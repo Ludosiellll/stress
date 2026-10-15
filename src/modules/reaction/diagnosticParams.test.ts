@@ -25,4 +25,21 @@ describe('DIAGNOSTIC_PARAMS', () => {
       typeof v !== 'object' || v === null || (Object.isFrozen(v) && Object.values(v).every(frozenDeep));
     expect(frozenDeep(DIAGNOSTIC_PARAMS)).toBe(true);
   });
+
+  it('is read-only all the way down for the type checker too', () => {
+    // Never called: on the frozen object these writes would throw. `npm run typecheck` fails if one of them compiles.
+    const writes = [
+      // @ts-expect-error a nested field is read-only
+      () => (DIAGNOSTIC_PARAMS.pomeh.noise.distractors = 8),
+      // @ts-expect-error a nested array is read-only
+      () => (DIAGNOSTIC_PARAMS.taskswitch.rules[0] = 'size'),
+      () => {
+        for (const f of DIAGNOSTIC_PARAMS.pomeh.noise.forbidden) {
+          // @ts-expect-error an object inside a nested array is read-only
+          f.color = 'green';
+        }
+      },
+    ];
+    expect(writes).toHaveLength(3);
+  });
 });

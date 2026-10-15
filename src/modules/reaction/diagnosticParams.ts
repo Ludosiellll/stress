@@ -17,13 +17,20 @@ export interface DiagnosticParams {
   taskswitch: TaskSwitchParams;
 }
 
-/** Freezes `v` and everything it holds. */
-function deepFreeze<T>(v: T): T {
+/** `T` with every field read-only, all the way down; arrays become read-only arrays. */
+export type DeepReadonly<T> = T extends readonly (infer U)[]
+  ? readonly DeepReadonly<U>[]
+  : T extends object
+    ? { readonly [K in keyof T]: DeepReadonly<T[K]> }
+    : T;
+
+/** Freezes `v` and everything it holds; the type says so too. */
+function deepFreeze<T>(v: T): DeepReadonly<T> {
   if (typeof v === 'object' && v !== null) {
     for (const inner of Object.values(v)) deepFreeze(inner);
     Object.freeze(v);
   }
-  return v;
+  return v as DeepReadonly<T>;
 }
 
 /**
@@ -32,7 +39,7 @@ function deepFreeze<T>(v: T): T {
  * parameters adds it here with the value that keeps the block as in 0.2.0 (the snapshot in session/blocks.test.ts).
  * switchProb is the literal 0.3 (params(5) gave 0.30000000000000004): round(0.3 · 47) = 14 switches all the same.
  */
-export const DIAGNOSTIC_PARAMS: Readonly<DiagnosticParams> = deepFreeze<DiagnosticParams>({
+export const DIAGNOSTIC_PARAMS: DeepReadonly<DiagnosticParams> = deepFreeze<DiagnosticParams>({
   pzmr: { windowMs: 1000, isiMin: 500, isiMax: 2500 },
   szmr: { windowMs: 1500, nColors: 2, nKeys: 2, shapeDistractor: false, inversion: false },
   gonogo: { windowMs: 446, noGoRatio: 0.2, noGoStimulus: 'green_circle' },
