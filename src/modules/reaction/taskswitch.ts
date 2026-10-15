@@ -67,7 +67,7 @@ export const taskswitch: ReactionModule<TaskSwitchParams> = {
     cueLeadMs: Math.round(900 * 0.88 ** L),
   }),
 
-  cvMax: () => null,
+  cvMax: 0.225,
 
   generateBlock(p, rng, layout, size) {
     const n = blockLength(size, BLOCK_SIZE);

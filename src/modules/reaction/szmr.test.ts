@@ -83,9 +83,8 @@ describe('szmr.params', () => {
 });
 
 describe('szmr.cvMax', () => {
-  it('0.30 at L=0, floor 0.15 at L=30', () => {
-    expect(szmr.cvMax(0)).toBeCloseTo(0.3, 12);
-    expect(szmr.cvMax(30)).toBeCloseTo(0.15, 12);
+  it('0.22 at every level (F2)', () => {
+    expect(szmr.cvMax).toBe(0.22);
   });
 });
 

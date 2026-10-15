@@ -33,13 +33,12 @@ describe('taskswitch catalogue', () => {
     expect(RULE_WORDS).toEqual({ color: 'ЦВЕТ', shape: 'ФОРМА', size: 'РАЗМЕР' });
   });
 
-  it('title, block size (W2-R5), L_norm, two keys, no stability threshold', () => {
+  it('title, block size (W2-R5), L_norm, two keys, stability threshold', () => {
     expect(taskswitch.id).toBe('taskswitch');
     expect(taskswitch.title).toBe('Переключение правил');
     expect(taskswitch.blockSize).toBe(20);
     expect(taskswitch.lNorm).toBe(10);
-    expect(taskswitch.cvMax(0)).toBeNull();
-    expect(taskswitch.cvMax(30)).toBeNull();
+    expect(taskswitch.cvMax).toBe(0.225);
     expect(taskswitch.keyCount(taskswitch.params(0))).toBe(2);
     expect(taskswitch.keyCount(taskswitch.params(20))).toBe(2);
   });

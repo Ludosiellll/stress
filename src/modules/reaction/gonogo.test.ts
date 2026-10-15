@@ -45,9 +45,8 @@ describe('gonogo.params', () => {
 });
 
 describe('gonogo.cvMax', () => {
-  it('0.30 at L=0, floor 0.15 at L=30', () => {
-    expect(gonogo.cvMax(0)).toBeCloseTo(0.3, 12);
-    expect(gonogo.cvMax(30)).toBeCloseTo(0.15, 12);
+  it('0.205 at every level (F2)', () => {
+    expect(gonogo.cvMax).toBe(0.205);
   });
 });
 

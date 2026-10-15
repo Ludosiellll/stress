@@ -5,6 +5,10 @@ export const TARGET = 0.8;
 
 const MIN_DELTA = -2;
 const MAX_DELTA = 3;
+/** The step cap when CV_all is above cvMax and the lapses are below their limit (F2 with F-R1). */
+export const CV_HOLD_CAP = 0.5;
+/** The step cap when the lapses reach their limit (F2); it wins over CV_HOLD_CAP. */
+export const LAPSE_HOLD_CAP = 0;
 /** g = 2 also follows a block of the same module in this session with s ≥ 0.95. */
 const BOOST_PREV_SCORE = 0.95;
 /** A break longer than this many days costs 3 levels instead of 2. */
@@ -34,15 +38,19 @@ export interface DeltaInput {
   calibration: boolean;
   /** s of the previous block of the same module in this session, if any. */
   prevScoreSameSession: number | null;
-  /** CV of hit RTs in the block; null for modules without a stability rule. */
-  cvRt: number | null;
-  /** cvMax(L) of the module; null disables the stability rule. */
+  /** CV_all of the block (stabilityOf); null: too few answers, or a module without RTs. */
+  cvAll: number | null;
+  /** Lapses of the block (stabilityOf); 0 for modules without RTs. */
+  lapses: number;
+  /** This many lapses hold the level (lapseLimit); 0 for modules without RTs. */
+  lapseLimit: number;
+  /** The module's CV_all limit; null: no stability rule (РДО, tables, memory). */
   cvMax: number | null;
   timingUnreliable: boolean;
 }
 
-/** Weighted staircase step ΔL = g·(s − 0.8)/0.2 clamped to [−2, +3] (spec §6.2). */
-export function levelDelta(i: DeltaInput): number {
+/** ΔL before the stability rule: g·(s − 0.8)/0.2 clamped to [−2, +3]; 0 for a block whose timing is unreliable. */
+function staircaseStep(i: DeltaInput): number {
   if (!(i.score >= 0 && i.score <= 1)) {
     throw new RangeError(`score must be within [0, 1], got ${String(i.score)}`);
   }
@@ -52,9 +60,34 @@ export function levelDelta(i: DeltaInput): number {
     (i.prevScoreSameSession !== null && i.prevScoreSameSession >= BOOST_PREV_SCORE - EPS);
   const g = boosted ? 2 : 1;
   const raw = snap((g * (i.score - TARGET)) / (1 - TARGET));
-  const delta = Math.min(MAX_DELTA, Math.max(MIN_DELTA, raw));
-  const unstable = i.score > TARGET && i.cvMax !== null && i.cvRt !== null && i.cvRt > i.cvMax;
-  return unstable ? Math.min(delta, 0) : delta;
+  return Math.min(MAX_DELTA, Math.max(MIN_DELTA, raw));
+}
+
+/**
+ * The cap of the stability rule (F2 with F-R1): with s > 0.8 and a cvMax, lapses at their limit cap ΔL at 0, else CV_all
+ * above cvMax caps it at +0.5; null when neither holds.
+ */
+function stabilityCap(i: DeltaInput): number | null {
+  if (!(i.score > TARGET) || i.cvMax === null) return null;
+  if (i.lapses >= i.lapseLimit) return LAPSE_HOLD_CAP;
+  return i.cvAll !== null && i.cvAll > i.cvMax ? CV_HOLD_CAP : null;
+}
+
+/** null: the rule did not fire (s ≤ 0.8, no cvMax, CV and lapses within limits). held: it lowered ΔL. */
+export function stabilityHold(i: DeltaInput): { cap: number; held: boolean } | null {
+  const step = staircaseStep(i);
+  const cap = stabilityCap(i);
+  return cap === null ? null : { cap, held: cap < step };
+}
+
+/**
+ * Weighted staircase step ΔL = g·(s − 0.8)/0.2 clamped to [−2, +3] (spec §6.2), capped by the stability rule
+ * (stabilityHold): at +0.5 for an uneven block, at 0 for one with too many lapses.
+ */
+export function levelDelta(i: DeltaInput): number {
+  const step = staircaseStep(i);
+  const cap = stabilityCap(i);
+  return cap === null ? step : Math.min(step, cap);
 }
 
 export function nextLevel(L: number, i: DeltaInput): number {

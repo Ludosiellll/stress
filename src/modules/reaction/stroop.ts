@@ -56,7 +56,7 @@ export const stroop: ReactionModule<StroopParams> = {
     isiMax: 2000,
   }),
 
-  cvMax: () => null,
+  cvMax: 0.235,
 
   generateBlock(p, rng, layout, size) {
     const n = blockLength(size, BLOCK_SIZE);

@@ -34,7 +34,7 @@ export const gonogo: ReactionModule<GoNoGoParams> = {
     noGoStimulus: L >= 20 ? 'red_square' : 'green_circle',
   }),
 
-  cvMax: (L) => Math.max(0.15, 0.3 - 0.005 * L),
+  cvMax: 0.205,
 
   generateBlock(p, rng, layout, size) {
     const n = blockLength(size, BLOCK_SIZE);

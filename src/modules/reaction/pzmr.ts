@@ -26,7 +26,7 @@ export const pzmr: ReactionModule<PzmrParams> = {
     };
   },
 
-  cvMax: (L) => Math.max(0.12, 0.25 - 0.006 * L),
+  cvMax: 0.19,
 
   generateBlock(p, rng, layout, size) {
     const n = blockLength(size, BLOCK_SIZE);

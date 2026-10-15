@@ -57,7 +57,7 @@ export default function BlockSummary({ view, busy, onContinue }: BlockSummaryPro
       <p>Успешно: {Math.round(view.score * 100)} %</p>
       <ul aria-label="Показатели">
         {view.lines.map((line) => (
-          <li key={line}>{line}</li>
+          <li key={line}>{noBreakUnits(line)}</li>
         ))}
       </ul>
       {assessment.length > 0 && (

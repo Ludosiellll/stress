@@ -25,7 +25,7 @@ describe('BlockSummary', () => {
     expect(screen.getByText('Успешно: 85 %')).toBeTruthy();
     // The error line with the penalised score opens the metrics; «Успешно» stays the share of successes (F1).
     const metrics = within(screen.getByRole('list', { name: 'Показатели' })).getAllByRole('listitem');
-    expect(metrics.map((li) => li.textContent)).toEqual(VIEW.lines);
+    expect(metrics.map((li) => li.textContent.replaceAll('\u00a0', ' '))).toEqual(VIEW.lines);
     expect(screen.getByText('Калибровка')).toBeTruthy();
     expect(screen.getByText('Блок помечен: усталость')).toBeTruthy();
     expect(screen.getByText('Замер ненадёжен: пропуски кадров — уровень не менялся')).toBeTruthy();
@@ -90,6 +90,16 @@ describe('BlockSummary', () => {
       'До ступени 4 «сверх нормы»: уровень 17 (+3,5). Там: лимит времени: 39\u00a0→\u00a029\u00a0с',
       'Норма (ориентир): 44,0\u00a0с — средний; выше среднего — до 37\u00a0с. Бумажная методика, источник не указан',
       'Раньше в этом блоке: прошлый раз 67\u00a0% (ряд 7, ур. 9)',
+    ]);
+  });
+
+  it('a number never breaks from its unit in the metrics either (T-R26)', () => {
+    const lines = ['Ошибок нет.', 'Уровень повышен только на 0,5: разброс 29,3 % при пороге 22 %.', 'Медиана: 312 мс'];
+    render(<BlockSummary view={{ ...VIEW, lines }} busy={false} onContinue={vi.fn()} />);
+    expect(within(screen.getByRole('list', { name: 'Показатели' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+      'Ошибок нет.',
+      'Уровень повышен только на 0,5: разброс 29,3\u00a0% при пороге 22\u00a0%.',
+      'Медиана: 312\u00a0мс',
     ]);
   });
 

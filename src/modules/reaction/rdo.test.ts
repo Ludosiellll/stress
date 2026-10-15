@@ -37,8 +37,7 @@ describe('rdo.params', () => {
 
 describe('rdo.cvMax', () => {
   it('is null (no RT stability check)', () => {
-    expect(rdo.cvMax(0)).toBeNull();
-    expect(rdo.cvMax(30)).toBeNull();
+    expect(rdo.cvMax).toBeNull();
   });
 });
 

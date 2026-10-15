@@ -27,13 +27,12 @@ describe('stroop catalogue', () => {
     expect(COLOR_WORDS).toEqual({ red: 'КРАСНЫЙ', green: 'ЗЕЛЁНЫЙ', blue: 'СИНИЙ', yellow: 'ЖЁЛТЫЙ' });
   });
 
-  it('title, block size (W2-R5), no stability threshold', () => {
+  it('title, block size (W2-R5), stability threshold', () => {
     expect(stroop.id).toBe('stroop');
     expect(stroop.title).toBe('Струп');
     expect(stroop.blockSize).toBe(20);
     expect(stroop.lNorm).toBe(10);
-    expect(stroop.cvMax(0)).toBeNull();
-    expect(stroop.cvMax(30)).toBeNull();
+    expect(stroop.cvMax).toBe(0.235);
   });
 });
 

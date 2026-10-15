@@ -1,6 +1,8 @@
+import { LAPSE_HOLD_CAP } from '../engine/adaptive';
 import type { DiagnosticResults } from '../engine/diagnostic';
 import { BASE_ITEM_LIMIT_MS } from '../engine/itemLimit';
 import { condPairOf, type ConditionStats } from '../engine/reaction/conditions';
+import { LAPSE_MEDIAN_FACTOR, type Stability } from '../engine/reaction/stability';
 import { penaltyPoints } from '../engine/reaction/summary';
 import type { ReactionSummary, TrialSpec } from '../engine/reaction/types';
 import type { BlockFlag, InputKey, LayoutId, ModuleId, ReactionModuleId, TableModuleId } from '../engine/types';
@@ -219,13 +221,17 @@ function biasLine(meanSignedErrorMs: number): string {
   return 'Смещение: 0 мс';
 }
 
-/** Errors first; then the times, the РДО lines, and the misses last (Р5, T-R6). */
-export function reactionLines(module: ReactionModuleId, s: ReactionSummary): string[] {
+/**
+ * Errors first; then the times, the РДО lines, and the misses last (Р5, T-R6). «Стабильность (CV)» is CV_all, what the
+ * stability rule sees, when the block's `stability` is given; otherwise the CV of the hits (Р6).
+ */
+export function reactionLines(module: ReactionModuleId, s: ReactionSummary, stability: Pick<Stability, 'cvAll'> | null = null): string[] {
   const lines = [errorLine(module, s)];
   if (s.medianRt !== null) lines.push(`Медиана: ${String(whole(s.medianRt))} мс`);
   if (s.meanRt !== null) lines.push(`Среднее: ${String(whole(s.meanRt))} мс`);
   if (s.sdRt !== null) lines.push(`Разброс (SD): ${String(whole(s.sdRt))} мс`);
-  if (s.cvRt !== null) lines.push(`Стабильность (CV): ${decimal(s.cvRt, 2)}`);
+  const cv = stability === null ? s.cvRt : stability.cvAll;
+  if (cv !== null) lines.push(`Стабильность (CV): ${decimal(cv, 2)}`);
   // The error by modulus is the РДО number the history and the diagnostic compare (FW1).
   if (s.meanAbsErrorMs !== null) lines.push(`Средняя ошибка по модулю: ${String(whole(s.meanAbsErrorMs))} мс`);
   if (s.meanSignedErrorMs !== null) lines.push(biasLine(s.meanSignedErrorMs));
@@ -287,9 +293,32 @@ export function conditionLines(module: ReactionModuleId, stats: ConditionStats, 
   return lines;
 }
 
-/** «Уровень не повышен: разброс выше порога (CV 0,24 > 0,19)» (I3). */
-export function stabilityLine(cvRt: number, cvMax: number): string {
-  return `Уровень не повышен: разброс выше порога (CV ${decimal(cvRt, 2)} > ${decimal(cvMax, 2)})`;
+/** What the stability rule saw and the cap it put on the level step (stabilityHold). */
+export interface StabilityView {
+  cvAll: number | null;
+  lapses: number;
+  lapseLimit: number;
+  cvMax: number;
+  cap: number;
+}
+
+/** A number with a decimal comma and no trailing zeros: 0,5; 1,5; 22. */
+const shortDecimal = (x: number): string => String(x).replace('.', ',');
+/** A share in percent with one decimal at most: 0.205 → «20,5», 0.24 → «24». */
+const percentText = (x: number): string => shortDecimal(Math.round(1000 * x) / 10);
+
+/**
+ * Why the level rose less than the score says (F2, F-R1; shown only when the rule lowered the step, Р8):
+ * «Уровень повышен только на 0,5: разброс 24 % при пороге 22 %.», or for lapses, which win,
+ * «Уровень не повышен: провалов 3 (пропуск или ответ дольше 1,5 медианы), допускается 1.».
+ */
+export function stabilityLine(s: StabilityView): string {
+  if (s.cap === LAPSE_HOLD_CAP) {
+    const factor = shortDecimal(LAPSE_MEDIAN_FACTOR);
+    return `Уровень не повышен: провалов ${String(s.lapses)} (пропуск или ответ дольше ${factor} медианы), допускается ${String(s.lapseLimit - 1)}.`;
+  }
+  if (s.cvAll === null) throw new RangeError('stabilityLine: a CV cap without CV_all');
+  return `Уровень повышен только на ${shortDecimal(s.cap)}: разброс ${percentText(s.cvAll)} % при пороге ${percentText(s.cvMax)} %.`;
 }
 
 export function tableLines(r: TableRunResult): string[] {

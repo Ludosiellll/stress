@@ -93,7 +93,7 @@ export const szmr: ReactionModule<SzmrParams> = {
     };
   },
 
-  cvMax: (L) => Math.max(0.15, 0.3 - 0.005 * L),
+  cvMax: 0.22,
 
   generateBlock(p, rng, layout, size) {
     const n = blockLength(size, BLOCK_SIZE);

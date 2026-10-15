@@ -1,12 +1,13 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { Repository } from '../data/repository';
 import type { BlockRow, LogicItemRow, TrialRow, WellbeingRow } from '../data/rows';
-import { detectFatigue, nextLevel, startLevel } from '../engine/adaptive';
+import { detectFatigue, nextLevel, stabilityHold, startLevel, type DeltaInput } from '../engine/adaptive';
 import { daysBetween } from '../engine/dates';
 import { deriveModuleStates, isCleanBlock } from '../engine/derive';
 import { parseResults, type DiagnosticResults } from '../engine/diagnostic';
 import type { Rating } from '../engine/elo';
 import { OVERLOAD_LEVEL_STEP, type ModuleState, type Segment, type SessionPlan } from '../engine/planner';
+import { stabilityOf } from '../engine/reaction/stability';
 import type { BlockTimeline } from '../engine/reaction/types';
 import { readinessOfLatest } from '../engine/readiness';
 import { isReactionModule, type BlockFlag, type FamilyId, type LayoutId, type ModuleId } from '../engine/types';
@@ -81,6 +82,11 @@ export type DiscardReason = 'focus_lost' | 'error' | 'user' | 'timing_unreliable
 /** First 3 blocks of a module ever are calibration blocks (g = 2). */
 const CALIBRATION_BLOCKS = 3;
 
+/** The staircase inputs of a block beyond its score, calibration and the previous score (DeltaInput). */
+type LevelInput = Pick<DeltaInput, 'cvAll' | 'lapses' | 'lapseLimit' | 'cvMax' | 'timingUnreliable'>;
+/** Tables and memory: no RTs, so no stability rule. */
+const NO_STABILITY_RULE: LevelInput = Object.freeze({ cvAll: null, lapses: 0, lapseLimit: 0, cvMax: null, timingUnreliable: false });
+
 /** The block on screen. A discard rebuilds it from the same plan with the next attempt's seed. */
 interface ActiveBlock {
   plan: BlockPlan;
@@ -122,10 +128,14 @@ interface FinishedBlock {
   score: number;
   /** «Успешно» of the summary when it is not s: the share of successes of a reaction block (Р4). Default: score. */
   viewScore?: number;
-  /** Staircase inputs; null for number series (no level). */
-  level: { cvRt: number | null; cvMax: number | null; timingUnreliable: boolean } | null;
+  /**
+   * Staircase inputs; null for number series (no level). With a cvMax (the reaction modules except РДО), summaryJson gets
+   * `stability` (Справочник F2) with what the rule did to the level step.
+   */
+  level: LevelInput | null;
   hitRts: number[];
-  summaryJson: string;
+  /** Stored as summaryJson. */
+  summary: object;
   lines: string[];
   task?: TableTaskId;
   /** Number series in training and free sessions: meanFamilyRating after the block (the step by rating). */
@@ -337,21 +347,28 @@ export class SessionController {
         this.restartBlock(module, 'timing_unreliable', { kind: 'notice', module, text: UNRELIABLE_REPLAY_NOTICE });
         return;
       }
+      const stability = stabilityOf(step.specs, results);
       await this.completeBlock({
         module,
         L,
         score: summary.penalizedScore,
         viewScore: summary.score,
-        level: { cvRt: summary.cvRt, cvMax: reactionModules[module].cvMax(L), timingUnreliable: summary.timingUnreliable },
+        level: {
+          cvAll: stability.cvAll,
+          lapses: stability.lapses,
+          lapseLimit: stability.lapseLimit,
+          cvMax: reactionModules[module].cvMax,
+          timingUnreliable: summary.timingUnreliable,
+        },
         hitRts,
-        summaryJson: JSON.stringify({
+        summary: {
           ...summary,
           frameMs: tl.frameMs ?? null,
           conditions,
           ...(tl.audioPlayed === undefined ? {} : { audioPlayed: tl.audioPlayed }),
-        }),
+        },
         lines: [
-          ...reactionLines(module, summary),
+          ...reactionLines(module, summary, stability),
           ...conditionLines(module, conditions, plan.kind === 'reaction' && plan.overload),
           ...(tl.audioPlayed === false ? [AUDIO_NOT_PLAYED] : []),
         ],
@@ -379,9 +396,9 @@ export class SessionController {
         module,
         L: step.L,
         score: result.score,
-        level: { cvRt: null, cvMax: null, timingUnreliable: false },
+        level: NO_STABILITY_RULE,
         hitRts: [],
-        summaryJson: JSON.stringify({ ...result, task: run.task, startTs: run.startTs, clicks: run.clicks }),
+        summary: { ...result, task: run.task, startTs: run.startTs, clicks: run.clicks },
         lines: tableLines(result),
         task: step.task,
         rows: () => ({ trials: [], items: [] }),
@@ -411,11 +428,11 @@ export class SessionController {
         score: successes / total,
         level: null,
         hitRts: [],
-        summaryJson: JSON.stringify({
+        summary: {
           correct: successes,
           total,
           items: outcomes.map((o) => ({ itemId: o.item.id, answer: o.item.answer, given: o.answer.given, timeMs: o.answer.timeMs })),
-        }),
+        },
         lines: seriesLines(successes, total, meanTimeMs, shortestLimitMs),
         ...(ratings === null ? {} : { meanRating: meanFamilyRating(ratings) }),
         rows: (blockId) => ({ trials: [], items: logicItemRows(blockId, outcomes, at) }),
@@ -448,11 +465,9 @@ export class SessionController {
         module: 'memory',
         L: step.L,
         score: exact / n,
-        level: { cvRt: null, cvMax: null, timingUnreliable: false },
+        level: NO_STABILITY_RULE,
         hitRts: [],
-        summaryJson: JSON.stringify(
-          span === null ? { mode, length: params.length, exact, positionsCorrect, answers } : { protocol, mode, exact, span, answers },
-        ),
+        summary: span === null ? { mode, length: params.length, exact, positionsCorrect, answers } : { protocol, mode, exact, span, answers },
         lines: span === null ? memoryLines(exact, n, positionsCorrect, params.length) : spanLines(exact, n, span),
         rows: () => ({ trials: [], items: [] }),
         onCommit: () => {
@@ -704,15 +719,20 @@ export class SessionController {
     const seg = this.segment();
     const active = this.block();
     const calibration = b.level !== null && this.isCalibration(b.module);
-    const lAfter =
+    const input: DeltaInput | null =
       this.counted && b.level !== null
-        ? nextLevel(b.L, { score: b.score, calibration, prevScoreSameSession: this.prevScore(b.module), ...b.level })
-        : b.L;
+        ? { score: b.score, calibration, prevScoreSameSession: this.prevScore(b.module), ...b.level }
+        : null;
+    const lAfter = input === null ? b.L : nextLevel(b.L, input);
     const lines = [...b.lines];
-    const lv = b.level;
-    if (this.counted && lv !== null && !lv.timingUnreliable && b.score > 0.8 && lv.cvMax !== null && lv.cvRt !== null && lv.cvRt > lv.cvMax) {
-      // nextLevel held the level (stability rule): say so (I3).
-      lines.push(stabilityLine(lv.cvRt, lv.cvMax));
+    let summary = b.summary;
+    if (b.level !== null && b.level.cvMax !== null) {
+      // The stability rule (F2): what it saw and what it did to the step nextLevel took. A diagnostic moves no level.
+      const { cvAll, lapses, lapseLimit, cvMax } = b.level;
+      const hold = input === null ? null : stabilityHold(input);
+      summary = { ...summary, stability: { cvAll, lapses, lapseLimit, cvMax, held: hold?.held ?? false, cap: hold?.cap ?? null } };
+      // When it lowered the step, the line says so right after the error line (Р8).
+      if (hold?.held === true) lines.splice(1, 0, stabilityLine({ cvAll, lapses, lapseLimit, cvMax, cap: hold.cap }));
     }
     const flags: BlockFlag[] = [];
     if (calibration) flags.push('calibration');
@@ -721,7 +741,7 @@ export class SessionController {
     if (active.plan.kind !== 'numseries' && active.plan.overload) flags.push('overload');
 
     const id = uuidv4();
-    const row = blockRow(id, this.sessionId, { module: b.module, lBefore: b.L, lAfter, score: b.score, flags }, active, b.summaryJson);
+    const row = blockRow(id, this.sessionId, { module: b.module, lBefore: b.L, lAfter, score: b.score, flags }, active, JSON.stringify(summary));
     const { trials, items } = b.rows(id);
     const assessment = this.assessOrLog(row, b.meanRating ?? null);
     const view: BlockSummaryView = {

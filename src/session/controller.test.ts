@@ -192,6 +192,16 @@ function stateWith(module: ModuleId, over: Partial<ModuleState>): ModuleState {
   return { ...defaultModuleState(module), ...over };
 }
 
+/** The summaryJson of the latest of these block rows (a reaction block's). */
+function storedSummary(rows: readonly BlockRow[]): {
+  cvRt: number | null;
+  stability: { cvAll: number; lapses: number; lapseLimit: number; cvMax: number; held: boolean; cap: number | null };
+} {
+  const row = rows.at(-1);
+  if (row === undefined) throw new Error('expected a stored block');
+  return JSON.parse(row.summaryJson) as ReturnType<typeof storedSummary>;
+}
+
 const segment = (module: ModuleId, budgetMs: number): SessionPlan['segments'][number] => ({
   module,
   budgetMs,
@@ -470,12 +480,18 @@ describe('SessionController — levels and persistence', () => {
     await h.c.submitReaction(playTimeline(block.specs, respond));
     const { view } = expectStep(h.c, 'summary');
     const [row] = await repo.listBlocks();
-    const summary = JSON.parse(row?.summaryJson ?? '{}') as { counts: unknown; score: number; penalizedScore: number; cvRt: number | null };
+    const summary = JSON.parse(row?.summaryJson ?? '{}') as {
+      counts: unknown;
+      score: number;
+      penalizedScore: number;
+      stability: { cvAll: number | null; lapses: number; lapseLimit: number };
+    };
     expect(summary.counts).toMatchObject({ hit: 17, wrong: 2, false_start: 1 });
     expect(row?.score).toBeCloseTo(0.65, 12);
     expect(summary.score).toBeCloseTo(0.85, 12);
     expect(summary.penalizedScore).toBeCloseTo(0.65, 12);
-    const input = { score: 0.65, calibration: false, prevScoreSameSession: null, cvRt: summary.cvRt, cvMax: szmr.cvMax(view.lBefore), timingUnreliable: false };
+    const { cvAll, lapses, lapseLimit } = summary.stability;
+    const input = { score: 0.65, calibration: false, prevScoreSameSession: null, cvAll, lapses, lapseLimit, cvMax: szmr.cvMax, timingUnreliable: false };
     expect(view.lAfter).toBe(nextLevel(view.lBefore, input));
     // The share 0.85 would have raised the level; s 0.65 takes 0.75 off it.
     expect(view.lAfter).toBe(view.lBefore - 0.75);
@@ -609,26 +625,95 @@ describe('SessionController — levels and persistence', () => {
     expect((JSON.parse(row?.summaryJson ?? '{}') as { conditions?: unknown }).conditions).toEqual({});
   });
 
-  it('says why the level did not rise when the RT spread is above the stability threshold (I3)', async () => {
-    const h = await begin(planFree('pzmr', 1));
-    const rts = [150, 500];
-    const { view } = await playReaction(h, (spec, idx) => ({ key: 'Space', rtMs: rts[idx % 2] as number }));
+  it('the CV cap lifts the level by 0.5 and says so after the errors line', async () => {
+    // A first block ever (calibration, g = 2): s = 1 would give +2. Answers alternate 250 and 450 ms: CV_all 0.293.
+    const h = await begin(planFree('szmr', 1));
+    const { view } = await playReaction(h, (spec, idx) => {
+      const r = perfectPlayer(spec, idx);
+      return r === null ? null : { ...r, rtMs: idx % 2 === 0 ? 250 : 450 };
+    });
     expect(view.score).toBe(1);
-    expect(view.lAfter).toBe(view.lBefore);
-    const line = view.lines.find((l) => l.startsWith('Уровень не повышен'));
-    expect(line).toMatch(/^Уровень не повышен: разброс выше порога \(CV 0,\d\d > 0,25\)$/);
-    const cvLine = view.lines.find((l) => l.startsWith('Стабильность (CV): '));
-    expect(line).toContain(`CV ${cvLine?.slice('Стабильность (CV): '.length) ?? ''} >`);
+    expect(view.lBefore).toBe(0);
+    expect(view.lAfter).toBe(0.5);
+    expect(view.lines[0]).toBe('Ошибок нет.');
+    expect(view.lines[1]).toBe('Уровень повышен только на 0,5: разброс 29,3 % при пороге 22 %.');
+    expect(view.lines).toContain('Стабильность (CV): 0,29');
+    const { stability } = storedSummary(await h.repo.listBlocks());
+    expect(stability).toEqual({ cvAll: expect.closeTo(0.29314, 5) as number, lapses: 0, lapseLimit: 2, cvMax: 0.22, held: true, cap: 0.5 });
   });
 
-  it('no stability line when the spread is within the threshold or the score is not above 0.8', async () => {
-    const h = await begin(planFree('pzmr', 1));
-    expect((await playReaction(h)).view.lines.some((l) => l.startsWith('Уровень не повышен'))).toBe(false);
+  it('lapses hold the level', async () => {
+    const repo = new MemoryRepository();
+    await repo.saveModuleState(stateWith('szmr', { lSaved: 4, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    const h = await begin(planFree('szmr', 1), { repo });
+    // 17 answers at 300 ms and 3 misses: s 0.85 would give +0.25; 3 lapses reach the limit of 2 and hold it.
+    const { view } = await playReaction(h, (spec, idx) => (idx < 3 ? null : perfectPlayer(spec, idx)));
+    expect(view.score).toBe(0.85);
+    expect(view.lAfter).toBe(view.lBefore);
+    expect(view.lines[1]).toBe('Уровень не повышен: провалов 3 (пропуск или ответ дольше 1,5 медианы), допускается 1.');
+    expect(storedSummary(await repo.listBlocks()).stability).toEqual({ cvAll: 0, lapses: 3, lapseLimit: 2, cvMax: 0.22, held: true, cap: 0 });
+  });
+
+  it('no stability line when the rule did not lower the step', async () => {
+    const repo = new MemoryRepository();
+    await repo.saveModuleState(stateWith('szmr', { lSaved: 4, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    const h = await begin(planFree('szmr', 1), { repo });
+    const hasLine = (v: BlockSummaryView): boolean => v.lines.some((l) => l.startsWith('Уровень '));
+    /** Answers alternate 250 and 450 ms (CV_all 0.29); `wrong` trials get the other key, `missed` ones none. */
+    const uneven =
+      (wrong: (idx: number) => boolean, missed: (idx: number) => boolean): Respond =>
+      (spec, idx) => {
+        const r = perfectPlayer(spec, idx);
+        if (r === null || missed(idx)) return null;
+        const key = wrong(idx) ? (expectStep(h.c, 'reaction_block').keys.find((k) => k !== r.key) as InputKey) : r.key;
+        return { key, rtMs: idx % 2 === 0 ? 250 : 450 };
+      };
+    // s 0.9 (one wrong key) gives +0.5: the CV cap fires but lowers nothing.
+    const capped = await playReaction(
+      h,
+      uneven((idx) => idx === 0, () => false),
+    );
+    expect(capped.view.lAfter - capped.view.lBefore).toBe(0.5);
+    expect(hasLine(capped.view)).toBe(false);
+    expect(storedSummary(await repo.listBlocks()).stability).toMatchObject({ lapses: 0, held: false, cap: 0.5 });
+    // s 1, every answer at 300 ms: the rule does not fire.
     await h.c.continueAfterSummary();
-    const rts = [150, 500];
-    const weak = await playReaction(h, (spec, idx) => (idx % 3 === 0 ? null : { key: 'Space', rtMs: rts[idx % 2] as number }));
-    expect(weak.view.score).toBeLessThanOrEqual(0.8);
-    expect(weak.view.lines.some((l) => l.startsWith('Уровень не повышен'))).toBe(false);
+    const steady = await playReaction(h);
+    expect(steady.view.lAfter - steady.view.lBefore).toBe(1);
+    expect(hasLine(steady.view)).toBe(false);
+    expect(storedSummary(await repo.listBlocks()).stability).toMatchObject({ cvAll: 0, held: false, cap: null });
+    // s 0.8 and below: no rule, whatever the spread and the lapses.
+    await h.c.continueAfterSummary();
+    const weak = await playReaction(
+      h,
+      uneven(() => false, (idx) => idx % 5 === 0),
+    );
+    expect(weak.view.score).toBe(0.8);
+    expect(hasLine(weak.view)).toBe(false);
+    expect(storedSummary(await repo.listBlocks()).stability).toMatchObject({ lapses: 4, held: false, cap: null });
+  });
+
+  it('a late answer enters CV_all: the CV line shows it and the rule uses it (Р6)', async () => {
+    const repo = new MemoryRepository();
+    await repo.saveModuleState(stateWith('szmr', { lSaved: 4, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    const h = await begin(planFree('szmr', 1), { repo });
+    h.c.ackInstruction();
+    const block = expectStep(h.c, 'reaction_block');
+    // Trial 5 gets no answer in its window, then the right key 300 ms after it: a late answer, before trial 6.
+    const tl = playTimeline(block.specs, (spec, idx) => (idx === 5 ? null : perfectPlayer(spec, idx)));
+    const late = block.specs[5];
+    if (late?.expected.kind !== 'press') throw new Error('СЗМР trials are press trials');
+    const lateTs = (tl.onsets[5] as number) + late.windowMs + 300;
+    expect(lateTs).toBeLessThan(tl.onsets[6] as number);
+    await h.c.submitReaction({ ...tl, presses: [...tl.presses, { key: late.expected.key, ts: lateTs }] });
+    const { view } = expectStep(h.c, 'summary');
+    const stored = storedSummary(await repo.listBlocks());
+    expect(stored.cvRt).toBe(0);
+    expect(stored.stability.cvAll).toBeGreaterThan(0.22);
+    expect(view.lines).toContain(`Стабильность (CV): ${stored.stability.cvAll.toFixed(2).replace('.', ',')}`);
+    // s 0.95 (+0.75) capped at +0.5 by the spread of that one slow answer; it is 1 lapse, below the limit of 2.
+    expect(stored.stability).toMatchObject({ lapses: 1, held: true, cap: 0.5 });
+    expect(view.lAfter - view.lBefore).toBe(0.5);
   });
 
   it('segment starts at startLevel(lSaved, days since last training)', async () => {

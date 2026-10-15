@@ -1,12 +1,15 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import {
+  CV_HOLD_CAP,
+  LAPSE_HOLD_CAP,
   TARGET,
   detectFatigue,
   isPlateau,
   levelDelta,
   nextLevel,
   savedLevel,
+  stabilityHold,
   startLevel,
   type DeltaInput,
   type FatigueBlock,
@@ -16,7 +19,9 @@ const input = (over: Partial<DeltaInput> = {}): DeltaInput => ({
   score: 0.8,
   calibration: false,
   prevScoreSameSession: null,
-  cvRt: null,
+  cvAll: null,
+  lapses: 0,
+  lapseLimit: 2,
   cvMax: null,
   timingUnreliable: false,
   ...over,
@@ -26,7 +31,9 @@ const deltaInputArb = fc.record({
   score: fc.double({ min: 0, max: 1, noNaN: true }),
   calibration: fc.boolean(),
   prevScoreSameSession: fc.option(fc.double({ min: 0, max: 1, noNaN: true })),
-  cvRt: fc.option(fc.double({ min: 0, max: 2, noNaN: true })),
+  cvAll: fc.option(fc.double({ min: 0, max: 2, noNaN: true })),
+  lapses: fc.nat({ max: 20 }),
+  lapseLimit: fc.integer({ min: 2, max: 10 }),
   cvMax: fc.option(fc.double({ min: 0, max: 2, noNaN: true })),
   timingUnreliable: fc.boolean(),
 });
@@ -109,20 +116,26 @@ describe('levelDelta', () => {
     );
   });
 
-  it('stability: high CV of RT blocks the rise but not the drop', () => {
-    expect(levelDelta(input({ score: 1, cvRt: 0.3, cvMax: 0.2 }))).toBe(0);
-    expect(levelDelta(input({ score: 1, calibration: true, cvRt: 0.3, cvMax: 0.2 }))).toBe(0);
-    expect(levelDelta(input({ score: 0.5, cvRt: 0.3, cvMax: 0.2 }))).toBe(-1.5);
+  it('stability: the rule needs s above 0.8 and a module with cvMax', () => {
+    expect(levelDelta(input({ score: 0.5, cvAll: 0.3, cvMax: 0.2, lapses: 5 }))).toBe(-1.5);
+    expect(levelDelta(input({ score: 1, cvAll: 0.9, lapses: 9, cvMax: null }))).toBe(1);
   });
 
-  it('stability: CV at or below the limit does not block the rise', () => {
-    expect(levelDelta(input({ score: 1, cvRt: 0.2, cvMax: 0.2 }))).toBe(1);
-    expect(levelDelta(input({ score: 1, cvRt: 0.1, cvMax: 0.2 }))).toBe(1);
+  it('stability: CV at the limit and lapses below it do not cap the rise', () => {
+    expect(levelDelta(input({ score: 1, cvAll: 0.2, cvMax: 0.2, lapses: 1 }))).toBe(1);
+    expect(levelDelta(input({ score: 1, cvAll: 0.1, cvMax: 0.2 }))).toBe(1);
   });
 
-  it('stability is ignored when cvMax or cvRt is null', () => {
-    expect(levelDelta(input({ score: 1, cvRt: 0.9, cvMax: null }))).toBe(1);
-    expect(levelDelta(input({ score: 1, cvRt: null, cvMax: 0.1 }))).toBe(1);
+  it('stability only ever lowers the step, to at most its cap', () => {
+    fc.assert(
+      fc.property(deltaInputArb, (i) => {
+        const d = levelDelta(i);
+        const free = levelDelta({ ...i, cvMax: null });
+        const hold = stabilityHold(i);
+        return hold === null ? d === free : d === Math.min(free, hold.cap) && hold.held === hold.cap < free;
+      }),
+      { numRuns: 1000 },
+    );
   });
 
   it('timing_unreliable block gives 0', () => {
@@ -138,6 +151,40 @@ describe('levelDelta', () => {
     expect(() => levelDelta(input({ score: Number.NaN }))).toThrow(RangeError);
     expect(() => levelDelta(input({ score: -0.05 }))).toThrow(RangeError);
     expect(() => levelDelta(input({ score: 1.05 }))).toThrow(RangeError);
+  });
+});
+
+describe('stability rule (F2, F-R1)', () => {
+  const base = { calibration: false, prevScoreSameSession: null, cvAll: 0.1, lapses: 0, lapseLimit: 2, cvMax: 0.22, timingUnreliable: false };
+  it('F-R1: CV over cvMax caps the step at +0.5; lapses at the limit cap it at 0 and win', () => {
+    expect(levelDelta({ ...base, score: 1 })).toBe(1);
+    expect(levelDelta({ ...base, score: 1, cvAll: 0.23 })).toBe(0.5);
+    expect(levelDelta({ ...base, score: 0.85, cvAll: 0.23 })).toBe(0.25);
+    expect(levelDelta({ ...base, score: 1, lapses: 2 })).toBe(0);
+    expect(levelDelta({ ...base, score: 1, cvAll: 0.3, lapses: 2 })).toBe(0);
+    expect(levelDelta({ ...base, score: 1, calibration: true, cvAll: 0.3 })).toBe(0.5);
+    expect(levelDelta({ ...base, score: 0.8, cvAll: 0.3, lapses: 5 })).toBe(0);
+    expect(levelDelta({ ...base, score: 0.5, lapses: 5 })).toBe(-1.5);
+    expect(levelDelta({ ...base, score: 1, cvAll: 0.3, lapses: 9, cvMax: null })).toBe(1);
+    expect(levelDelta({ ...base, score: 1, cvAll: null })).toBe(1);
+  });
+  it('stabilityHold says which cap fired and whether it lowered the step', () => {
+    expect(stabilityHold({ ...base, score: 1, cvAll: 0.3 })).toEqual({ cap: 0.5, held: true });
+    expect(stabilityHold({ ...base, score: 0.85, cvAll: 0.3 })).toEqual({ cap: 0.5, held: false });
+    expect(stabilityHold({ ...base, score: 0.9, lapses: 3 })).toEqual({ cap: 0, held: true });
+    expect(stabilityHold({ ...base, score: 1 })).toBeNull();
+    expect(stabilityHold({ ...base, score: 0.7, lapses: 3 })).toBeNull();
+    expect(CV_HOLD_CAP).toBe(0.5);
+  });
+
+  it('the lapse cap is 0; a block whose timing is unreliable already moves by 0, so no cap lowers it', () => {
+    expect(LAPSE_HOLD_CAP).toBe(0);
+    expect(stabilityHold({ ...base, score: 1, lapses: 2, timingUnreliable: true })).toEqual({ cap: 0, held: false });
+    expect(stabilityHold({ ...base, score: 1, cvAll: 0.3, timingUnreliable: true })).toEqual({ cap: 0.5, held: false });
+  });
+
+  it('stabilityHold rejects a score outside [0, 1] like levelDelta', () => {
+    expect(() => stabilityHold({ ...base, score: Number.NaN })).toThrow(RangeError);
   });
 });
 

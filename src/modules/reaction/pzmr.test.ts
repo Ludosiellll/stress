@@ -41,9 +41,8 @@ describe('pzmr.params', () => {
 });
 
 describe('pzmr.cvMax', () => {
-  it('0.25 at L=0, floor 0.12 at L=30', () => {
-    expect(pzmr.cvMax(0)).toBeCloseTo(0.25, 12);
-    expect(pzmr.cvMax(30)).toBeCloseTo(0.12, 12);
+  it('0.19 at every level (F2)', () => {
+    expect(pzmr.cvMax).toBe(0.19);
   });
 });
 

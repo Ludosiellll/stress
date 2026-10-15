@@ -16,7 +16,11 @@ export interface ReactionModule<P> {
   lNorm: number;
   blockSize: number;
   params(L: number): P;
-  cvMax(L: number): number | null;
+  /**
+   * The CV_all limit of the stability rule (F2): above it ΔL is capped at +0.5. The same at every level (spec §2.2);
+   * null: no rule (РДО).
+   */
+  cvMax: number | null;
   generateBlock(p: P, rng: Rng, layout: LayoutId, size?: number): TrialSpec[];
   /** Keys a block at these parameters needs (layoutKeys(layout, keyCount(p))). */
   keyCount(p: P): number;

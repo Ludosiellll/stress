@@ -32,7 +32,9 @@ function simulate(seed: number, blocks: number, abilityAt: (block: number) => nu
       score,
       calibration: b < CALIBRATION_BLOCKS,
       prevScoreSameSession: prev,
-      cvRt: null,
+      cvAll: null,
+      lapses: 0,
+      lapseLimit: 0,
       cvMax: null,
       timingUnreliable: false,
     });

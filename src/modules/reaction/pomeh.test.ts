@@ -35,9 +35,7 @@ describe('pomeh catalogue', () => {
     expect(pomeh.title).toBe('Помехоустойчивость');
     expect(pomeh.blockSize).toBe(20);
     expect(pomeh.lNorm).toBe(14);
-    expect(pomeh.cvMax(0)).toBeCloseTo(0.3, 12);
-    expect(pomeh.cvMax(10)).toBeCloseTo(0.25, 12);
-    expect(pomeh.cvMax(40)).toBe(0.15);
+    expect(pomeh.cvMax).toBe(0.225);
     expect(pomeh.keyCount(pomeh.params(19))).toBe(1);
     expect(pomeh.keyCount(pomeh.params(20))).toBe(2);
   });

@@ -15,6 +15,7 @@ import {
   seriesDiagnosticInstruction,
   seriesLines,
   spanLines,
+  stabilityLine,
   tableLines,
 } from './steps';
 
@@ -87,6 +88,36 @@ describe('errorLine (F1)', () => {
   });
 });
 
+describe('stabilityLine (F2, F-R1)', () => {
+  it('the CV cap lets the level up by 0.5 only; percent with one decimal at most', () => {
+    expect(stabilityLine({ cvAll: 0.24, lapses: 0, lapseLimit: 2, cvMax: 0.22, cap: 0.5 })).toBe(
+      'Уровень повышен только на 0,5: разброс 24 % при пороге 22 %.',
+    );
+    expect(stabilityLine({ cvAll: 0.21, lapses: 1, lapseLimit: 2, cvMax: 0.205, cap: 0.5 })).toBe(
+      'Уровень повышен только на 0,5: разброс 21 % при пороге 20,5 %.',
+    );
+    expect(stabilityLine({ cvAll: 0.29314, lapses: 0, lapseLimit: 2, cvMax: 0.22, cap: 0.5 })).toBe(
+      'Уровень повышен только на 0,5: разброс 29,3 % при пороге 22 %.',
+    );
+  });
+
+  it('lapses hold the level; the line says how many are allowed (Р8: it wins over the CV line)', () => {
+    expect(stabilityLine({ cvAll: 0.1, lapses: 3, lapseLimit: 2, cvMax: 0.22, cap: 0 })).toBe(
+      'Уровень не повышен: провалов 3 (пропуск или ответ дольше 1,5 медианы), допускается 1.',
+    );
+    expect(stabilityLine({ cvAll: 0.4, lapses: 6, lapseLimit: 5, cvMax: 0.19, cap: 0 })).toBe(
+      'Уровень не повышен: провалов 6 (пропуск или ответ дольше 1,5 медианы), допускается 4.',
+    );
+    expect(stabilityLine({ cvAll: null, lapses: 2, lapseLimit: 2, cvMax: 0.19, cap: 0 })).toBe(
+      'Уровень не повышен: провалов 2 (пропуск или ответ дольше 1,5 медианы), допускается 1.',
+    );
+  });
+
+  it('a CV cap needs a CV', () => {
+    expect(() => stabilityLine({ cvAll: null, lapses: 0, lapseLimit: 2, cvMax: 0.22, cap: 0.5 })).toThrow(RangeError);
+  });
+});
+
 describe('reactionLines', () => {
   it('reactionLines puts the errors first and keeps Пропуски last', () => {
     const lines = reactionLines('szmr', summary({}, { hit: 17, wrong: 2, false_start: 1 }));
@@ -127,6 +158,16 @@ describe('reactionLines', () => {
       'Стабильность (CV): 0,15',
       'Пропуски: 0',
     ]);
+  });
+
+  it('«Стабильность (CV)» shows CV_all, what the rule sees, once the block has its stability (Р6)', () => {
+    const lines = (stability: { cvAll: number | null } | null): string[] =>
+      reactionLines('szmr', summary({ cvRt: 0.13 }, { hit: 18, late: 2 }), stability);
+    expect(lines({ cvAll: 0.294 })).toContain('Стабильность (CV): 0,29');
+    expect(lines({ cvAll: 0.294 })).not.toContain('Стабильность (CV): 0,13');
+    // Fewer than 3 answers: no CV for the rule, so none on the screen either.
+    expect(lines({ cvAll: null }).some((l) => l.startsWith('Стабильность (CV)'))).toBe(false);
+    expect(lines(null)).toContain('Стабильность (CV): 0,13');
   });
 
   it('no hits: no RT lines', () => {
