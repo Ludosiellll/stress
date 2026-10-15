@@ -1,5 +1,5 @@
 import type { JSHandle, Page } from '@playwright/test';
-import { chooseExportFile, exportedFile, openApp, pageDate, playSession, setPressDelay } from './bot';
+import { chooseExportFile, exportedFile, openApp, pageDate, playSession, setPressDelay, type Screen } from './bot';
 import { NORM_HINTS } from '../../src/engine/norms';
 import { E2E_URL, expect, freshPage, lineCount, pauseWithEscape, shot, test } from './fixtures';
 
@@ -420,6 +420,11 @@ test('screens: a training session with pause, wellbeing and done; schulte', asyn
   await expect(page.getByRole('heading', { name: 'Сессия завершена' })).toBeVisible();
   await page.getByRole('button', { name: 'На главную' }).click();
 
+  /** The grid size of every Шульте table played; the bot finishes each one. */
+  const grids: number[] = [];
+  const recordGrid = async (kind: Screen): Promise<void> => {
+    if (kind === 'table') grids.push(Math.round(Math.sqrt(await page.locator('.table-grid .table-cell').count())));
+  };
   // The first days' plan has no Шульте (W2-R11): the table is opened from free training.
   await page.getByRole('button', { name: 'Свободная тренировка' }).click();
   await page.getByRole('button', { name: 'Таблицы Шульте' }).click();
@@ -427,22 +432,30 @@ test('screens: a training session with pause, wellbeing and done; schulte', asyn
   await page.getByRole('button', { name: 'Начать (Enter)' }).click();
   await expect(page.locator('.table-grid')).toHaveAttribute('data-task', 'schulte');
   await shot(page, 'table-schulte');
-  // Each Шульте session ends after its first summary, so exactly one 5×5 block is stored per session (A-R4).
-  await playSession(page, { stopAt: 'summary' });
+  // The first Шульте session ends after its first summary, so exactly one 5×5 block is stored before the second (A-R4).
+  await playSession(page, { stopAt: 'summary', onScreen: recordGrid });
   await endSessionFromSummary(page);
 
-  // The second session's block is compared with the first one and gets the paper norm.
+  // The second session's first block is compared with the first one and gets the paper norm.
   await page.getByRole('button', { name: 'Свободная тренировка' }).click();
   await page.getByRole('button', { name: 'Таблицы Шульте' }).click();
-  await playSession(page, { stopAt: 'summary' });
+  await playSession(page, { stopAt: 'summary', onScreen: recordGrid });
   const assessment = page.getByRole('list', { name: 'Оценка' }).getByRole('listitem');
   await expect(assessment.filter({ hasText: 'Раньше в этом блоке: прошлый раз' })).toHaveCount(1);
   await expect(assessment.filter({ hasText: NORM_HINTS.schulte5 })).toHaveCount(1);
   await shot(page, 'summary-assessment');
-  await endSessionFromSummary(page);
+  // The rest of the session is played through to «Сессия завершена» (FW12). The bot is fast, so the level may pass 8
+  // and the grid grow to 6×6.
+  await playSession(page, { onScreen: recordGrid });
+  await expect(page.getByRole('heading', { name: 'Сессия завершена' })).toBeVisible();
+  await expect(page.getByRole('list', { name: 'Итог по модулям' }).getByRole('listitem')).toHaveText([/^Таблицы Шульте: блоков \d+, уровень /]);
+  await page.getByRole('button', { name: 'На главную' }).click();
 
+  // «Прогресс» shows the largest finished grid.
+  expect(grids[0]).toBe(5);
+  const n = String(Math.max(...grids));
   await page.getByRole('button', { name: 'Прогресс' }).click();
-  const schulte = page.getByRole('table', { name: 'Оценка по модулям' }).getByRole('row', { name: /^Таблицы Шульте — 5×5/ });
+  const schulte = page.getByRole('table', { name: 'Оценка по модулям' }).getByRole('row', { name: new RegExp(`^Таблицы Шульте — ${n}×${n} `) });
   await expect(schulte.getByRole('cell').filter({ hasText: /^\d+,\d\sс \/ \d+,\d\sс$/ })).toHaveCount(1);
   // Trained and untrained modules side by side: the right-aligned column («282 мс / 282 мс», «ещё не
   // тренировался») keeps each cell on one line.
