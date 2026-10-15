@@ -1,7 +1,7 @@
 import type { DiagnosticResults } from '../../engine/diagnostic';
 import type { ModuleId, ReactionModuleId } from '../../engine/types';
 import { moduleTitles } from '../../modules/registry';
-import { signedMs, type BlockSummaryView } from '../../session/steps';
+import { shownCost, signedMs, type BlockSummaryView } from '../../session/steps';
 import { decimal } from '../format';
 import { DEFERRED_NOTE } from './ReadinessBlock';
 
@@ -22,8 +22,14 @@ const NO_DATA = 'нет данных';
 const UNRELIABLE = 'замер ненадёжен';
 
 const ms = (x: number | null): string => (x === null ? NO_DATA : `${String(Math.round(x))} мс`);
-/** A difference of medians: «+35 мс», «−12 мс», «0 мс». */
-const diffMs = (x: number | null): string => (x === null ? NO_DATA : `${signedMs(x)} мс`);
+/**
+ * A difference of medians as the block summary showed it (shownCost: the rounded medians' difference, the stored
+ * cost only without a median): «+35 мс», «−12 мс», «0 мс».
+ */
+const diffMs = (fast: number | null, slow: number | null, cost: number | null): string => {
+  const x = shownCost(fast, slow, cost);
+  return x === null ? NO_DATA : `${signedMs(x)} мс`;
+};
 const seconds = (x: number): string => `${decimal(x).replace('-', '−')} с`;
 
 function seriesText(correct: number | null, total: number | null): string {
@@ -44,9 +50,9 @@ function diagnosticRows(d: DiagnosticResults, seriesTotal: number | null): Array
     ['Горбов — P, время 3-й таблицы', g === null ? NO_DATA : seconds(g.P)],
     ['Горбов — Π, переключение внимания', g === null ? NO_DATA : seconds(g.Pi)],
     [`${moduleTitles.numseries} — решено верно`, seriesText(d.numseriesCorrect, seriesTotal)],
-    [`${moduleTitles.pomeh} — разница с помехами и без`, mark('pomeh', diffMs(d.pomehDeltaMs))],
-    [`${moduleTitles.stroop} — интерференция`, mark('stroop', diffMs(d.stroopInterferenceMs))],
-    [`${moduleTitles.taskswitch} — цена переключения`, mark('taskswitch', diffMs(d.switchCostMs))],
+    [`${moduleTitles.pomeh} — разница с помехами и без`, mark('pomeh', diffMs(d.pomehQuietRt, d.pomehNoisyRt, d.pomehDeltaMs))],
+    [`${moduleTitles.stroop} — интерференция`, mark('stroop', diffMs(d.stroopCongruentRt, d.stroopIncongruentRt, d.stroopInterferenceMs))],
+    [`${moduleTitles.taskswitch} — цена переключения`, mark('taskswitch', diffMs(d.switchRepeatRt, d.switchSwitchRt, d.switchCostMs))],
     [`${moduleTitles.memory} — объём`, d.memorySpan === null ? NO_DATA : String(d.memorySpan)],
   ];
 }

@@ -1,7 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { DiagnosticResults } from '../../engine/diagnostic';
-import type { BlockSummaryView } from '../../session/steps';
+import { conditionLines, type BlockSummaryView } from '../../session/steps';
 import Done from './Done';
 
 const RESULTS: DiagnosticResults = {
@@ -55,6 +55,24 @@ describe('Done', () => {
     ]);
   });
 
+  it('a difference reads as in the block summary: from the rounded medians (B9)', () => {
+    // 610 − 520,5 = 89,5: the stored cost rounds to 90, the summary read 521 and 610, so +89.
+    const results = { ...RESULTS, stroopCongruentRt: 520.5, stroopIncongruentRt: 610, stroopInterferenceMs: 89.5 };
+    render(<Done diagnostic={results} seriesTotal={20} summaries={[]} onHome={vi.fn()} />);
+    const stroopRow = cells().find(([name]) => name === 'Струп — интерференция');
+    const summary = conditionLines('stroop', {
+      congruent: { n: 8, errors: 0, medianRt: 520.5 },
+      incongruent: { n: 12, errors: 0, medianRt: 610 },
+    });
+    expect(summary.at(-1)).toBe('Интерференция: +89 мс');
+    expect(stroopRow?.[1]).toBe('+89 мс');
+  });
+
+  it('a difference falls back to the stored cost when a median is missing (B9)', () => {
+    render(<Done diagnostic={{ ...RESULTS, pomehQuietRt: null, pomehDeltaMs: 35.6 }} seriesTotal={20} summaries={[]} onHome={vi.fn()} />);
+    expect(cells().find(([name]) => name?.startsWith('Помехоустойчивость') === true)?.[1]).toBe('+36 мс');
+  });
+
   it('a 0.1.0-style result has no W2 values: «нет данных», never zero', () => {
     const w1 = {
       ...RESULTS,
@@ -75,7 +93,7 @@ describe('Done', () => {
   });
 
   it('marks the W2 differences measured with dropped frames; a zero difference reads «0 мс»', () => {
-    render(<Done diagnostic={{ ...RESULTS, stroopInterferenceMs: 0, unreliable: ['pomeh', 'stroop', 'taskswitch'] }} seriesTotal={20} summaries={[]} onHome={vi.fn()} />);
+    render(<Done diagnostic={{ ...RESULTS, stroopCongruentRt: 600, stroopIncongruentRt: 600, stroopInterferenceMs: 0, unreliable: ['pomeh', 'stroop', 'taskswitch'] }} seriesTotal={20} summaries={[]} onHome={vi.fn()} />);
     expect(cells().slice(8)).toEqual([
       ['Помехоустойчивость — разница с помехами и без', '+35 мс, замер ненадёжен'],
       ['Струп — интерференция', '0 мс, замер ненадёжен'],

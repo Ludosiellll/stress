@@ -1,7 +1,7 @@
 import type { DiagnosticResults } from '../engine/diagnostic';
 import { BASE_ITEM_LIMIT_MS } from '../engine/itemLimit';
 import { condPairOf, type ConditionStats } from '../engine/reaction/conditions';
-import type { Outcome, ReactionSummary, TrialCond, TrialSpec } from '../engine/reaction/types';
+import type { Outcome, ReactionSummary, TrialSpec } from '../engine/reaction/types';
 import type { BlockFlag, InputKey, LayoutId, ModuleId, ReactionModuleId, TableModuleId } from '../engine/types';
 import type { ParamChange } from '../modules/describe';
 import type { MemoryTrial } from '../modules/memory/generate';
@@ -188,6 +188,19 @@ export function signedMs(x: number): string {
   return '0';
 }
 
+/** A difference of two medians as the screens show it: the rounded medians' difference, so it agrees with them. */
+export function displayedCost(fastMs: number, slowMs: number): number {
+  return whole(slowMs) - whole(fastMs);
+}
+
+/**
+ * A stored diagnostic difference as the screens show it: displayedCost of the stored medians, so Done and the
+ * progress charts read what the block summary read; the stored cost only when a median is missing.
+ */
+export function shownCost(fastMs: number | null, slowMs: number | null, storedCost: number | null): number | null {
+  return fastMs !== null && slowMs !== null ? displayedCost(fastMs, slowMs) : storedCost;
+}
+
 /** Labels of the fast and slow conditions of a module (COND_PAIRS) and of their difference. */
 const COND_LABELS: Partial<Record<ReactionModuleId, { fast: string; slow: string; cost: string }>> = {
   stroop: { fast: 'Цвет совпадает со словом', slow: 'Не совпадает', cost: 'Интерференция' },
@@ -203,16 +216,12 @@ export function conditionLines(module: ReactionModuleId, stats: ConditionStats):
   const pair = condPairOf(module);
   const labels = COND_LABELS[module];
   if (pair === null || labels === undefined) return [];
-  const shown = (cond: TrialCond): number | null => {
-    const rt = stats[cond]?.medianRt ?? null;
-    return rt === null ? null : whole(rt);
-  };
-  const fast = shown(pair.fast);
-  const slow = shown(pair.slow);
+  const fast = stats[pair.fast]?.medianRt ?? null;
+  const slow = stats[pair.slow]?.medianRt ?? null;
   const lines: string[] = [];
-  if (fast !== null) lines.push(`${labels.fast}: ${String(fast)} мс`);
-  if (slow !== null) lines.push(`${labels.slow}: ${String(slow)} мс`);
-  if (fast !== null && slow !== null) lines.push(`${labels.cost}: ${signedMs(slow - fast)} мс`);
+  if (fast !== null) lines.push(`${labels.fast}: ${String(whole(fast))} мс`);
+  if (slow !== null) lines.push(`${labels.slow}: ${String(whole(slow))} мс`);
+  if (fast !== null && slow !== null) lines.push(`${labels.cost}: ${signedMs(displayedCost(fast, slow))} мс`);
   return lines;
 }
 

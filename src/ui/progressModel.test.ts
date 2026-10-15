@@ -70,6 +70,14 @@ describe('diagnosticCharts', () => {
     });
   });
 
+  it('a difference reads as on Done and in the block summary: from the rounded medians (B9)', () => {
+    const r = { ...fullW2, stroopCongruentRt: 520.5, stroopIncongruentRt: 610, stroopInterferenceMs: 89.5 };
+    const stroop = diagnosticCharts([row(1, r)]).find((c) => c.id === 'stroop');
+    expect(stroop?.series[0]?.points[0]?.y).toBe(89);
+    // Without the medians (stored before they were), the stored cost.
+    expect(diagnosticCharts([row(1, fullW2)]).find((c) => c.id === 'stroop')?.series[0]?.points[0]?.y).toBe(90);
+  });
+
   it('the four W2 charts: differences and the span; gaps for 0.1.0 rows', () => {
     const charts = diagnosticCharts([row(1, full), row(2, fullW2), row(3, { ...fullW2, unreliable: ['taskswitch'] })]);
     const byId = Object.fromEntries(charts.map((c) => [c.id, c]));

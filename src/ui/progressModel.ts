@@ -4,6 +4,7 @@ import { parseResults, type DiagnosticMetrics, type DiagnosticResults } from '..
 import { L_NORM } from '../engine/planner';
 import { MODULE_IDS, type ModuleId, type ReactionModuleId, type SessionKind } from '../engine/types';
 import { moduleTitles } from '../modules/registry';
+import { shownCost } from '../session/steps';
 import type { ChartDomain, ChartPoint, ChartSeries } from './charts/LineChart';
 import { readinessOf, type HomeModel } from './homeModel';
 
@@ -137,16 +138,19 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
     }),
   });
   const metric = (r: DiagnosticResults | null, key: NumericMetric): number | null => num(r?.[key]);
+  /** A difference as Done and the block summary show it (shownCost). */
+  const cost = (fast: NumericMetric, slow: NumericMetric, stored: NumericMetric) => (r: DiagnosticResults | null): number | null =>
+    shownCost(metric(r, fast), metric(r, slow), metric(r, stored));
   const reaction = (
     id: ReactionModuleId,
     title: string,
     yLabel: string,
     lowerIsBetter: boolean,
     name: string,
-    key: NumericMetric,
+    key: NumericMetric | ((r: DiagnosticResults | null) => number | null),
     domain: ChartDomain = NON_NEGATIVE,
   ): ChartSpec => {
-    const series = [line(name, (r) => metric(r, key), id)];
+    const series = [line(name, typeof key === 'function' ? key : (r) => metric(r, key), id)];
     const unreliable = (series[0]?.points ?? []).flatMap((p) => (p.note === undefined ? [] : [p.x]));
     return { id, title, yLabel, lowerIsBetter, series, unreliable, domain, whole: true };
   };
@@ -176,9 +180,9 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
       domain: NON_NEGATIVE,
       whole: true,
     },
-    reaction('pomeh', 'Помехоустойчивость: разница, мс', 'мс', true, moduleTitles.pomeh, 'pomehDeltaMs', {}),
-    reaction('stroop', 'Струп: интерференция, мс', 'мс', true, moduleTitles.stroop, 'stroopInterferenceMs', {}),
-    reaction('taskswitch', 'Переключение правил: цена переключения, мс', 'мс', true, moduleTitles.taskswitch, 'switchCostMs', {}),
+    reaction('pomeh', 'Помехоустойчивость: разница, мс', 'мс', true, moduleTitles.pomeh, cost('pomehQuietRt', 'pomehNoisyRt', 'pomehDeltaMs'), {}),
+    reaction('stroop', 'Струп: интерференция, мс', 'мс', true, moduleTitles.stroop, cost('stroopCongruentRt', 'stroopIncongruentRt', 'stroopInterferenceMs'), {}),
+    reaction('taskswitch', 'Переключение правил: цена переключения, мс', 'мс', true, moduleTitles.taskswitch, cost('switchRepeatRt', 'switchSwitchRt', 'switchCostMs'), {}),
     {
       id: 'memory',
       title: 'Память: объём',
