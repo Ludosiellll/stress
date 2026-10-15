@@ -316,6 +316,24 @@ describe('assessModules', () => {
     });
   });
 
+  it('memory: the band grades the row length, and the cell says so next to the % (FW11)', () => {
+    const memoryBlock = (d: number, length: number, exact: number): BlockRow =>
+      stored('memory', d, {
+        lBefore: 9,
+        paramsJson: JSON.stringify({ mode: 'digits', length }),
+        summaryJson: JSON.stringify({ mode: 'digits', length, exact, positionsCorrect: 30, answers: [1, 2, 3, 4, 5, 6] }),
+      });
+    const rows = assess({ memory: { lSaved: 9.5, lifetimeBlocks: 6 } }, [memoryBlock(3, 6, 6), memoryBlock(1, 7, 4)]);
+    expect(rowOf(rows, 'memory')).toEqual({
+      module: 'memory',
+      title: 'Память — цифры',
+      step: '3 — формат теста (ур. 9,5; формат теста — 9)',
+      lastBest: '67 % / 100 %',
+      norm: 'ряд 7: средний',
+      goal: 'ур. 14 (+4,5)',
+    });
+  });
+
   it('number series by the mean rating', () => {
     const rows = assess({ numseries: { lifetimeBlocks: 3 } }, [stored('numseries', 2, { summaryJson: '{"correct":7,"total":10}' })], 1180.4);
     expect(rowOf(rows, 'numseries')).toEqual({

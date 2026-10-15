@@ -256,6 +256,15 @@ function stepGoal(module: ModuleId, state: ModuleState, meanRating: number): Pic
 }
 
 /**
+ * The band of the last result. The memory norm grades the row length, not the % beside it, so it names it: «ряд 7:
+ * средний» (FW11); the other norms grade the shown key metric itself.
+ */
+function bandText(sample: NormSample): string {
+  const label = gradeByBands(sample.value, NORMS[sample.id]).label;
+  return sample.id === 'memorySpan' ? `ряд ${String(sample.value)}: ${label}` : label;
+}
+
+/**
  * One row per module in MODULE_IDS order: the step by the saved level (or the mean rating), the last and the best
  * of 30 days of the main variant, the band of the last result and the next step. A module never trained
  * (lifetimeBlocks = 0) reads «ещё не тренировался»; a trained one without a block of its main variant has dashes.
@@ -275,7 +284,6 @@ export function assessModules(o: {
     const f = (v: number): string => formatMetric(module, v);
     const lastBest = stats === null ? DASH : `${f(stats.last.value)} / ${stats.best30d === null ? DASH : f(stats.best30d)}`;
     const sample = stats?.last.norms[0];
-    const norm = sample === undefined ? DASH : gradeByBands(sample.value, NORMS[sample.id]).label;
-    return { module, title, ...stepGoal(module, state, o.meanRating), lastBest, norm };
+    return { module, title, ...stepGoal(module, state, o.meanRating), lastBest, norm: sample === undefined ? DASH : bandText(sample) };
   });
 }
