@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeChanges } from './describe';
+import { changeText, describeChanges } from './describe';
 
 describe('describeChanges', () => {
   it('pzmr 10 → 11: only the response window changes', () => {
@@ -78,5 +78,15 @@ describe('describeChanges', () => {
 
   it('numseries has no level parameters', () => {
     expect(describeChanges('numseries', 0, 0)).toEqual([]);
+  });
+});
+
+describe('changeText', () => {
+  it('writes a shared unit once and leaves other values whole', () => {
+    expect(changeText({ label: 'Лимит времени', from: '120 с', to: '102 с' })).toBe('Лимит времени: 120 → 102 с');
+    expect(changeText({ label: 'Перемешивание', from: 'нет', to: 'каждые 10 верных' })).toBe('Перемешивание: нет → каждые 10 верных');
+    expect(changeText({ label: 'Размер', from: '5×5', to: '6×6' })).toBe('Размер: 5×5 → 6×6');
+    expect(changeText({ label: 'Окно', from: '1 с', to: '900 мс' })).toBe('Окно: 1 с → 900 мс');
+    expect(changeText({ label: 'Окно', from: '1 с', to: 'нет' })).toBe('Окно: 1 с → нет');
   });
 });

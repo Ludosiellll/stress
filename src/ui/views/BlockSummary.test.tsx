@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { BlockSummaryView } from '../../session/steps';
 import { nextTask } from '../../testing/domFakes';
-import BlockSummary, { changeText } from './BlockSummary';
+import BlockSummary from './BlockSummary';
 
 const VIEW: BlockSummaryView = {
   module: 'pzmr',
@@ -60,13 +60,6 @@ describe('BlockSummary', () => {
     );
     expect(screen.queryByText(/Уровень/)).toBeNull();
     expect(screen.getByText('Успешно: 70 %')).toBeTruthy();
-  });
-
-  it('writes a shared unit once and leaves other values whole', () => {
-    expect(changeText({ label: 'Лимит времени', from: '120 с', to: '102 с' })).toBe('Лимит времени: 120 → 102 с');
-    expect(changeText({ label: 'Перемешивание', from: 'нет', to: 'каждые 10 верных' })).toBe('Перемешивание: нет → каждые 10 верных');
-    expect(changeText({ label: 'Размер', from: '5×5', to: '6×6' })).toBe('Размер: 5×5 → 6×6');
-    expect(changeText({ label: 'Окно', from: '1 с', to: '900 мс' })).toBe('Окно: 1 с → 900 мс');
   });
 
   it('Enter or the button continues; nothing while busy', async () => {

@@ -12,6 +12,23 @@ export interface ParamChange {
   to: string;
 }
 
+const VALUE_UNIT = /^(.+) (\S+)$/;
+
+/** «387 мс» → { amount: '387', unit: 'мс' }; null: no trailing unit («нет», «5×5»). */
+function splitUnit(value: string): { amount: string; unit: string } | null {
+  const m = VALUE_UNIT.exec(value);
+  // Both groups are mandatory, so a match always has them.
+  return m === null ? null : { amount: m[1] as string, unit: m[2] as string };
+}
+
+/** «Окно ответа: 387 → 358 мс»: a unit shared by both values is written once. */
+export function changeText({ label, from, to }: ParamChange): string {
+  const a = splitUnit(from);
+  const b = splitUnit(to);
+  if (a !== null && b !== null && a.unit === b.unit) return `${label}: ${a.amount} → ${b.amount} ${b.unit}`;
+  return `${label}: ${from} → ${to}`;
+}
+
 type Described = ReadonlyArray<{ label: string; value: string }>;
 
 /** Entries of `after` whose value differs from the entry with the same label in `before`, in `after` order. */

@@ -1,5 +1,5 @@
 import type { BlockFlag } from '../../engine/types';
-import type { ParamChange } from '../../modules/describe';
+import { changeText } from '../../modules/describe';
 import type { BlockSummaryView } from '../../session/steps';
 import { decimal } from '../format';
 import { fromControl, isEnter, useKeyDown } from '../keys';
@@ -20,14 +20,6 @@ const FLAG_TEXT: Record<BlockFlag, string> = {
 
 /** Notes, not warnings. */
 const NOTE_FLAGS: ReadonlySet<BlockFlag> = new Set<BlockFlag>(['calibration', 'overload']);
-
-/** «Окно ответа: 387 → 358 мс»: a unit shared by both values is written once. */
-export function changeText({ label, from, to }: ParamChange): string {
-  const a = /^(.+) (\S+)$/.exec(from);
-  const b = /^(.+) (\S+)$/.exec(to);
-  if (a?.[1] !== undefined && b?.[1] !== undefined && a[2] === b[2]) return `${label}: ${a[1]} → ${b[1]} ${b[2] ?? ''}`;
-  return `${label}: ${from} → ${to}`;
-}
 
 /** Result of the block that just ended: level, changed parameters, score, metrics, flags. Enter goes on. */
 export default function BlockSummary({ view, busy, onContinue }: BlockSummaryProps) {
