@@ -12,7 +12,6 @@ import { stabilityOf } from '../engine/reaction/stability';
 import type { BlockTimeline } from '../engine/reaction/types';
 import { readinessOfLatest } from '../engine/readiness';
 import { isReactionModule, type BlockFlag, type FamilyId, type LayoutId, type ModuleId } from '../engine/types';
-import { describeChanges } from '../modules/describe';
 import type { MemoryTrial } from '../modules/memory/generate';
 import { memorySpan, scoreMemoryTrial, type MemoryAnswer } from '../modules/memory/score';
 import { moduleTitles, reactionModules } from '../modules/registry';
@@ -26,6 +25,7 @@ import {
   checkMemoryAnswers,
   diagnosticBlockSeed,
   diagnosticResults,
+  levelChanges,
   planBlock,
   scoreReaction,
   scoreSeries,
@@ -682,17 +682,15 @@ export class SessionController {
     this.presentNext();
   }
 
+  /** What planBlock needs to know about the session and the segment. */
+  private planContext(seg: SegmentRun): PlanContext {
+    return { layout: this.layout, scale: this.scale, diagnostic: !this.counted, planSeed: this.plan.seed, segmentIndex: seg.index };
+  }
+
   /** Instruction first if the segment just started, for every Gorbov run, or when the rules changed. */
   private presentNext(): void {
     const seg = this.segment();
-    const ctx: PlanContext = {
-      layout: this.layout,
-      scale: this.scale,
-      diagnostic: !this.counted,
-      planSeed: this.plan.seed,
-      segmentIndex: seg.index,
-    };
-    const plan = planBlock(seg.segment, seg.L, seg.blocksDone, ctx);
+    const plan = planBlock(seg.segment, seg.L, seg.blocksDone, this.planContext(seg));
     const { text, keysHint } = blockInstruction(plan, this.layout);
     if (seg.segment.module === 'gorbov' || text + '\n' + keysHint !== seg.lastInstruction) {
       this.next = plan;
@@ -825,7 +823,7 @@ export class SessionController {
       title: moduleTitles[b.module],
       lBefore: b.L,
       lAfter,
-      changes: describeChanges(b.module, b.L, lAfter, b.task),
+      changes: levelChanges(b.module, b.L, lAfter, b.task, this.planContext(seg)),
       score: b.viewScore ?? b.score,
       lines,
       flags,

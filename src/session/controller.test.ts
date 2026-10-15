@@ -265,6 +265,18 @@ describe('SessionController — flow', () => {
     expect(swapped).toEqual([false, true]);
   });
 
+  it('the changes of a swapped Go/No-Go block name the swapped colours (T-R41)', async () => {
+    let seed = 1;
+    while (!isSwappedSegment(seed, 0)) seed++;
+    const yesterday = new Date(new Date(T0).getTime() - DAY).toISOString();
+    const repo = await calibratedRepo(stateWith('gonogo', { lSaved: 16, lastTrainedAt: yesterday }));
+    const h = await begin({ kind: 'free', seed, segments: [segment('gonogo', 1)] }, { repo });
+    const { view } = await playReaction(h);
+    // The start drop takes the segment to 15; a perfect block crosses 16, where the no-go becomes the square.
+    expect([view.lBefore < 16, view.lAfter >= 16]).toEqual([true, true]);
+    expect(view.changes).toContainEqual({ label: 'No-go', from: 'красный круг', to: 'зелёный квадрат' });
+  });
+
   it('walks a full training plan to done', async () => {
     const repo = new MemoryRepository();
     const plan = firstDayPlan(await repo.getModuleStates(), T0, 42);

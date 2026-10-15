@@ -1,4 +1,4 @@
-import { isReactionModule, type ModuleId } from '../engine/types';
+import { isReactionModule, type ModuleId, type ReactionModuleId } from '../engine/types';
 import { describeMemoryParams, memoryParams } from './memory/params';
 import { reactionModules } from './registry';
 import { gorbovParams, type TableTaskId } from './tables/gorbov';
@@ -48,7 +48,7 @@ function changed(before: Described, after: Described): ParamChange[] {
 export function describeChanges(module: ModuleId, lBefore: number, lAfter: number, task?: TableTaskId): ParamChange[] {
   if (isReactionModule(module)) {
     const m = reactionModules[module];
-    return changed(m.describeParams(m.params(lBefore)), m.describeParams(m.params(lAfter)));
+    return describeParamChanges(module, m.params(lBefore), m.params(lAfter));
   }
   switch (module) {
     case 'gorbov': {
@@ -62,4 +62,13 @@ export function describeChanges(module: ModuleId, lBefore: number, lAfter: numbe
     case 'numseries':
       return [];
   }
+}
+
+/**
+ * What changed between two parameter sets of a reaction module, as its own parameter list names them: a block's
+ * modifiers (the swapped Go/No-Go colours, F8) show as the block played them (T-R41).
+ */
+export function describeParamChanges(module: ReactionModuleId, before: unknown, after: unknown): ParamChange[] {
+  const m = reactionModules[module];
+  return changed(m.describeParams(before), m.describeParams(after));
 }

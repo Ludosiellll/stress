@@ -29,6 +29,7 @@ import {
   type MemoryMode,
   type MemoryParams,
 } from '../modules/memory/params';
+import { describeChanges, describeParamChanges, type ParamChange } from '../modules/describe';
 import { generateBlockItems, generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
 import { stressorsOf, type BlockStressors, type ReactionModule } from '../modules/reaction/common';
 import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
@@ -198,6 +199,15 @@ export function planBlock(segment: Segment, segmentL: number, blockIndex: number
     };
   }
   return { kind: 'numseries', diagnostic: false, count: scaledCount(SERIES_BLOCK_ITEMS, ctx.scale), totalLimitMs: null };
+}
+
+/**
+ * «What changed» between two levels for the block summary, named as the block's segment plays them: a reaction module
+ * describes its training parameters at both levels, so a swapped Go/No-Go segment names its swapped colours (T-R41).
+ */
+export function levelChanges(module: ModuleId, lBefore: number, lAfter: number, task: TableTaskId | undefined, ctx: PlanContext): ParamChange[] {
+  if (!isReactionModule(module)) return describeChanges(module, lBefore, lAfter, task);
+  return describeParamChanges(module, trainingParams(module, lBefore, ctx), trainingParams(module, lAfter, ctx));
 }
 
 /** Training and free parameters at L; a Go/No-Go segment may play with the colours swapped (F8). */
