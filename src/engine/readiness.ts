@@ -40,11 +40,12 @@ export function baselineScore(v: number, v0: number, lowerIsBetter: boolean): nu
 export const DIFF_SCALE_MS: Readonly<{ pomeh: 40; stroop: 60; taskswitch: 60 }> = Object.freeze({ pomeh: 40, stroop: 60, taskswitch: 60 });
 
 /**
- * Score of a difference of medians (noise, interference, switch cost; lower is better) against its baseline v0:
- * 60 at the baseline, ±40 per scaleMs, clamped to [0, 100]. Works for v0 near or below zero, unlike baselineScore (П1).
+ * Score of a difference (noise, interference, switch cost in ms; Горбов Π in s; lower is better) against its baseline
+ * v0: 60 at the baseline, ±40 per `scale` (in the units of v), clamped to [0, 100]. Works for v0 near or below zero,
+ * unlike baselineScore (П1).
  */
-export function diffScore(v: number, v0: number, scaleMs: number): number {
-  const raw = 60 + (40 * (v0 - v)) / scaleMs;
+export function diffScore(v: number, v0: number, scale: number): number {
+  const raw = 60 + (40 * (v0 - v)) / scale;
   return Math.min(100, Math.max(0, raw));
 }
 

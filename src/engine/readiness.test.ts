@@ -80,7 +80,7 @@ describe('diffScore (П1)', () => {
 });
 
 describe('bandScore', () => {
-  it('hits the published points and interpolates', () => {
+  it('hits the paper-scale points and interpolates', () => {
     expect(bandScore(29, BAND_GORBOV_V)).toBe(100);
     expect(bandScore(33, BAND_GORBOV_V)).toBe(90);
     expect(bandScore(37, BAND_GORBOV_V)).toBe(80);
