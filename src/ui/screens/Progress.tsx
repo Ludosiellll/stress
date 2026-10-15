@@ -44,6 +44,39 @@ function ChartCard(props: {
   );
 }
 
+function Assessment({ model }: { model: ProgressModel }) {
+  return (
+    <section aria-labelledby="assessment-title">
+      <h2 id="assessment-title">Оценка по модулям</h2>
+      <table className="results" aria-labelledby="assessment-title">
+        <thead>
+          <tr>
+            <th scope="col">Модуль</th>
+            <th scope="col">Ступень</th>
+            <th scope="col" className="num">
+              Последний / лучший за 30 дней
+            </th>
+            <th scope="col">Ориентир</th>
+            <th scope="col">Цель</th>
+          </tr>
+        </thead>
+        <tbody>
+          {model.assessment.map((a) => (
+            <tr key={a.module}>
+              <td>{a.title}</td>
+              <td>{a.step}</td>
+              <td className="num">{a.lastBest}</td>
+              <td>{a.norm}</td>
+              <td>{a.goal}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="muted">Ступень — по сохранённому уровню. Ориентир — опубликованные нормы, ориентировочно; источники — в руководстве.</p>
+    </section>
+  );
+}
+
 function Diagnostics({ model }: { model: ProgressModel }) {
   return (
     <section aria-labelledby="diagnostics-title">
@@ -183,6 +216,7 @@ export default function Progress({ onBack }: ProgressProps) {
       ) : (
         <>
           <ReadinessBlock readiness={model.readiness} />
+          <Assessment model={model} />
           <Diagnostics model={model} />
           <Levels model={model} />
           <History model={model} />

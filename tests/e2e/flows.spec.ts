@@ -277,4 +277,8 @@ test('progress shows charts after a diagnostic', async ({ page }) => {
   }
   await expect(page.getByRole('table', { name: 'История сессий' }).locator('tbody tr')).toHaveCount(1);
   await expect(page.locator('.readiness')).toBeVisible();
+  // A diagnostic trains nothing: every module of «Оценка по модулям» is still untrained.
+  const assessment = page.getByRole('table', { name: 'Оценка по модулям' });
+  await expect(assessment.locator('tbody tr')).toHaveCount(11);
+  await expect(assessment.getByText('ещё не тренировался')).toHaveCount(11);
 });

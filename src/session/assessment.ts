@@ -1,18 +1,20 @@
 import type { BlockRow } from '../data/rows';
 import { isCountedSession } from '../engine/derive';
 import { R0, type Rating } from '../engine/elo';
-import { levelStep, R_FORMAT, ratingStep, stepName } from '../engine/levelSteps';
+import { levelStep, R_FORMAT, ratingStep, stepName, type LevelStep, type RatingStep } from '../engine/levelSteps';
 import { cutText, gradeByBands, NORM_HINTS, NORMS, type NormTable } from '../engine/norms';
-import { L_NORM } from '../engine/planner';
-import type { FamilyId, ModuleId, SessionKind } from '../engine/types';
+import { L_NORM, type ModuleState } from '../engine/planner';
+import { MODULE_IDS, type FamilyId, type ModuleId, type SessionKind } from '../engine/types';
 import { changeText, describeChanges, type ParamChange } from '../modules/describe';
 import { FAMILIES } from '../modules/numseries/families';
+import { moduleTitles } from '../modules/registry';
 import type { TableTaskId } from '../modules/tables/gorbov';
 import {
   entersHistory,
   historyStats,
   keyMetric,
   KEY_METRICS,
+  mainVariant,
   normSamples,
   variantOf,
   type BlockHistory,
@@ -127,32 +129,43 @@ function paramChanges(module: ModuleId, L: number, next: number, variant: Varian
   return describeChanges(module, L, next, variant.slice(GORBOV_PREFIX.length) as TableTaskId);
 }
 
+/** The step of a level as shown (A-R7), with the shown level, the test format and «+Δ» to the next step. */
+function shownLevelStep(module: ModuleId, level: number): { L: string; Lnorm: string; s: LevelStep; toNext: string } {
+  const L = round1(level);
+  const s = levelStep(L, L_NORM[module]);
+  return { L: levelText(L), Lnorm: levelText(L_NORM[module]), s, toNext: levelText(s.nextStepL - L) };
+}
+
+/** The step of the mean family rating rounded as shown (A-R7), with «+Δ» rounded up. */
+function shownRatingStep(meanRating: number): { R: string; s: RatingStep; toNext: string } {
+  const R = whole(meanRating);
+  const s = ratingStep(R);
+  return { R: String(R), s, toNext: String(Math.ceil(s.nextStepR - R)) };
+}
+
 /**
  * Step and goal by level: lAfter, or lBefore (the played level) for an overload block, which has no goal (О4).
  * Both come from the shown level (A-R7); the parameters come from the level the next block plays.
  */
 function levelLines(row: BlockRow, variant: VariantKey | null): Pick<BlockAssessment, 'step' | 'goal'> {
   const overload = row.flags.includes('overload');
-  const Lnorm = L_NORM[row.module];
-  const L = round1(overload ? row.lBefore : row.lAfter);
-  const s = levelStep(L, Lnorm);
+  const { L, Lnorm, s, toNext } = shownLevelStep(row.module, overload ? row.lBefore : row.lAfter);
   const note = overload ? '; перегрузка' : '';
-  const step = `${stepHead(s.step, s.name)} (уровень ${levelText(L)}; формат теста — ${levelText(Lnorm)}${note})`;
+  const step = `${stepHead(s.step, s.name)} (уровень ${L}; формат теста — ${Lnorm}${note})`;
   if (overload) return { step, goal: null };
   const changes = paramChanges(row.module, row.lAfter, s.nextStepL, variant);
   const there = changes.length === 0 ? '' : `. Там: ${changes.map((c) => lowerFirst(changeText(c))).join('; ')}`;
-  const goal = `${goalHead(s.step)}: уровень ${levelText(s.nextStepL)} (+${levelText(s.nextStepL - L)})${there}`;
+  const goal = `${goalHead(s.step)}: уровень ${levelText(s.nextStepL)} (+${toNext})${there}`;
   return { step, goal };
 }
 
-/** Number series: step and goal by the mean family rating, rounded as shown (A-R7). */
+/** Number series: step and goal by the mean family rating. */
 function ratingLines(meanRating: number | null): Pick<BlockAssessment, 'step' | 'goal'> {
   if (meanRating === null) return { step: null, goal: null };
-  const R = whole(meanRating);
-  const s = ratingStep(R);
+  const { R, s, toNext } = shownRatingStep(meanRating);
   return {
-    step: `${stepHead(s.step, s.name)} (рейтинг ${String(R)}; формат теста — ${String(R_FORMAT)})`,
-    goal: `${goalHead(s.step)}: рейтинг ${String(s.nextStepR)} (+${String(Math.ceil(s.nextStepR - R))})`,
+    step: `${stepHead(s.step, s.name)} (рейтинг ${R}; формат теста — ${String(R_FORMAT)})`,
+    goal: `${goalHead(s.step)}: рейтинг ${String(s.nextStepR)} (+${toNext})`,
   };
 }
 
@@ -188,4 +201,74 @@ export function assessBlock(row: BlockRow, ctx: AssessContext): BlockAssessment 
   if (!isCountedSession(ctx.kind)) return { step: null, goal: null, norms, history: null };
   const { step, goal } = row.module === 'numseries' ? ratingLines(ctx.meanRating) : levelLines(row, variant);
   return { step, goal, norms, history: historyLine(row, variant, ctx) };
+}
+
+/** A row of «Оценка по модулям» in «Прогресс» (assessment spec §3.2, Справочник «Оценка по модулям»). */
+export interface ModuleAssessment {
+  module: ModuleId;
+  title: string;
+  step: string;
+  lastBest: string;
+  norm: string;
+  goal: string;
+}
+
+const DASH = '—';
+const UNTRAINED = 'ещё не тренировался';
+const VARIANT_TITLES: ReadonlyMap<VariantKey, string> = new Map([
+  ['gorbov:alternate', 'чередование'],
+  ['memory:digits', 'цифры'],
+]);
+const SCHULTE_PREFIX = 'schulte:';
+
+/** «Красно-чёрные таблицы Горбова — чередование», «Таблицы Шульте — 6×6»; Шульте without a finished grid: the bare title. */
+function moduleTitle(module: ModuleId, variant: VariantKey | null): string {
+  const title = moduleTitles[module];
+  if (variant?.startsWith(SCHULTE_PREFIX) === true) {
+    const n = variant.slice(SCHULTE_PREFIX.length);
+    return `${title} — ${n}×${n}`;
+  }
+  const suffix = variant === null ? undefined : VARIANT_TITLES.get(variant);
+  return suffix === undefined ? title : `${title} — ${suffix}`;
+}
+
+/** Step and goal by the saved level (О12), or by the mean rating for number series. */
+function stepGoal(module: ModuleId, state: ModuleState, meanRating: number): Pick<ModuleAssessment, 'step' | 'goal'> {
+  if (module === 'numseries') {
+    const { R, s, toNext } = shownRatingStep(meanRating);
+    return {
+      step: `${String(s.step)} — ${s.name} (рейтинг ${R}; формат теста — ${String(R_FORMAT)})`,
+      goal: `рейтинг ${String(s.nextStepR)} (+${toNext})`,
+    };
+  }
+  const { L, Lnorm, s, toNext } = shownLevelStep(module, state.lSaved);
+  return {
+    step: `${String(s.step)} — ${s.name} (ур. ${L}; формат теста — ${Lnorm})`,
+    goal: `ур. ${levelText(s.nextStepL)} (+${toNext})`,
+  };
+}
+
+/**
+ * One row per module in MODULE_IDS order: the step by the saved level (or the mean rating), the last and the best
+ * of 30 days of the main variant, the band of the last result and the next step. A module never trained
+ * (lifetimeBlocks = 0) reads «ещё не тренировался»; a trained one without a block of its main variant has dashes.
+ */
+export function assessModules(o: {
+  states: Readonly<Record<ModuleId, ModuleState>>;
+  meanRating: number;
+  history: BlockHistory;
+  now: Date;
+}): ModuleAssessment[] {
+  return MODULE_IDS.map((module) => {
+    const variant = mainVariant(module, o.history);
+    const title = moduleTitle(module, variant);
+    const state = o.states[module];
+    if (state.lifetimeBlocks === 0) return { module, title, step: DASH, lastBest: UNTRAINED, norm: DASH, goal: DASH };
+    const stats = variant === null ? null : historyStats(o.history.get(variant) ?? [], o.now, KEY_METRICS[module].better);
+    const f = (v: number): string => formatMetric(module, v);
+    const lastBest = stats === null ? DASH : `${f(stats.last.value)} / ${stats.best30d === null ? DASH : f(stats.best30d)}`;
+    const sample = stats?.last.norms[0];
+    const norm = sample === undefined ? DASH : gradeByBands(sample.value, NORMS[sample.id]).label;
+    return { module, title, ...stepGoal(module, state, o.meanRating), lastBest, norm };
+  });
 }

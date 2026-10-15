@@ -4,6 +4,8 @@ import { parseResults, type DiagnosticMetrics, type DiagnosticResults } from '..
 import { L_NORM } from '../engine/planner';
 import { MODULE_IDS, type ModuleId, type ReactionModuleId, type SessionKind } from '../engine/types';
 import { moduleTitles } from '../modules/registry';
+import { assessModules, meanFamilyRating, type ModuleAssessment } from '../session/assessment';
+import { buildBlockHistory } from '../session/blockHistory';
 import { shownCost } from '../session/steps';
 import type { ChartDomain, ChartPoint, ChartSeries } from './charts/LineChart';
 import { readinessOf, type HomeModel } from './homeModel';
@@ -46,6 +48,8 @@ export interface SessionLine {
 
 export interface ProgressModel {
   readiness: HomeModel['readiness'];
+  /** «Оценка по модулям», in MODULE_IDS order. */
+  assessment: ModuleAssessment[];
   diagnostics: ChartSpec[];
   levels: LevelChartSpec[];
   /** Newest first, at most SESSION_LINES. */
@@ -209,19 +213,18 @@ export function sessionLines(sessions: readonly SessionRow[], blocksBySession: R
     }));
 }
 
-export async function loadProgressModel(repo: Repository): Promise<ProgressModel> {
-  const [diagnostics, states, sessions, blockLevels] = await Promise.all([
+export async function loadProgressModel(repo: Repository, now: Date = new Date()): Promise<ProgressModel> {
+  const [diagnostics, states, sessions, blocks, ratings] = await Promise.all([
     repo.listDiagnostics(),
     repo.getModuleStates(),
     repo.listSessions(),
-    Promise.all(MODULE_IDS.map((m) => repo.listBlockLevels(m))),
+    repo.listBlocks(),
+    repo.getRatings(),
   ]);
-  const blocksBySession = new Map<string, number>();
-  for (const rows of blockLevels) {
-    for (const b of rows) blocksBySession.set(b.sessionId, (blocksBySession.get(b.sessionId) ?? 0) + 1);
-  }
+  const blocksBySession = count(blocks.map((b) => b.sessionId));
   return {
     readiness: readinessOf(diagnostics),
+    assessment: assessModules({ states, meanRating: meanFamilyRating(ratings), history: buildBlockHistory(blocks, sessions), now }),
     diagnostics: diagnosticCharts(diagnostics),
     levels: LEVEL_MODULES.map((module) => ({
       module,

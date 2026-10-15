@@ -1,6 +1,7 @@
 import { fireEvent, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { MemoryRepository } from '../../data/memoryRepository';
+import { rebuildCaches } from '../../data/export';
 import { block, session } from '../../data/repository.contract';
 import { EMPTY_METRICS, type DiagnosticResults } from '../../engine/diagnostic';
 import { defaultModuleState } from '../../engine/derive';
@@ -151,6 +152,49 @@ describe('Progress edge cases', () => {
       ['10.10.2026', 'Тренировка', '25 мин', '3'],
     ]);
     expect(within(table).getAllByRole('columnheader').map((c) => c.textContent)).toEqual(['Дата', 'Тип', 'Длительность', 'Блоков']);
+  });
+
+  it('«Оценка по модулям» comes right under the readiness index', async () => {
+    const repo = new MemoryRepository();
+    const t = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    await repo.createSession(session('s1', t, { kind: 'training', endedAt: t }));
+    await repo.addBlock(block('b1', 's1', t, { module: 'pzmr', lBefore: 3, lAfter: 3.5, summaryJson: '{"meanRt":262.4,"sdRt":50}' }), [], []);
+    await rebuildCaches(repo);
+    await renderProgress(repo);
+
+    const headings = screen.getAllByRole('heading').map((h) => h.textContent);
+    const at = headings.indexOf('Оценка по модулям');
+    expect(at).toBe(headings.indexOf('Индекс готовности') + 1);
+    expect(at).toBe(headings.indexOf('Контрольные диагностики') - 1);
+
+    const table = screen.getByRole('table', { name: 'Оценка по модулям' });
+    expect(within(table).getAllByRole('columnheader').map((c) => c.textContent)).toEqual([
+      'Модуль',
+      'Ступень',
+      'Последний / лучший за 30 дней',
+      'Ориентир',
+      'Цель',
+    ]);
+    const rows = within(table).getAllByRole('row').slice(1);
+    expect(rows).toHaveLength(11);
+    const cells = (r: HTMLElement): (string | null)[] => within(r).getAllByRole('cell').map((c) => c.textContent);
+    expect(cells(rows[0] as HTMLElement)).toEqual(['ПЗМР', '1 — начальная (ур. 3,5; формат теста — 14)', '262 мс / 262 мс', 'средний', 'ур. 7 (+3,5)']);
+    expect(cells(rows[1] as HTMLElement)).toEqual(['Сложная реакция (СЗМР)', '—', 'ещё не тренировался', '—', '—']);
+    // Only the number column is right-aligned; «Ориентир» and «Цель» are text (A-R12).
+    expect(within(rows[0] as HTMLElement).getAllByRole('cell').map((c) => c.className)).toEqual(['', '', 'num', '', '']);
+    expect(table.nextElementSibling?.textContent).toBe(
+      'Ступень — по сохранённому уровню. Ориентир — опубликованные нормы, ориентировочно; источники — в руководстве.',
+    );
+  });
+
+  it('a failing block history read shows the error and the retry, never a broken screen', async () => {
+    const repo = new MemoryRepository();
+    vi.spyOn(repo, 'listBlocks').mockRejectedValueOnce(new Error('база занята'));
+    renderWithApp(<Progress onBack={vi.fn()} />, createFakePlatform({ repo }), repo);
+    expect((await screen.findByRole('alert')).textContent).toContain('база занята');
+    fireEvent.click(screen.getByRole('button', { name: 'Повторить' }));
+    expect(await screen.findByRole('table', { name: 'Оценка по модулям' })).toBeTruthy();
+    expect((await repo.listLog(10)).some((l) => l.message.includes('база занята'))).toBe(true);
   });
 
   it('shows the error and retries when the data cannot be read', async () => {

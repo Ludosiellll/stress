@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { DiagnosticRow } from '../data/rows';
-import { session } from '../data/repository.contract';
+import { block, session } from '../data/repository.contract';
 import { MemoryRepository } from '../data/memoryRepository';
+import { rebuildCaches } from '../data/export';
 import { MODULE_IDS } from '../engine/types';
 import { diagnosticCharts, durationText, loadProgressModel, ruDate, sessionLines, SESSION_LINES } from './progressModel';
 
@@ -131,6 +132,32 @@ describe('loadProgressModel', () => {
     expect(model.levels.map((l) => l.module)).toEqual(MODULE_IDS.filter((m) => m !== 'numseries'));
     expect(model.levels.find((l) => l.module === 'memory')).toMatchObject({ title: 'Память', norm: 9 });
     expect(model.diagnostics).toHaveLength(10);
+  });
+
+  it('loadProgressModel builds the assessment from blocks, sessions, states and ratings', async () => {
+    const repo = new MemoryRepository();
+    const now = new Date('2026-10-15T12:00:00.000Z');
+    await repo.createSession(session('f', '2026-10-14T10:00:00.000Z', { kind: 'free', endedAt: '2026-10-14T10:10:00.000Z' }));
+    await repo.addBlock(
+      block('b1', 'f', '2026-10-14T10:01:00.000Z', { module: 'pzmr', lBefore: 3, lAfter: 3.5, summaryJson: '{"meanRt":262.4,"sdRt":50}' }),
+      [],
+      [],
+    );
+    await rebuildCaches(repo);
+    const model = await loadProgressModel(repo, now);
+    expect(model.assessment.map((a) => a.module)).toEqual([...MODULE_IDS]);
+    expect(model.assessment[0]).toEqual({
+      module: 'pzmr',
+      title: 'ПЗМР',
+      step: '1 — начальная (ур. 3,5; формат теста — 14)',
+      lastBest: '262 мс / 262 мс',
+      norm: 'средний',
+      goal: 'ур. 7 (+3,5)',
+    });
+    // Number series: no block yet, so no rating line either.
+    expect(model.assessment.at(-1)).toEqual({ module: 'numseries', title: 'Числовые ряды', step: '—', lastBest: 'ещё не тренировался', norm: '—', goal: '—' });
+    // The session table counts the same blocks.
+    expect(model.sessions.map((s) => s.blocks)).toEqual([1]);
   });
 });
 

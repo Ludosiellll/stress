@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { block } from '../data/repository.contract';
 import type { BlockRow } from '../data/rows';
+import { defaultModuleState } from '../engine/derive';
 import { NORM_HINTS } from '../engine/norms';
+import type { ModuleState } from '../engine/planner';
+import { MODULE_IDS, type ModuleId } from '../engine/types';
 import { gorbovParams } from '../modules/tables/gorbov';
-import { assessBlock, formatMetric, meanFamilyRating, normLine, type AssessContext } from './assessment';
-import type { BlockHistory, HistoryEntry } from './blockHistory';
+import { assessBlock, assessModules, formatMetric, meanFamilyRating, normLine, type AssessContext, type ModuleAssessment } from './assessment';
+import { buildBlockHistory, type BlockHistory, type HistoryEntry } from './blockHistory';
 
 const NOW = new Date('2026-10-15T12:00:00.000Z');
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -232,5 +235,121 @@ describe('formatMetric', () => {
     expect(formatMetric('pomeh', 0)).toBe('0 мс');
     expect(formatMetric('pzmr', 262)).toBe('262 мс');
     expect(formatMetric('memory', 67)).toBe('67 %');
+  });
+});
+
+describe('assessModules', () => {
+  /** A stored block of the training session «t», `d` days before NOW. */
+  const stored = (module: ModuleId, d: number, over: Partial<BlockRow> = {}): BlockRow =>
+    block(`h${String(++nextId)}`, 't', ago(d), { module, ...over });
+  const history = (rows: BlockRow[]): BlockHistory => buildBlockHistory(rows, [{ id: 't', kind: 'training' }]);
+  const gorbovBlock = (task: GorbovTask, d: number, timeMs: number): BlockRow =>
+    stored('gorbov', d, { paramsJson: JSON.stringify({ task }), summaryJson: JSON.stringify({ timeMs, task }) });
+  const schulteBlock = (size: number, d: number, timeMs: number | null): BlockRow =>
+    stored('schulte', d, { paramsJson: JSON.stringify({ size }), summaryJson: JSON.stringify({ timeMs }) });
+  const states = (over: Partial<Record<ModuleId, Partial<ModuleState>>> = {}): Record<ModuleId, ModuleState> =>
+    Object.fromEntries(MODULE_IDS.map((m) => [m, { ...defaultModuleState(m), ...over[m] }])) as Record<ModuleId, ModuleState>;
+  const assess = (over: Partial<Record<ModuleId, Partial<ModuleState>>>, rows: BlockRow[], meanRating = 1000): ModuleAssessment[] =>
+    assessModules({ states: states(over), meanRating, history: history(rows), now: NOW });
+  const rowOf = (rows: ModuleAssessment[], module: ModuleId): ModuleAssessment | undefined => rows.find((r) => r.module === module);
+
+  it('untrained modules: a dash and «ещё не тренировался»', () => {
+    const rows = assess({}, []);
+    expect(rows.map((r) => r.module)).toEqual([...MODULE_IDS]);
+    expect(rows[0]).toEqual({ module: 'pzmr', title: 'ПЗМР', step: '—', lastBest: 'ещё не тренировался', norm: '—', goal: '—' });
+    expect(rowOf(rows, 'gorbov')).toEqual({
+      module: 'gorbov',
+      title: 'Красно-чёрные таблицы Горбова — чередование',
+      step: '—',
+      lastBest: 'ещё не тренировался',
+      norm: '—',
+      goal: '—',
+    });
+    expect(rowOf(rows, 'schulte')?.title).toBe('Таблицы Шульте');
+    expect(rowOf(rows, 'memory')?.title).toBe('Память — цифры');
+    expect(rowOf(rows, 'numseries')).toEqual({ module: 'numseries', title: 'Числовые ряды', step: '—', lastBest: 'ещё не тренировался', norm: '—', goal: '—' });
+  });
+
+  it('Gorbov: alternation is the main variant; best of 30 days', () => {
+    const rows = assess({ gorbov: { lSaved: 13.5, lifetimeBlocks: 9 } }, [
+      gorbovBlock('alternate', 40, 120_000),
+      gorbovBlock('black_up', 20, 30_000),
+      gorbovBlock('alternate', 10, 150_240),
+      gorbovBlock('alternate', 1, 140_520),
+    ]);
+    expect(rowOf(rows, 'gorbov')).toEqual({
+      module: 'gorbov',
+      title: 'Красно-чёрные таблицы Горбова — чередование',
+      step: '3 — формат теста (ур. 13,5; формат теста — 12)',
+      lastBest: '140,5 с / 140,5 с',
+      norm: 'выше среднего',
+      goal: 'ур. 17 (+3,5)',
+    });
+  });
+
+  it('number series by the mean rating', () => {
+    const rows = assess({ numseries: { lifetimeBlocks: 3 } }, [stored('numseries', 2, { summaryJson: '{"correct":7,"total":10}' })], 1180.4);
+    expect(rowOf(rows, 'numseries')).toEqual({
+      module: 'numseries',
+      title: 'Числовые ряды',
+      step: '2 — на подходе к формату теста (рейтинг 1180; формат теста — 1376)',
+      lastBest: '70 % / 70 %',
+      norm: '—',
+      goal: 'рейтинг 1376 (+196)',
+    });
+  });
+
+  it('Шульте: the largest finished grid', () => {
+    const rows = assess({ schulte: { lSaved: 8, lifetimeBlocks: 4 } }, [
+      schulteBlock(5, 3, 31_000),
+      schulteBlock(6, 2, 58_000),
+      schulteBlock(7, 1, null),
+    ]);
+    expect(rowOf(rows, 'schulte')).toEqual({
+      module: 'schulte',
+      title: 'Таблицы Шульте — 6×6',
+      step: '3 — формат теста (ур. 8; формат теста — 6)',
+      lastBest: '58,0 с / 58,0 с',
+      norm: '—',
+      goal: 'ур. 11 (+3)',
+    });
+  });
+
+  it('trained, but no finished block of the main variant', () => {
+    const rows = assess({ gorbov: { lifetimeBlocks: 2 } }, [gorbovBlock('black_up', 1, 30_000)]);
+    expect(rowOf(rows, 'gorbov')).toEqual({
+      module: 'gorbov',
+      title: 'Красно-чёрные таблицы Горбова — чередование',
+      step: '1 — начальная (ур. 0; формат теста — 12)',
+      lastBest: '—',
+      norm: '—',
+      goal: 'ур. 6 (+6)',
+    });
+  });
+
+  it('the last result outside 30 days', () => {
+    const rows = assess({ pzmr: { lifetimeBlocks: 1 } }, [stored('pzmr', 40, { summaryJson: '{"meanRt":262.4,"sdRt":50}' })]);
+    expect(rowOf(rows, 'pzmr')).toEqual({
+      module: 'pzmr',
+      title: 'ПЗМР',
+      step: '1 — начальная (ур. 0; формат теста — 14)',
+      lastBest: '262 мс / —',
+      norm: 'средний',
+      goal: 'ур. 7 (+7)',
+    });
+  });
+
+  it('the step and the goal come from the shown level (A-R7)', () => {
+    // 11,97 shows as 12,0 → step 3 of Горбов, not step 2 with «+0,03».
+    const rows = assess({ gorbov: { lSaved: 11.97, lifetimeBlocks: 1 } }, []);
+    expect(rowOf(rows, 'gorbov')).toMatchObject({ step: '3 — формат теста (ур. 12; формат теста — 12)', goal: 'ур. 17 (+5)' });
+  });
+
+  it('unreadable stored blocks are left out; nothing throws', () => {
+    const rows = assess({ pzmr: { lifetimeBlocks: 2 } }, [
+      stored('pzmr', 2, { summaryJson: '{"meanRt":230}' }),
+      stored('pzmr', 1, { summaryJson: '{not json' }),
+    ]);
+    expect(rowOf(rows, 'pzmr')).toMatchObject({ lastBest: '230 мс / 230 мс', norm: 'выше среднего' });
   });
 });
