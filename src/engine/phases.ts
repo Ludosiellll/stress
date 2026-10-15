@@ -21,7 +21,7 @@ export interface PhaseInfo {
 export const BASE_DAYS = 14;
 /** A module is calibrated after this many blocks (training and free); the finisher takes calibrated modules only. */
 export const CALIBRATION_BLOCKS = 3;
-/** The taper: the last 9 days up to and including the test day. */
+/** The taper: the 9 days before the test and the test day itself (daysToTest 9…0, 10 calendar days). */
 export const TAPER_DAYS = 9;
 /** The overload phase: 28 days before the test… */
 export const OVERLOAD_DAYS = 28;

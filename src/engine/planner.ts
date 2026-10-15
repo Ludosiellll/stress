@@ -82,7 +82,7 @@ export const FINISHER_MINUTES: Readonly<Record<PhaseId, number | null>> = { base
 /** Taper volume: every budget × 0.6, i.e. 40 % less. */
 export const TAPER_VOLUME = 0.6;
 const BUDGET_STEP_MS = 30_000;
-/** Taper rehearsals (П5): two control diagnostics in the last TAPER_DAYS before the test, at least 2 days apart. */
+/** Taper rehearsals (П5): two control diagnostics from TAPER_DAYS before the test date on, at least 2 days apart. */
 const REHEARSALS = 2;
 const REHEARSAL_GAP_DAYS = 2;
 
