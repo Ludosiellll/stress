@@ -36,8 +36,9 @@ export function backupStatus(): Promise<BackupStatus | null> {
 /** Known reasons a backup_now fails for, said in Russian (the command's own text is often sqlx's or the OS's English). */
 const BACKUP_REASONS: readonly (readonly [RegExp, string])[] = [
   [/is not loaded/, 'база не открыта — перезапусти приложение'],
-  [/database is locked|database table is locked|\bbusy\b/i, 'база занята, попробуй ещё раз через минуту'],
-  [/нет файла базы данных|\(os error 2\)|NotFound|No such file or directory|cannot find the (file|path) specified/i, 'файл базы не найден'],
+  // SQLITE_BUSY and SQLITE_LOCKED as sqlite3_errstr says them; an OS «busy» (EBUSY) is not the database's.
+  [/database is locked|database table is locked/i, 'база занята, попробуй ещё раз через минуту'],
+  [/нет файла базы данных|\(os error 2\)|No such file or directory|cannot find the (file|path) specified/i, 'файл базы не найден'],
 ];
 
 /** The Russian text of a known backup failure; null for any other reason (shown as it is). */

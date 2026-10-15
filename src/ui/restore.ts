@@ -12,11 +12,18 @@ import { ruDate } from './progressModel';
  * Without the copy nothing is written, not even a log row.
  */
 
-/** The copy before a restore failed; the message is the text for the user. */
+/**
+ * The copy before a restore failed; the message is the text for the user. `details`: the raw reason when the
+ * platform said it in Russian (Error.cause), shown under the message. It is not logged: the error log is a table
+ * of the same database, and nothing is written once the copy failed.
+ */
 export class RestoreBackupError extends Error {
-  constructor(reason: string) {
+  readonly details: string | null;
+
+  constructor(reason: string, details: string | null = null) {
     super(`Не удалось сделать резервную копию: ${reason}. Восстановление не начато.`);
     this.name = 'RestoreBackupError';
+    this.details = details;
   }
 }
 
@@ -53,7 +60,8 @@ export async function runRestore(o: {
   try {
     backupPath = await o.platform.backupNow();
   } catch (e) {
-    throw new RestoreBackupError(reasonText(e));
+    const raw = e instanceof Error && e.cause !== undefined ? reasonText(e.cause) : null;
+    throw new RestoreBackupError(reasonText(e), raw);
   }
   let report: ImportReport;
   try {

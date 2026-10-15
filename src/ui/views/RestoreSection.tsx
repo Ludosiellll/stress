@@ -24,7 +24,8 @@ type State =
   /** `total` null: the backup is being made, no block written yet. */
   | { kind: 'running'; done: number; total: number | null }
   | { kind: 'done'; report: ImportReport; backupPath: string | null }
-  | { kind: 'failed'; message: string };
+  /** `details`: the raw reason under the message (a backup failure said in Russian). */
+  | { kind: 'failed'; message: string; details?: string };
 
 /** «Восстановление из файла экспорта»: file → check → preview → backup → write with progress → result. */
 export default function RestoreSection({ busy, onBusy }: RestoreSectionProps) {
@@ -78,8 +79,11 @@ export default function RestoreSection({ busy, onBusy }: RestoreSectionProps) {
       });
       setState({ kind: 'done', report, backupPath });
     } catch (err) {
-      const message = err instanceof RestoreBackupError ? err.message : `Восстановление прервано: ${reasonText(err)}. ${INTERRUPTED_TAIL}`;
-      setState({ kind: 'failed', message });
+      if (err instanceof RestoreBackupError) {
+        setState(err.details === null ? { kind: 'failed', message: err.message } : { kind: 'failed', message: err.message, details: err.details });
+      } else {
+        setState({ kind: 'failed', message: `Восстановление прервано: ${reasonText(err)}. ${INTERRUPTED_TAIL}` });
+      }
     } finally {
       running.current = false;
       onBusy(false);
@@ -112,6 +116,7 @@ export default function RestoreSection({ busy, onBusy }: RestoreSectionProps) {
       body = (
         <>
           <p role="alert">{state.message}</p>
+          {state.kind === 'failed' && state.details !== undefined && <p className="muted">Подробности: {state.details}</p>}
           {chooser}
         </>
       );

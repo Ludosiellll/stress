@@ -81,6 +81,26 @@ describe('runRestore', () => {
     expect(await historyOf(repo)).toEqual(before);
   });
 
+  it('a reason said in Russian keeps the raw text for the screen; nothing is written (B7)', async () => {
+    const repo = new MemoryRepository();
+    const calls: string[] = [];
+    const platform = createFakePlatform({ repo });
+    const raw = 'error returned from database: (code: 5) database is locked';
+    platform.backupNow = () => Promise.reject(new Error('база занята, попробуй ещё раз через минуту', { cause: raw }));
+    const error: unknown = await runRestore({ repo: recording(repo, calls), platform, bundle: FILE, onProgress: vi.fn() }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(RestoreBackupError);
+    expect((error as RestoreBackupError).message).toBe(
+      'Не удалось сделать резервную копию: база занята, попробуй ещё раз через минуту. Восстановление не начато.',
+    );
+    expect((error as RestoreBackupError).details).toBe(raw);
+    // The error log is a table of the same database: the raw text is not written there either.
+    expect(calls).toEqual([]);
+    // A reason that is already the raw text has no details.
+    platform.backupNow = () => Promise.reject(new Error('Отказано в доступе. (os error 5)'));
+    const plain: unknown = await runRestore({ repo, platform, bundle: FILE, onProgress: vi.fn() }).catch((e: unknown) => e);
+    expect((plain as RestoreBackupError).details).toBeNull();
+  });
+
   it('a backup rejected with a plain string (the Tauri bridge) or with nothing still stops it', async () => {
     const repo = new MemoryRepository();
     const platform = createFakePlatform({ repo });

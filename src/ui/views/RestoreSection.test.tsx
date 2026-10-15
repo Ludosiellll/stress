@@ -183,6 +183,23 @@ describe('RestoreSection', () => {
     );
     expect(onBusy.mock.calls).toEqual([[true], [false]]);
     expect(await history(repo)).toEqual({ sessions: [], blocks: [], trials: [], log: [] });
+    expect(screen.queryByText(/^Подробности:/)).toBeNull();
+  });
+
+  it('a failed backup said in Russian shows the raw reason under it (B7)', async () => {
+    const repo = new MemoryRepository();
+    const platform = createFakePlatform({ repo });
+    const raw = 'error returned from database: (code: 5) database is locked';
+    platform.backupNow = () => Promise.reject(new Error('база занята, попробуй ещё раз через минуту', { cause: raw }));
+    renderSection({ repo, platform });
+    await chooseFile(await exportFile());
+    fireEvent.click(screen.getByRole('button', { name: 'Восстановить' }));
+    await settleUntil(() => screen.queryByRole('alert') !== null, 'the backup error');
+    expect(screen.getByRole('alert').textContent).toBe(
+      'Не удалось сделать резервную копию: база занята, попробуй ещё раз через минуту. Восстановление не начато.',
+    );
+    expect(screen.getByText(`Подробности: ${raw}`)).toBeTruthy();
+    expect(await history(repo)).toEqual({ sessions: [], blocks: [], trials: [], log: [] });
   });
 
   it('a failing read of the database is a comparison failure, not an unreadable file', async () => {

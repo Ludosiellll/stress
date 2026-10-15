@@ -104,7 +104,7 @@ describe('tauri platform', () => {
 
   it.each([
     ['error returned from database: (code: 5) database is locked', 'база занята, попробуй ещё раз через минуту'],
-    ['checkpoint: error returned from database: (code: 5) database is busy', 'база занята, попробуй ещё раз через минуту'],
+    ['checkpoint: error returned from database: (code: 6) database table is locked', 'база занята, попробуй ещё раз через минуту'],
     ['database sqlite:trainer.db is not loaded', 'база не открыта — перезапусти приложение'],
     ['нет файла базы данных C:\\app\\trainer.db', 'файл базы не найден'],
     ['The system cannot find the file specified. (os error 2)', 'файл базы не найден'],
@@ -114,6 +114,22 @@ describe('tauri platform', () => {
     await expect(createTauriPlatform().backupNow()).rejects.toThrow(new RegExp(`^${text}$`));
     invoke.mockRejectedValue(new Error(raw));
     await expect(createTauriPlatform().backupNow()).rejects.toThrow(new RegExp(`^${text}$`));
+  });
+
+  it('an OS «busy» is not a busy database: it passes through unchanged (B7)', async () => {
+    for (const raw of ['Device or resource busy (os error 16)', 'Resource busy: trainer.db']) {
+      invoke.mockRejectedValue(raw);
+      await expect(createTauriPlatform().backupNow()).rejects.toThrow(new RegExp(`^${raw.replace(/[()]/g, '\\$&')}$`));
+    }
+  });
+
+  it('a reason said in Russian keeps the raw text as its cause (B7)', async () => {
+    const raw = 'error returned from database: (code: 5) database is locked';
+    invoke.mockRejectedValue(raw);
+    const error: unknown = await createTauriPlatform().backupNow().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe('база занята, попробуй ещё раз через минуту');
+    expect((error as Error).cause).toBe(raw);
   });
 
   it('returns the startup backup status', async () => {
