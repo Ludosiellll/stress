@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { EMPTY_METRICS, planDiagnostic } from '../engine/diagnostic';
 import { szmr } from '../modules/reaction/szmr';
 import { isTwoChoice } from './blockHistory';
-import { DIAGNOSTIC_ROW_IDS, diagnosticChange, diagnosticNorm, diagnosticValue } from './diagnosticCompare';
+import { DIAGNOSTIC_ROW_IDS, diagnosticChange, diagnosticNorm, diagnosticValue, diagnosticValueText } from './diagnosticCompare';
 
 const D = { ...EMPTY_METRICS, pzmrMedianRt: 251.4, pzmrMeanRt: 262.4, szmrMedianRt: 402, szmrMeanRt: 401.6, gonogoScore: 93.3,
   rdoMeanAbsErrorMs: 18.6, gorbov: { V: 41.25, P: 70.5, Pi: -12 }, numseriesCorrect: 14, pomehQuietRt: 300, pomehNoisyRt: 335.2,
@@ -12,6 +12,17 @@ describe('diagnosticCompare', () => {
   it('values as Done shows them', () => {
     expect(DIAGNOSTIC_ROW_IDS.map((id) => diagnosticValue(D, id))).toEqual([251, 402, 93, 19, 41.3, 70.5, -12, 14, 35, 89, null, 7]);
     expect(diagnosticValue({ ...D, gorbov: null }, 'gorbovV')).toBeNull();
+  });
+
+  it('a value with its unit, in one place for the cells and the changes', () => {
+    const texts = DIAGNOSTIC_ROW_IDS.map((id) => {
+      const v = diagnosticValue(D, id);
+      return v === null ? null : diagnosticValueText(id, v);
+    });
+    expect(texts).toEqual(['251 мс', '402 мс', '93 %', '19 мс', '41,3 с', '70,5 с', '−12,0 с', '14', '+35 мс', '+89 мс', null, '7']);
+    expect(diagnosticValueText('stroop', -12)).toBe('−12 мс');
+    expect(diagnosticValueText('pomeh', 0)).toBe('0 мс');
+    expect(diagnosticValueText('gorbovPi', 0.4)).toBe('0,4 с');
   });
 
   it('changes: 2 % or 5 ms is no change; the direction decides better or worse', () => {

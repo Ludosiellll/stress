@@ -86,6 +86,24 @@ const UNITS: Readonly<Record<DiagnosticRowId, Unit>> = Object.freeze({
 });
 
 const HIGHER_IS_BETTER: ReadonlySet<DiagnosticRowId> = new Set(['gonogo', 'numseries', 'memory']);
+/** Differences of medians: shown with their sign, as the block summary shows them. */
+const SIGNED: ReadonlySet<DiagnosticRowId> = new Set(['pomeh', 'stroop', 'taskswitch']);
+
+/** «41,3», «−3,7», with `plus` «+2,0»: one decimal, the minus sign U+2212. */
+function secondsText(x: number, plus: boolean): string {
+  const text = decimal(Math.abs(x), 1);
+  if (x < 0) return `−${text}`;
+  return plus ? `+${text}` : text;
+}
+
+const withUnit = (number: string, unit: Unit): string => (unit === '' ? number : `${number} ${unit}`);
+
+/** A shown value (diagnosticValue) with its unit: «251 мс», «93 %», «−12,0 с», «+35 мс» (a difference of medians), «7». */
+export function diagnosticValueText(id: DiagnosticRowId, v: number): string {
+  const unit = UNITS[id];
+  if (unit === 'с') return withUnit(secondsText(v, false), unit);
+  return withUnit(SIGNED.has(id) ? signedMs(v) : String(v), unit);
+}
 
 /**
  * |Δ| < 2 % of |before| in exact integers (A-R20): seconds compare in tenths, as shown, because 0,02·35 in floating
@@ -94,12 +112,6 @@ const HIGHER_IS_BETTER: ReadonlySet<DiagnosticRowId> = new Set(['gonogo', 'numse
 function underTwoPercent(unit: Unit, delta: number, before: number): boolean {
   const scale = unit === 'с' ? 10 : 1;
   return Math.round(Math.abs(delta) * scale) * 50 < Math.round(Math.abs(before) * scale);
-}
-
-/** «−3,7 с», «+2,0 с»: one decimal, the minus sign U+2212. */
-function signedSeconds(x: number): string {
-  const text = decimal(Math.abs(x), 1);
-  return x < 0 ? `−${text}` : `+${text}`;
 }
 
 /**
@@ -112,7 +124,7 @@ export function diagnosticChange(id: DiagnosticRowId, now: number, before: numbe
   const delta = unit === 'с' ? round1(now - before) : whole(now - before);
   if (delta === 0 || underTwoPercent(unit, delta, before) || (unit === 'мс' && Math.abs(delta) < 5)) return 'без изменений';
   const better = HIGHER_IS_BETTER.has(id) ? delta > 0 : delta < 0;
-  const value = unit === 'с' ? `${signedSeconds(delta)} с` : unit === '' ? signedMs(delta) : `${signedMs(delta)} ${unit}`;
+  const value = withUnit(unit === 'с' ? secondsText(delta, true) : signedMs(delta), unit);
   return `${value}, ${better ? 'лучше' : 'хуже'}`;
 }
 

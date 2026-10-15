@@ -67,7 +67,7 @@ export interface DiagnosticResults extends DiagnosticMetrics {
 }
 
 const REACTION_IDS: readonly string[] = REACTION_MODULE_IDS;
-const isReactionId = (v: unknown): v is ReactionModuleId => typeof v === 'string' && REACTION_IDS.includes(v);
+export const isReactionId = (v: unknown): v is ReactionModuleId => typeof v === 'string' && REACTION_IDS.includes(v);
 
 type NumberMetric = Exclude<keyof DiagnosticMetrics, 'gorbov'>;
 const NUMBER_METRICS = Object.keys(EMPTY_METRICS).filter((k): k is NumberMetric => k !== 'gorbov');

@@ -1,8 +1,15 @@
-import type { DiagnosticResults } from '../../engine/diagnostic';
-import { REACTION_MODULE_IDS, type ModuleId, type ReactionModuleId } from '../../engine/types';
+import { isReactionId, type DiagnosticResults } from '../../engine/diagnostic';
+import type { ModuleId } from '../../engine/types';
 import { moduleTitles } from '../../modules/registry';
-import { DIAGNOSTIC_ROW_IDS, diagnosticChange, diagnosticNorm, diagnosticValue, type DiagnosticRowId } from '../../session/diagnosticCompare';
-import { signedMs, whole, type BlockSummaryView, type DiagnosticComparison } from '../../session/steps';
+import {
+  DIAGNOSTIC_ROW_IDS,
+  diagnosticChange,
+  diagnosticNorm,
+  diagnosticValue,
+  diagnosticValueText,
+  type DiagnosticRowId,
+} from '../../session/diagnosticCompare';
+import { whole, type BlockSummaryView, type DiagnosticComparison } from '../../session/steps';
 import { decimal, noBreakUnits } from '../format';
 import { ruDate } from '../progressModel';
 import { DEFERRED_NOTE } from './ReadinessBlock';
@@ -42,32 +49,9 @@ const LABELS: Readonly<Record<DiagnosticRowId, string>> = {
   memory: `${moduleTitles.memory} — объём`,
 };
 
-const REACTION_IDS: readonly string[] = REACTION_MODULE_IDS;
-const isReactionRow = (id: DiagnosticRowId): id is DiagnosticRowId & ReactionModuleId => REACTION_IDS.includes(id);
-
-/**
- * A shown value (diagnosticValue) with its unit: «251 мс», «93 %», «−12,0 с», «14 из 20», «+35 мс» (a difference of
- * medians as the block summary showed it), «7».
- */
+/** A shown value with its unit (diagnosticValueText); number series as «14 из 20». */
 function valueText(id: DiagnosticRowId, v: number, seriesTotal: number | null): string {
-  switch (id) {
-    case 'gonogo':
-      return `${String(v)} %`;
-    case 'gorbovV':
-    case 'gorbovP':
-    case 'gorbovPi':
-      return `${decimal(v).replace('-', '−')} с`;
-    case 'numseries':
-      return seriesTotal === null ? String(v) : `${String(v)} из ${String(seriesTotal)}`;
-    case 'pomeh':
-    case 'stroop':
-    case 'taskswitch':
-      return `${signedMs(v)} мс`;
-    case 'memory':
-      return String(v);
-    default:
-      return `${String(v)} мс`;
-  }
+  return id === 'numseries' && seriesTotal !== null ? `${String(v)} из ${String(seriesTotal)}` : diagnosticValueText(id, v);
 }
 
 /** The cell of one diagnostic: «нет данных» without a value, «…, замер ненадёжен» for its unreliable modules. */
@@ -75,7 +59,7 @@ function cellText(d: DiagnosticResults, id: DiagnosticRowId, seriesTotal: number
   const v = diagnosticValue(d, id);
   if (v === null) return NO_DATA;
   const text = valueText(id, v, seriesTotal);
-  return isReactionRow(id) && d.unreliable.includes(id) ? `${text}, ${UNRELIABLE}` : text;
+  return isReactionId(id) && d.unreliable.includes(id) ? `${text}, ${UNRELIABLE}` : text;
 }
 
 function changeText(id: DiagnosticRowId, d: DiagnosticResults, previous: DiagnosticResults): string {
