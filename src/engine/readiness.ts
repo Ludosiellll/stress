@@ -6,13 +6,13 @@ export type Ability = 'reaction' | 'attention' | 'switching' | 'memory' | 'logic
 type Points = ReadonlyArray<readonly [number, number]>;
 
 /**
- * Published Gorbov-Shulte bands, piecewise linear, (value in seconds -> score).
- * Source: common.md «Индекс готовности (§7.5)», spec §7.5, research note Test_Battery_Research.md.
+ * Gorbov-Shulte V = (t1 + t2) / 2 on the common paper scale, piecewise linear (value in seconds -> score).
+ * No primary source is known, so it is a rough guide (spec 2026-10-15 §4); P and Π have no bands.
  */
 export const BAND_GORBOV_V: Points = [[29, 100], [37, 80], [50, 60], [60, 40], [70, 20]];
-/** P = t3 (seconds). Not part of any ability in W1; exported for the progress screen. */
-export const BAND_GORBOV_P: Points = [[43, 100], [56, 80], [86, 60], [106, 40], [126, 20]];
-export const BAND_GORBOV_PI: Points = [[9, 100], [17, 80], [31, 60], [40, 40], [49, 20]];
+
+/** Π = t3 − (t1 + t2) is stored in seconds: 40 points per 20 s (20 000 ms, spec 2026-10-15 §4). */
+export const GORBOV_PI_SCALE_S = 20;
 
 /** Piecewise-linear score through `points` (sorted by value); clamped to the end scores outside. */
 export function bandScore(value: number, points: Points): number {
@@ -94,14 +94,12 @@ export function readiness(
 ): { abilities: Record<Ability, number | null>; overall: number | null } {
   const rel = (v: number | null, v0: number | null, lowerIsBetter: boolean): number[] =>
     v === null || v0 === null ? [] : [baselineScore(v, Math.max(v0, 1), lowerIsBetter)];
-  const diff = (v: number | null, v0: number | null, scaleMs: number): number[] =>
-    v === null || v0 === null ? [] : [diffScore(v, v0, scaleMs)];
-  // Absolute published bands: scored from the latest result alone, no baseline needed (R18a).
-  const band = (
-    pick: (g: { V: number; P: number; Pi: number }) => number,
-    points: Points,
-  ): number[] =>
-    latest.gorbov === null ? [] : [bandScore(pick(latest.gorbov), points)];
+  const diff = (v: number | null, v0: number | null, scale: number): number[] =>
+    v === null || v0 === null ? [] : [diffScore(v, v0, scale)];
+  // V on the paper scale: scored from the latest result alone, no baseline needed (R18a).
+  const gorbovV = latest.gorbov === null ? [] : [bandScore(latest.gorbov.V, BAND_GORBOV_V)];
+  // Π against its own baseline, like the other differences (spec 2026-10-15 §4).
+  const gorbovPi = diff(latest.gorbov?.Pi ?? null, baseline.gorbov?.Pi ?? null, GORBOV_PI_SCALE_S);
 
   const abilities: Record<Ability, number | null> = {
     reaction: avg([
@@ -111,11 +109,11 @@ export function readiness(
       ...diff(latest.pomehDeltaMs, baseline.pomehDeltaMs, DIFF_SCALE_MS.pomeh),
     ]),
     attention: avg([
-      ...band((g) => g.V, BAND_GORBOV_V),
+      ...gorbovV,
       ...rel(latest.gonogoScore, baseline.gonogoScore, false),
       ...diff(latest.stroopInterferenceMs, baseline.stroopInterferenceMs, DIFF_SCALE_MS.stroop),
     ]),
-    switching: avg([...band((g) => g.Pi, BAND_GORBOV_PI), ...diff(latest.switchCostMs, baseline.switchCostMs, DIFF_SCALE_MS.taskswitch)]),
+    switching: avg([...gorbovPi, ...diff(latest.switchCostMs, baseline.switchCostMs, DIFF_SCALE_MS.taskswitch)]),
     memory: avg(rel(latest.memorySpan, baseline.memorySpan, false)),
     logic: avg(rel(latest.numseriesCorrect, baseline.numseriesCorrect, false)),
   };
@@ -123,7 +121,10 @@ export function readiness(
   return { abilities, overall: avg(available) };
 }
 
-/** The metrics readiness scores against the baseline (baselineScore, diffScore); Gorbov's bands need none. */
+/**
+ * The metrics readiness scores against the baseline (baselineScore, diffScore). Gorbov is one result with two parts:
+ * V needs no baseline (its band), Π does and is handled next to these in readinessOfLatest.
+ */
 export const BASELINE_METRICS = [
   'pzmrMedianRt',
   'szmrMedianRt',
@@ -146,16 +147,24 @@ export interface Readiness {
 /**
  * Readiness of `latest` after the `earlier` diagnostics (chronological), against the merged baseline (M2). A part
  * whose baseline is `latest` itself would score 60 whatever was measured (a W2 part at the first 0.2.0 diagnostic
- * pulls a 96 down to 81 while the W1 results stay the same), so it is left out of its ability and of the overall
+ * pulls a 97 down to 81 while the W1 results stay the same), so it is left out of its ability and of the overall
  * index until the next diagnostic, unless every part is (the very first diagnostic counts all of them at 60, as
- * in W1). Spec deviation, see §7.5 (W2-R31).
+ * in W1). Gorbov Π is such a part; a deferred Π gets a null baseline, and V keeps its band. Spec deviation, see §7.5
+ * (W2-R31, 2026-10-15).
  */
 export function readinessOfLatest(earlier: readonly DiagnosticMetrics[], latest: DiagnosticMetrics): Readiness {
   const before = mergedBaseline(earlier);
   const scored = BASELINE_METRICS.filter((k) => latest[k] !== null);
   const ownBaseline = scored.filter((k) => before[k] === null);
-  const deferred = ownBaseline.length > 0 && ownBaseline.length < scored.length;
+  const piScored = latest.gorbov !== null;
+  const piOwnBaseline = piScored && before.gorbov === null;
+  const nScored = scored.length + (piScored ? 1 : 0);
+  const nOwnBaseline = ownBaseline.length + (piOwnBaseline ? 1 : 0);
+  const deferred = nOwnBaseline > 0 && nOwnBaseline < nScored;
   const counted: DiagnosticMetrics = { ...latest };
   if (deferred) for (const k of ownBaseline) counted[k] = null;
-  return { ...readiness(counted, mergedBaseline([...earlier, latest])), deferred };
+  const baseline = mergedBaseline([...earlier, latest]);
+  // Only Π's baseline is dropped: V is still scored from its band.
+  if (deferred && piOwnBaseline) baseline.gorbov = null;
+  return { ...readiness(counted, baseline), deferred };
 }

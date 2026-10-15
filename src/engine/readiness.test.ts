@@ -1,10 +1,9 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import {
-  BAND_GORBOV_P,
-  BAND_GORBOV_PI,
   BAND_GORBOV_V,
   DIFF_SCALE_MS,
+  GORBOV_PI_SCALE_S,
   baselineScore,
   bandScore,
   diffScore,
@@ -91,13 +90,6 @@ describe('bandScore', () => {
     expect(bandScore(80, BAND_GORBOV_V)).toBe(20);
     expect(bandScore(20, BAND_GORBOV_V)).toBe(100);
   });
-  it('exports P and Pi bands from the reference table', () => {
-    expect(bandScore(43, BAND_GORBOV_P)).toBe(100);
-    expect(bandScore(126, BAND_GORBOV_P)).toBe(20);
-    expect(bandScore(9, BAND_GORBOV_PI)).toBe(100);
-    expect(bandScore(49, BAND_GORBOV_PI)).toBe(20);
-    expect(bandScore(13, BAND_GORBOV_PI)).toBe(90);
-  });
   it('sorts unsorted points and handles a single point', () => {
     expect(bandScore(5, [[10, 0], [0, 100]])).toBe(50);
     expect(bandScore(99, [[10, 55]])).toBe(55);
@@ -148,19 +140,27 @@ describe('baselineScore', () => {
 });
 
 describe('readiness', () => {
-  it('with baseline = latest, baseline-scored abilities are 60 and Gorbov uses bands', () => {
+  it('with baseline = latest, baseline-scored abilities are 60 and V uses its band', () => {
     const d = full();
     const r = readiness(d, d);
     expect(r.abilities.reaction).toBe(60);
     expect(r.abilities.logic).toBe(60);
-    expect(r.abilities.switching).toBe(bandScore(24, BAND_GORBOV_PI));
+    expect(r.abilities.switching).toBe(60);
     expect(r.abilities.attention).toBe((bandScore(33, BAND_GORBOV_V) + 60) / 2);
     expect(r.abilities.memory).toBeNull();
     const vals = [r.abilities.reaction, r.abilities.attention, r.abilities.switching, r.abilities.logic] as number[];
     expect(r.overall).toBeCloseTo(vals.reduce((a, b) => a + b, 0) / 4, 12);
   });
 
-  it('0.1.0 results give the 0.1.0 abilities', () => {
+  it('Π against its own baseline: 20 s faster gives 100, the same Π 60, 10 s slower 40', () => {
+    const g = (Pi: number) => full({ gorbov: { V: 33, P: 70, Pi } });
+    expect(readiness(g(4), g(24)).abilities.switching).toBe(100);
+    expect(readiness(g(24), g(24)).abilities.switching).toBe(60);
+    expect(readiness(g(34), g(24)).abilities.switching).toBe(40);
+    expect(GORBOV_PI_SCALE_S).toBe(20);
+  });
+
+  it('0.1.0 results: W1 abilities, switching by the Π difference (§4)', () => {
     // The two diagnostics of the W1 Home test; the W2 metrics are missing (null), not zero.
     const baseline = full({ pzmrMedianRt: 400, szmrMedianRt: 600, rdoMeanAbsErrorMs: 50, gonogoScore: 80, numseriesCorrect: 10, gorbov: { V: 60, P: 100, Pi: 40 } });
     const latest = full({ pzmrMedianRt: 300, szmrMedianRt: 450, rdoMeanAbsErrorMs: 40, gonogoScore: 90, numseriesCorrect: 14, gorbov: { V: 30, P: 60, Pi: 10 } });
@@ -168,21 +168,21 @@ describe('readiness', () => {
     expect(r.abilities.reaction).toBeCloseTo((100 + 100 + 92) / 3, 12);
     expect(Math.round(r.abilities.reaction ?? NaN)).toBe(97);
     expect(Math.round(r.abilities.attention ?? NaN)).toBe(89);
-    expect(Math.round(r.abilities.switching ?? NaN)).toBe(98);
+    expect(r.abilities.switching).toBe(100);
     expect(r.abilities.logic).toBe(100);
     expect(r.abilities.memory).toBeNull();
-    expect(Math.round(r.overall ?? NaN)).toBe(96);
+    expect(Math.round(r.overall ?? NaN)).toBe(97);
     // A W2 latest against a 0.1.0 baseline: the W2 parts have no baseline, so they are left out, never scored as 0.
     const latestW2 = { ...latest, pomehDeltaMs: 30, stroopInterferenceMs: 90, switchCostMs: 100, memorySpan: 7 };
     expect(readiness(latestW2, baseline)).toEqual(r);
   });
 
-  it('with latest = baseline and the W2 metrics every ability is 60, except the Gorbov bands; memory 60', () => {
+  it('with latest = baseline and the W2 metrics every ability is 60, except the V band; memory 60', () => {
     const d = fullW2();
     const r = readiness(d, d);
     expect(r.abilities.reaction).toBe(60);
     expect(r.abilities.attention).toBe((bandScore(33, BAND_GORBOV_V) + 60 + 60) / 3);
-    expect(r.abilities.switching).toBe((bandScore(24, BAND_GORBOV_PI) + 60) / 2);
+    expect(r.abilities.switching).toBe((60 + 60) / 2);
     expect(r.abilities.memory).toBe(60);
     expect(r.abilities.logic).toBe(60);
   });
@@ -243,9 +243,9 @@ describe('readiness', () => {
     expect(r.abilities.attention).toBeCloseTo(70, 10);
   });
 
-  it('scores Gorbov from bands even when the baseline has no Gorbov result', () => {
+  it('V is scored from its band without a baseline; Π needs one', () => {
     const r = readiness(full(), full({ gorbov: null }));
-    expect(r.abilities.switching).toBe(bandScore(24, BAND_GORBOV_PI));
+    expect(r.abilities.switching).toBeNull();
     expect(r.abilities.attention).toBe((bandScore(33, BAND_GORBOV_V) + 60) / 2);
   });
 
@@ -357,7 +357,7 @@ describe('mergedBaseline (M2)', () => {
 });
 
 describe('readinessOfLatest (W2-R31)', () => {
-  // The 0.1.0 pair of the W1 Home test: overall 96 from the W1 parts alone.
+  // The 0.1.0 pair of the W1 Home test: overall 97 from the W1 parts alone.
   const w1First = full({ pzmrMedianRt: 400, szmrMedianRt: 600, rdoMeanAbsErrorMs: 50, gonogoScore: 80, numseriesCorrect: 10, gorbov: { V: 60, P: 100, Pi: 40 } });
   const w1Latest = full({ pzmrMedianRt: 300, szmrMedianRt: 450, rdoMeanAbsErrorMs: 40, gonogoScore: 90, numseriesCorrect: 14, gorbov: { V: 30, P: 60, Pi: 10 } });
   const w2Parts = { pomehDeltaMs: 30, stroopInterferenceMs: 90, switchCostMs: 100, memorySpan: 7 };
@@ -367,7 +367,7 @@ describe('readinessOfLatest (W2-R31)', () => {
     const r = readinessOfLatest([w1First], upgrade);
     const w1 = readiness(w1Latest, w1First);
     expect(r).toEqual({ ...w1, deferred: true });
-    expect(Math.round(r.overall ?? NaN)).toBe(96);
+    expect(Math.round(r.overall ?? NaN)).toBe(97);
     expect(r.abilities.memory).toBeNull();
     // Counted as their own baseline (60 each), the same W1 results would read as a drop to 81.
     expect(Math.round(readiness(upgrade, mergedBaseline([w1First, upgrade])).overall ?? NaN)).toBe(81);
@@ -394,6 +394,14 @@ describe('readinessOfLatest (W2-R31)', () => {
     const r = readinessOfLatest([first], latest);
     expect(r).toEqual({ ...readiness({ ...latest, pomehDeltaMs: null }, first), deferred: true });
     expect(r.abilities.reaction).toBe((100 + 60 + 60) / 3);
+  });
+
+  it('Π measured for the first time waits like any new part (W2-R31)', () => {
+    const r = readinessOfLatest([full({ gorbov: null })], full());
+    expect(r.deferred).toBe(true);
+    expect(r.abilities.switching).toBeNull();
+    expect(r.abilities.attention).toBe((bandScore(33, BAND_GORBOV_V) + 60) / 2);
+    expect(readinessOfLatest([], full()).abilities.switching).toBe(60);
   });
 
   it('BASELINE_METRICS are exactly the metrics readiness scores against a baseline', () => {

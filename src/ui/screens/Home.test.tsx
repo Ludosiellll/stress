@@ -276,12 +276,12 @@ describe('Home with history', () => {
     const value = (label: string): string | null => screen.getByText(label).nextElementSibling?.textContent ?? null;
     expect(value('Реакция')).toBe('97');
     expect(value('Внимание')).toBe('89');
-    expect(value('Переключение')).toBe('98');
+    expect(value('Переключение')).toBe('100');
     expect(value('Логика')).toBe('100');
     // 0.1.0 diagnostics have no memory span: no data, and the index stays the 0.1.0 one.
     expect(value('Память')).toBe('нет данных');
-    expect(screen.getByText('Общий индекс: 96')).toBeTruthy();
-    expect(screen.getByText('Для большинства показателей 60 — уровень первой диагностики; таблица Горбова оценивается по опубликованным нормам.')).toBeTruthy();
+    expect(screen.getByText('Общий индекс: 97')).toBeTruthy();
+    expect(screen.getByText('Для большинства показателей 60 — уровень первой диагностики; время первых двух таблиц Горбова (V) оценивается по бумажной шкале, это ориентир.')).toBeTruthy();
     expect(screen.queryByText('Пройди диагностику, чтобы увидеть индекс')).toBeNull();
     expect(screen.queryByText(DEFERRED_NOTE)).toBeNull();
   });
@@ -315,9 +315,9 @@ describe('Home with history', () => {
     const value = (label: string): string | null => screen.getByText(label).nextElementSibling?.textContent ?? null;
     expect(value('Реакция')).toBe('97');
     expect(value('Внимание')).toBe('89');
-    expect(value('Переключение')).toBe('98');
+    expect(value('Переключение')).toBe('100');
     expect(value('Память')).toBe('нет данных');
-    expect(screen.getByText('Общий индекс: 96')).toBeTruthy();
+    expect(screen.getByText('Общий индекс: 97')).toBeTruthy();
     expect(screen.getByText(DEFERRED_NOTE)).toBeTruthy();
   });
 
