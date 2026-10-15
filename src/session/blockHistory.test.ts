@@ -130,18 +130,37 @@ describe('keyMetric', () => {
 
 describe('normSamples', () => {
   it('ПЗМР: the mean first, then the SD', () => {
-    expect(normSamples(row({ module: 'pzmr', summaryJson: '{"meanRt":262.4,"sdRt":50.2}' }))).toEqual([
+    expect(normSamples(row({ module: 'pzmr', summaryJson: '{"meanRt":262.4,"sdRt":50.2}' }), 'diagnostic')).toEqual([
       { id: 'pzmrMean', value: 262 },
       { id: 'pzmrSd', value: 50 },
     ]);
-    expect(normSamples(row({ module: 'pzmr', summaryJson: '{"meanRt":262.4,"sdRt":null}' }))).toEqual([{ id: 'pzmrMean', value: 262 }]);
-    expect(normSamples(row({ module: 'pzmr', summaryJson: 'not json' }))).toEqual([]);
+    expect(normSamples(row({ module: 'pzmr', summaryJson: '{"meanRt":262.4,"sdRt":null}' }), 'diagnostic')).toEqual([{ id: 'pzmrMean', value: 262 }]);
+    expect(normSamples(row({ module: 'pzmr', summaryJson: 'not json' }), 'diagnostic')).toEqual([]);
+  });
+
+  it('ПЗМР and СЗМР in training: norms only for a block answered in time, never for overload (FW2)', () => {
+    const reaction = (module: 'pzmr' | 'szmr', counts: object | null, over: Partial<BlockRow> = {}): BlockRow =>
+      row({ module, lBefore: 5, summaryJson: JSON.stringify({ meanRt: 262.4, sdRt: 50.2, ...(counts === null ? {} : { counts }) }), ...over });
+    const clean = { hit: 15, miss: 0, late: 0, false_start: 1 };
+    expect(normSamples(reaction('pzmr', clean), 'training')).toEqual([
+      { id: 'pzmrMean', value: 262 },
+      { id: 'pzmrSd', value: 50 },
+    ]);
+    expect(normSamples(reaction('szmr', clean), 'free')).toEqual([{ id: 'szmrMean', value: 262 }]);
+    for (const module of ['pzmr', 'szmr'] as const) {
+      expect(normSamples(reaction(module, { ...clean, late: 1 }), 'training'), `${module}: late`).toEqual([]);
+      expect(normSamples(reaction(module, { ...clean, miss: 1 }), 'free'), `${module}: miss`).toEqual([]);
+      expect(normSamples(reaction(module, clean, { flags: ['overload'] }), 'training'), `${module}: overload`).toEqual([]);
+      expect(normSamples(reaction(module, null), 'training'), `${module}: no counts`).toEqual([]);
+      // The diagnostic window is wide: its norms stay.
+      expect(normSamples(reaction(module, { ...clean, miss: 1 }), 'diagnostic')).not.toEqual([]);
+    }
   });
 
   it('СЗМР: the 2-choice norm only for 2 colours on 2 keys, by the parameters of its level', () => {
-    expect(normSamples(row({ module: 'szmr', lBefore: 7.9, summaryJson: '{"meanRt":401.6}' }))).toEqual([{ id: 'szmrMean', value: 402 }]);
-    expect(normSamples(row({ module: 'szmr', lBefore: 8, summaryJson: '{"meanRt":401.6}' }))).toEqual([]);
-    expect(normSamples(row({ module: 'szmr', lBefore: 0, summaryJson: '{"meanRt":null}' }))).toEqual([]);
+    expect(normSamples(row({ module: 'szmr', lBefore: 7.9, summaryJson: '{"meanRt":401.6}' }), 'diagnostic')).toEqual([{ id: 'szmrMean', value: 402 }]);
+    expect(normSamples(row({ module: 'szmr', lBefore: 8, summaryJson: '{"meanRt":401.6}' }), 'diagnostic')).toEqual([]);
+    expect(normSamples(row({ module: 'szmr', lBefore: 0, summaryJson: '{"meanRt":null}' }), 'diagnostic')).toEqual([]);
     // Today level 8 is where СЗМР adds the third colour.
     expect([szmr.params(7.9), szmr.params(8)].map((p) => [p.nColors, p.nKeys])).toEqual([
       [2, 2],
@@ -153,50 +172,50 @@ describe('normSamples', () => {
   it('СЗМР: the parameters the block was played with come first (FW8)', () => {
     const played = (lBefore: number, nColors: number, nKeys: number): BlockRow =>
       row({ module: 'szmr', lBefore, paramsJson: JSON.stringify({ windowMs: 700, nColors, nKeys }), summaryJson: '{"meanRt":401.6}' });
-    expect(normSamples(played(9, 2, 2))).toEqual([{ id: 'szmrMean', value: 402 }]);
-    expect(normSamples(played(5, 3, 2))).toEqual([]);
-    expect(normSamples(played(5, 2, 3))).toEqual([]);
+    expect(normSamples(played(9, 2, 2), 'diagnostic')).toEqual([{ id: 'szmrMean', value: 402 }]);
+    expect(normSamples(played(5, 3, 2), 'diagnostic')).toEqual([]);
+    expect(normSamples(played(5, 2, 3), 'diagnostic')).toEqual([]);
   });
 
   it('Горбов: by task, only a finished table', () => {
-    expect(normSamples(table('black_up', 44_000))).toEqual([{ id: 'gorbovSimple', value: 44 }]);
-    expect(normSamples(table('red_down', 36_960))).toEqual([{ id: 'gorbovSimple', value: 37 }]);
-    expect(normSamples(table('alternate', 150_240))).toEqual([{ id: 'gorbovAlternate', value: 150.2 }]);
-    expect(normSamples(table('alternate', null))).toEqual([]);
-    expect(normSamples(row({ module: 'gorbov', paramsJson: '{}', summaryJson: '{"timeMs":44000}' }))).toEqual([]);
+    expect(normSamples(table('black_up', 44_000), 'training')).toEqual([{ id: 'gorbovSimple', value: 44 }]);
+    expect(normSamples(table('red_down', 36_960), 'training')).toEqual([{ id: 'gorbovSimple', value: 37 }]);
+    expect(normSamples(table('alternate', 150_240), 'training')).toEqual([{ id: 'gorbovAlternate', value: 150.2 }]);
+    expect(normSamples(table('alternate', null), 'training')).toEqual([]);
+    expect(normSamples(row({ module: 'gorbov', paramsJson: '{}', summaryJson: '{"timeMs":44000}' }), 'training')).toEqual([]);
   });
 
   it('память: digits, all 6 answers and at least 4 exact give the row length', () => {
-    expect(normSamples(memory({ mode: 'digits', length: 7, exact: 4, answers: answers(6) }))).toEqual([{ id: 'memorySpan', value: 7 }]);
-    expect(normSamples(memory({ mode: 'digits', length: 7, exact: 3, answers: answers(6) }))).toEqual([]);
-    expect(normSamples(memory({ mode: 'letters', length: 7, exact: 6, answers: answers(6) }))).toEqual([]);
-    expect(normSamples(memory({ mode: 'digits', length: 7, exact: 3, answers: answers(3) }))).toEqual([]);
-    expect(normSamples(memory({ mode: 'digits', length: 'x', exact: 6, answers: answers(6) }))).toEqual([]);
+    expect(normSamples(memory({ mode: 'digits', length: 7, exact: 4, answers: answers(6) }), 'training')).toEqual([{ id: 'memorySpan', value: 7 }]);
+    expect(normSamples(memory({ mode: 'digits', length: 7, exact: 3, answers: answers(6) }), 'training')).toEqual([]);
+    expect(normSamples(memory({ mode: 'letters', length: 7, exact: 6, answers: answers(6) }), 'training')).toEqual([]);
+    expect(normSamples(memory({ mode: 'digits', length: 7, exact: 3, answers: answers(3) }), 'training')).toEqual([]);
+    expect(normSamples(memory({ mode: 'digits', length: 'x', exact: 6, answers: answers(6) }), 'training')).toEqual([]);
   });
 
   it('память: the span protocol gives its span', () => {
-    expect(normSamples(memory({ protocol: 'span', mode: 'digits', exact: 9, span: 8, answers: answers(14) }))).toEqual([
+    expect(normSamples(memory({ protocol: 'span', mode: 'digits', exact: 9, span: 8, answers: answers(14) }), 'diagnostic')).toEqual([
       { id: 'memorySpan', value: 8 },
     ]);
-    expect(normSamples(memory({ protocol: 'span', mode: 'digits', exact: 0, span: null, answers: answers(2) }))).toEqual([]);
+    expect(normSamples(memory({ protocol: 'span', mode: 'digits', exact: 0, span: null, answers: answers(2) }), 'diagnostic')).toEqual([]);
   });
 
   it('out-of-range values get no norm: a 0 ms mean never grades «высокий» (A-R16)', () => {
-    expect(normSamples(row({ module: 'pzmr', summaryJson: '{"meanRt":0,"sdRt":-3}' }))).toEqual([]);
-    expect(normSamples(row({ module: 'pzmr', summaryJson: '{"meanRt":262,"sdRt":0}' }))).toEqual([
+    expect(normSamples(row({ module: 'pzmr', summaryJson: '{"meanRt":0,"sdRt":-3}' }), 'diagnostic')).toEqual([]);
+    expect(normSamples(row({ module: 'pzmr', summaryJson: '{"meanRt":262,"sdRt":0}' }), 'diagnostic')).toEqual([
       { id: 'pzmrMean', value: 262 },
       { id: 'pzmrSd', value: 0 },
     ]);
-    expect(normSamples(row({ module: 'szmr', lBefore: 0, summaryJson: '{"meanRt":-1}' }))).toEqual([]);
-    expect(normSamples(table('black_up', 0))).toEqual([]);
-    expect(normSamples(memory({ mode: 'digits', length: 7, exact: 9, answers: answers(6) }))).toEqual([]);
-    expect(normSamples(memory({ mode: 'digits', length: 0, exact: 6, answers: answers(6) }))).toEqual([]);
-    expect(normSamples(memory({ protocol: 'span', mode: 'digits', exact: 9, span: -2, answers: answers(14) }))).toEqual([]);
+    expect(normSamples(row({ module: 'szmr', lBefore: 0, summaryJson: '{"meanRt":-1}' }), 'diagnostic')).toEqual([]);
+    expect(normSamples(table('black_up', 0), 'training')).toEqual([]);
+    expect(normSamples(memory({ mode: 'digits', length: 7, exact: 9, answers: answers(6) }), 'training')).toEqual([]);
+    expect(normSamples(memory({ mode: 'digits', length: 0, exact: 6, answers: answers(6) }), 'training')).toEqual([]);
+    expect(normSamples(memory({ protocol: 'span', mode: 'digits', exact: 9, span: -2, answers: answers(14) }), 'diagnostic')).toEqual([]);
   });
 
   it('РДО and Струп have no norm', () => {
-    expect(normSamples(row({ module: 'rdo', summaryJson: '{"meanAbsErrorMs":18.4}' }))).toEqual([]);
-    expect(normSamples(row({ module: 'stroop', summaryJson: '{"meanRt":500}' }))).toEqual([]);
+    expect(normSamples(row({ module: 'rdo', summaryJson: '{"meanAbsErrorMs":18.4}' }), 'training')).toEqual([]);
+    expect(normSamples(row({ module: 'stroop', summaryJson: '{"meanRt":500}' }), 'training')).toEqual([]);
   });
 });
 

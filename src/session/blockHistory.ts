@@ -211,7 +211,22 @@ function szmrPlayed(paramsJson: string, lBefore: number): { nColors: number; nKe
   return nColors === null || nKeys === null ? szmr.params(lBefore) : { nColors, nKeys };
 }
 
-function normsFrom(module: ModuleId, lBefore: number, summary: Json | null, paramsJson: string): NormSample[] {
+type NormRow = Pick<BlockRow, 'module' | 'lBefore' | 'flags' | 'paramsJson'>;
+
+/**
+ * Training and free sessions: the response window cuts the slow answers off, so the mean of the hits grades too well
+ * unless every trial was answered in time. ПЗМР and СЗМР get their norms only from a block without misses and late
+ * answers that is not an overload block (FW2); the diagnostic window is wide, so its blocks always do.
+ */
+function rtGradable(row: NormRow, summary: Json | null, kind: SessionKind): boolean {
+  if (!isCountedSession(kind)) return true;
+  const counts = objectField(summary, 'counts');
+  return !row.flags.includes('overload') && num(counts, 'miss') === 0 && num(counts, 'late') === 0;
+}
+
+function normsFrom(row: NormRow, summary: Json | null, kind: SessionKind): NormSample[] {
+  const { module, lBefore, paramsJson } = row;
+  if ((module === 'pzmr' || module === 'szmr') && !rtGradable(row, summary, kind)) return [];
   switch (module) {
     case 'pzmr': {
       const mean = positiveWhole(summary, 'meanRt');
@@ -247,9 +262,9 @@ export function keyMetric(row: Pick<BlockRow, 'module' | 'summaryJson'>): number
   return metricFrom(row.module, parseObject(row.summaryJson));
 }
 
-/** The norms that apply to the block, key metric first (Справочник «Нормы», «Когда применять»). */
-export function normSamples(row: Pick<BlockRow, 'module' | 'lBefore' | 'paramsJson' | 'summaryJson'>): NormSample[] {
-  return normsFrom(row.module, row.lBefore, parseObject(row.summaryJson), row.paramsJson);
+/** The norms that apply to the block of a `kind` session, key metric first (Справочник «Нормы», «Когда применять»). */
+export function normSamples(row: NormRow & Pick<BlockRow, 'summaryJson'>, kind: SessionKind): NormSample[] {
+  return normsFrom(row, parseObject(row.summaryJson), kind);
 }
 
 /** Training and free blocks without overload or timing_unreliable (fatigued and calibration count). */
@@ -270,7 +285,8 @@ function keyedEntry(row: HistoryRow): { variant: VariantKey; entry: HistoryEntry
       value,
       L: row.lBefore,
       length: row.module === 'memory' ? num(summary, 'length') : null,
-      norms: normsFrom(row.module, row.lBefore, summary, row.paramsJson),
+      // History entries are of training and free blocks only.
+      norms: normsFrom(row, summary, 'training'),
     },
   };
 }

@@ -158,7 +158,7 @@ describe('Progress edge cases', () => {
     const repo = new MemoryRepository();
     const t = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     await repo.createSession(session('s1', t, { kind: 'training', endedAt: t }));
-    await repo.addBlock(block('b1', 's1', t, { module: 'pzmr', lBefore: 3, lAfter: 3.5, summaryJson: '{"meanRt":262.4,"sdRt":50}' }), [], []);
+    await repo.addBlock(block('b1', 's1', t, { module: 'pzmr', lBefore: 3, lAfter: 3.5, summaryJson: '{"meanRt":262.4,"sdRt":50,"counts":{"hit":15,"miss":0,"late":0}}' }), [], []);
     await rebuildCaches(repo);
     await renderProgress(repo);
 

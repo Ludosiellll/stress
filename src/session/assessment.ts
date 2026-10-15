@@ -102,8 +102,8 @@ export function formatMetric(module: ModuleId, value: number): string {
 }
 
 /** Norm lines of the block; without any, the hint of its variant (if there is one). */
-function normTexts(row: BlockRow, variant: VariantKey | null): string[] {
-  const samples = normSamples(row);
+function normTexts(row: BlockRow, variant: VariantKey | null, kind: SessionKind): string[] {
+  const samples = normSamples(row, kind);
   if (samples.length > 0) return samples.map(normLine);
   const hint = variant === null ? undefined : HINTS.get(variant);
   return hint === undefined ? [] : [hint];
@@ -197,7 +197,7 @@ function historyLine(row: BlockRow, variant: VariantKey | null, ctx: AssessConte
 
 export function assessBlock(row: BlockRow, ctx: AssessContext): BlockAssessment {
   const variant = variantOf(row);
-  const norms = normTexts(row, variant);
+  const norms = normTexts(row, variant, ctx.kind);
   if (!isCountedSession(ctx.kind)) return { step: null, goal: null, norms, history: null };
   const { step, goal } = row.module === 'numseries' ? ratingLines(ctx.meanRating) : levelLines(row, variant);
   return { step, goal, norms, history: historyLine(row, variant, ctx) };

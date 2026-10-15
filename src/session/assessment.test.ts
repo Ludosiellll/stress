@@ -127,8 +127,23 @@ describe('assessBlock', () => {
     ]);
   });
 
+  it('ПЗМР in training: a clean block gets the norm lines; one late answer or an overload block gets none (FW2)', () => {
+    const pzmr = (counts: object, flags: BlockRow['flags'] = []): BlockRow =>
+      row({ module: 'pzmr', lBefore: 16, lAfter: 16.5, flags, summaryJson: JSON.stringify({ meanRt: 224.4, sdRt: 30, counts }) });
+    const clean = { hit: 15, miss: 0, late: 0 };
+    expect(assessBlock(pzmr(clean), ctx).norms).toEqual([
+      'Норма (ориентир), среднее: 224 мс — высокий. Мальцев 2026, юноши 18–21; норма для аппаратной кнопки + 30 мс на клавиатуру',
+      'Норма (ориентир), разброс (SD): 30 мс — высокий. Мальцев 2026, юноши 18–21, аппаратная кнопка',
+    ]);
+    // The window cut the late answer off: the mean of the hits is too good to grade.
+    expect(assessBlock(pzmr({ ...clean, hit: 14, late: 1 }), ctx).norms).toEqual([]);
+    expect(assessBlock(pzmr({ ...clean, hit: 14, miss: 1 }), ctx).norms).toEqual([]);
+    expect(assessBlock(pzmr(clean, ['overload']), ctx).norms).toEqual([]);
+  });
+
   it('СЗМР gets the 2-choice norm only below level 8', () => {
-    const szmr = (lBefore: number): BlockRow => row({ module: 'szmr', lBefore, lAfter: lBefore, summaryJson: '{"meanRt":401.6}' });
+    const szmr = (lBefore: number): BlockRow =>
+      row({ module: 'szmr', lBefore, lAfter: lBefore, summaryJson: '{"meanRt":401.6,"counts":{"miss":0,"late":0}}' });
     expect(assessBlock(szmr(7.5), ctx).norms).toEqual([
       'Норма (ориентир), среднее: 402 мс — ниже среднего; средний — до 382 мс. Мальцев 2026, выбор из 2, юноши 18–21; норма для аппаратной кнопки + 30 мс на клавиатуру',
     ]);
@@ -252,6 +267,8 @@ describe('assessModules', () => {
   const assess = (over: Partial<Record<ModuleId, Partial<ModuleState>>>, rows: BlockRow[], meanRating = 1000): ModuleAssessment[] =>
     assessModules({ states: states(over), meanRating, history: history(rows), now: NOW });
   const rowOf = (rows: ModuleAssessment[], module: ModuleId): ModuleAssessment | undefined => rows.find((r) => r.module === module);
+  /** Counts of a reaction block answered in time: its mean RT gets a norm (FW2). */
+  const CLEAN = '"counts":{"hit":15,"miss":0,"late":0}';
 
   it('untrained modules: a dash and «ещё не тренировался»', () => {
     const rows = assess({}, []);
@@ -328,7 +345,7 @@ describe('assessModules', () => {
   });
 
   it('the last result outside 30 days', () => {
-    const rows = assess({ pzmr: { lifetimeBlocks: 1 } }, [stored('pzmr', 40, { summaryJson: '{"meanRt":262.4,"sdRt":50}' })]);
+    const rows = assess({ pzmr: { lifetimeBlocks: 1 } }, [stored('pzmr', 40, { summaryJson: `{"meanRt":262.4,"sdRt":50,${CLEAN}}` })]);
     expect(rowOf(rows, 'pzmr')).toEqual({
       module: 'pzmr',
       title: 'ПЗМР',
@@ -345,9 +362,17 @@ describe('assessModules', () => {
     expect(rowOf(rows, 'gorbov')).toMatchObject({ step: '3 — формат теста (ур. 12; формат теста — 12)', goal: 'ур. 17 (+5)' });
   });
 
+  it('the last ПЗМР block had a miss: no reference band (FW2)', () => {
+    const rows = assess({ pzmr: { lifetimeBlocks: 2 } }, [
+      stored('pzmr', 2, { summaryJson: `{"meanRt":230,${CLEAN}}` }),
+      stored('pzmr', 1, { summaryJson: '{"meanRt":240,"counts":{"hit":14,"miss":1,"late":0}}' }),
+    ]);
+    expect(rowOf(rows, 'pzmr')).toMatchObject({ lastBest: '240 мс / 230 мс', norm: '—' });
+  });
+
   it('unreadable stored blocks are left out; nothing throws', () => {
     const rows = assess({ pzmr: { lifetimeBlocks: 2 } }, [
-      stored('pzmr', 2, { summaryJson: '{"meanRt":230}' }),
+      stored('pzmr', 2, { summaryJson: `{"meanRt":230,${CLEAN}}` }),
       stored('pzmr', 1, { summaryJson: '{not json' }),
     ]);
     expect(rowOf(rows, 'pzmr')).toMatchObject({ lastBest: '230 мс / 230 мс', norm: 'выше среднего' });

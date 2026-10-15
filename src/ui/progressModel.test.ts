@@ -139,7 +139,7 @@ describe('loadProgressModel', () => {
     const now = new Date('2026-10-15T12:00:00.000Z');
     await repo.createSession(session('f', '2026-10-14T10:00:00.000Z', { kind: 'free', endedAt: '2026-10-14T10:10:00.000Z' }));
     await repo.addBlock(
-      block('b1', 'f', '2026-10-14T10:01:00.000Z', { module: 'pzmr', lBefore: 3, lAfter: 3.5, summaryJson: '{"meanRt":262.4,"sdRt":50}' }),
+      block('b1', 'f', '2026-10-14T10:01:00.000Z', { module: 'pzmr', lBefore: 3, lAfter: 3.5, summaryJson: '{"meanRt":262.4,"sdRt":50,"counts":{"miss":0,"late":0}}' }),
       [],
       [],
     );
