@@ -1,11 +1,15 @@
 import type { Repository } from '../data/repository';
 import type { DiagnosticRow, SessionRow } from '../data/rows';
+import { localDayIso, localDayNumber } from '../engine/dates';
+import type { FormDay } from '../engine/dayForm';
 import { parseResults, type DiagnosticMetrics, type DiagnosticResults } from '../engine/diagnostic';
 import { L_NORM } from '../engine/planner';
+import { median } from '../engine/stats';
 import { MODULE_IDS, type ModuleId, type ReactionModuleId, type SessionKind } from '../engine/types';
 import { moduleTitles } from '../modules/registry';
 import { assessModules, meanFamilyRating, type ModuleAssessment } from '../session/assessment';
 import { buildBlockHistory } from '../session/blockHistory';
+import { pastBlocks, warmupDays } from '../session/pastBlocks';
 import { shownCost } from '../session/steps';
 import type { ChartDomain, ChartPoint, ChartSeries } from './charts/LineChart';
 import { readinessOf, type HomeModel } from './homeModel';
@@ -51,6 +55,8 @@ export interface ProgressModel {
   /** «Оценка по модулям», in MODULE_IDS order. */
   assessment: ModuleAssessment[];
   diagnostics: ChartSpec[];
+  /** «Форма дня»: the daily median of the ПЗМР warm-up over FORM_CHART_DAYS days (F5). */
+  formOfDay: ChartPoint[];
   levels: LevelChartSpec[];
   /** Newest first, at most SESSION_LINES. */
   sessions: SessionLine[];
@@ -58,6 +64,8 @@ export interface ProgressModel {
 }
 
 export const SESSION_LINES = 50;
+/** The form-of-day chart covers today and the 29 days before it. */
+export const FORM_CHART_DAYS = 30;
 
 /** Modules with a level (numseries is rated by Elo, not by L). */
 const LEVEL_MODULES: readonly ModuleId[] = MODULE_IDS.filter((m) => m !== 'numseries');
@@ -200,6 +208,23 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
   ];
 }
 
+/**
+ * One point per local day with a warm-up in the last FORM_CHART_DAYS days (today included): the median of all its
+ * clean hits, whatever the band; x is «дд.мм». Days come in date order.
+ */
+export function formOfDayPoints(days: readonly FormDay[], today: string): ChartPoint[] {
+  const end = localDayNumber(today);
+  const byDay = new Map<string, number[]>();
+  for (const d of days) {
+    const n = localDayNumber(d.day);
+    if (n > end || n <= end - FORM_CHART_DAYS || d.rts.length === 0) continue;
+    byDay.set(d.day, [...(byDay.get(d.day) ?? []), ...d.rts]);
+  }
+  return [...byDay.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([day, rts]) => ({ x: `${day.slice(8, 10)}.${day.slice(5, 7)}`, y: median(rts) }));
+}
+
 export function sessionLines(sessions: readonly SessionRow[], blocksBySession: ReadonlyMap<string, number>): SessionLine[] {
   return [...sessions]
     .reverse()
@@ -226,6 +251,7 @@ export async function loadProgressModel(repo: Repository, now: Date = new Date()
     readiness: readinessOf(diagnostics),
     assessment: assessModules({ states, meanRating: meanFamilyRating(ratings), history: buildBlockHistory(blocks, sessions), now }),
     diagnostics: diagnosticCharts(diagnostics),
+    formOfDay: formOfDayPoints(warmupDays(pastBlocks(blocks, sessions)), localDayIso(now.toISOString())),
     levels: LEVEL_MODULES.map((module) => ({
       module,
       title: moduleTitles[module],

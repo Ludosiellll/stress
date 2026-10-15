@@ -14,7 +14,7 @@ import { displayedCost, round1, whole } from './steps';
  * left out, never thrown on.
  */
 
-/** 'pzmr', 'gorbov:alternate', 'schulte:6', 'memory:digits'. */
+/** 'pzmr', 'pzmr:warmup', 'gorbov:alternate', 'schulte:6', 'memory:digits'. */
 export type VariantKey = string;
 
 export interface KeyMetric {
@@ -76,8 +76,8 @@ const MEMORY_MODES = ['digits', 'letters', 'positions', 'card'] as const;
 
 type Json = Readonly<Record<string, unknown>>;
 
-/** A JSON object (not an array); anything else, unparsable text included, is null. */
-function parseObject(text: string): Json | null {
+/** A JSON object (not an array); anything else, unparsable text included, is null. Shared by the readers of stored rows. */
+export function parseObject(text: string): Json | null {
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -138,8 +138,13 @@ function tableSeconds(summary: Json | null): number | null {
   return shown(summary, 'timeMs', (ms) => round1(ms / 1000), false);
 }
 
-function variantFrom(module: ModuleId, summary: Json | null, paramsJson: string): VariantKey | null {
+/** The ПЗМР warm-up is a variant of its own (F5, Р29): its blocks never become «лучший» of the main variant. */
+const WARMUP_VARIANT: VariantKey = 'pzmr:warmup';
+
+function variantFrom(module: ModuleId, flags: readonly BlockFlag[], summary: Json | null, paramsJson: string): VariantKey | null {
   switch (module) {
+    case 'pzmr':
+      return flags.includes('warmup') ? WARMUP_VARIANT : module;
     case 'gorbov': {
       const task = gorbovTask(summary, paramsJson);
       return task === null ? null : `gorbov:${task}`;
@@ -264,8 +269,8 @@ function normsFrom(row: NormRow, summary: Json | null, kind: SessionKind): NormS
   }
 }
 
-export function variantOf(row: Pick<BlockRow, 'module' | 'paramsJson' | 'summaryJson'>): VariantKey | null {
-  return variantFrom(row.module, parseObject(row.summaryJson), row.paramsJson);
+export function variantOf(row: Pick<BlockRow, 'module' | 'flags' | 'paramsJson' | 'summaryJson'>): VariantKey | null {
+  return variantFrom(row.module, row.flags, parseObject(row.summaryJson), row.paramsJson);
 }
 
 /** Rounded as shown (Справочник «История»); null: no number. */
@@ -286,7 +291,7 @@ export function entersHistory(flags: readonly BlockFlag[], kind: SessionKind): b
 /** The entry and its variant from one parse of the summary; null: no variant or no number. */
 function keyedEntry(row: HistoryRow): { variant: VariantKey; entry: HistoryEntry } | null {
   const summary = parseObject(row.summaryJson);
-  const variant = variantFrom(row.module, summary, row.paramsJson);
+  const variant = variantFrom(row.module, row.flags, summary, row.paramsJson);
   const value = metricFrom(row.module, summary);
   if (variant === null || value === null) return null;
   return {

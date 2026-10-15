@@ -146,15 +146,16 @@ function shownRatingStep(meanRating: number): { R: string; s: RatingStep; toNext
 }
 
 /**
- * Step and goal by level: lAfter, or lBefore (the played level) for an overload block, which has no goal (О4).
- * Both come from the shown level (A-R7); the parameters come from the level the next block plays.
+ * Step and goal by level: lAfter, or lBefore (the played level) for an overload or warm-up block, which has no goal
+ * (О4, Р29). Both come from the shown level (A-R7); the parameters come from the level the next block plays.
  */
 function levelLines(row: BlockRow): Pick<BlockAssessment, 'step' | 'goal'> {
   const overload = row.flags.includes('overload');
-  const { L, Lnorm, s, toNext } = shownLevelStep(row.module, overload ? row.lBefore : row.lAfter);
+  const played = overload || row.flags.includes('warmup');
+  const { L, Lnorm, s, toNext } = shownLevelStep(row.module, played ? row.lBefore : row.lAfter);
   const note = overload ? '; перегрузка' : '';
   const step = `${stepHead(s.step, s.name)} (уровень ${L}; формат теста — ${Lnorm}${note})`;
-  if (overload) return { step, goal: null };
+  if (played) return { step, goal: null };
   const changes = paramChanges(row, s.nextStepL);
   const there = changes.length === 0 ? '' : `. Там: ${changes.map((c) => lowerFirst(changeText(c))).join('; ')}`;
   const goal = `${goalHead(s.step)}: уровень ${levelText(s.nextStepL)} (+${toNext})${there}`;

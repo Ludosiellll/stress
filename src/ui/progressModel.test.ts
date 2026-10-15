@@ -4,7 +4,7 @@ import { block, session } from '../data/repository.contract';
 import { MemoryRepository } from '../data/memoryRepository';
 import { rebuildCaches } from '../data/export';
 import { MODULE_IDS } from '../engine/types';
-import { diagnosticCharts, durationText, loadProgressModel, ruDate, sessionLines, SESSION_LINES } from './progressModel';
+import { diagnosticCharts, durationText, formOfDayPoints, loadProgressModel, ruDate, sessionLines, SESSION_LINES } from './progressModel';
 
 function row(number: number, results: unknown): DiagnosticRow {
   return { id: `d${String(number)}`, sessionId: 's', number, at: '2026-10-01T10:00:00.000Z', resultsJson: typeof results === 'string' ? results : JSON.stringify(results) };
@@ -158,6 +158,45 @@ describe('loadProgressModel', () => {
     expect(model.assessment.at(-1)).toEqual({ module: 'numseries', title: 'Числовые ряды', step: '—', lastBest: 'ещё не тренировался', norm: '—', goal: '—' });
     // The session table counts the same blocks.
     expect(model.sessions.map((s) => s.blocks)).toEqual([1]);
+  });
+});
+
+describe('the form of the day', () => {
+  it('the form-of-day chart: the daily warm-up median for 30 days', () => {
+    const d = (day: string, rts: number[], band = 1) => ({ day, band, rts });
+    expect(
+      formOfDayPoints(
+        [
+          d('2026-10-15', [300, 310]),
+          d('2026-09-15', [400]),
+          d('2026-09-16', [290]),
+          d('2026-10-01', [250]),
+          d('2026-10-01', [270, 260], 2),
+          d('2026-10-02', []),
+          d('2026-10-16', [200]),
+        ],
+        '2026-10-15',
+      ),
+    ).toEqual([
+      // 15.09 is 30 days back: out. Bands do not matter here; a day of several warm-ups is one point.
+      { x: '16.09', y: 290 },
+      { x: '01.10', y: 260 },
+      { x: '15.10', y: 305 },
+    ]);
+    expect(formOfDayPoints([], '2026-10-15')).toEqual([]);
+  });
+
+  it('loadProgressModel reads the warm-ups of training and free sessions from the block history', async () => {
+    const repo = new MemoryRepository();
+    const now = new Date(2026, 9, 15, 12);
+    const at = (day: number): string => new Date(2026, 9, day, 10).toISOString();
+    const summaryJson = (rts: number[]): string => JSON.stringify({ meanRt: 300, cleanHitRts: rts });
+    await repo.createSession(session('t', at(14), { endedAt: at(14) }));
+    await repo.createSession(session('d', at(13), { kind: 'diagnostic', endedAt: at(13) }));
+    await repo.addBlock(block('w', 't', at(14), { flags: ['warmup'], summaryJson: summaryJson([281, 283]) }), [], []);
+    await repo.addBlock(block('r', 't', at(14), { summaryJson: summaryJson([200]) }), [], []);
+    await repo.addBlock(block('x', 'd', at(13), { flags: ['warmup'], summaryJson: summaryJson([200]) }), [], []);
+    expect((await loadProgressModel(repo, now)).formOfDay).toEqual([{ x: '14.10', y: 282 }]);
   });
 });
 

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { MemoryRepository } from '../../src/data/memoryRepository';
 import { currentPhase, firstSessionAt } from '../../src/engine/phases';
-import { planFree, planTraining, type SessionPlan } from '../../src/engine/planner';
+import { localDayIso } from '../../src/engine/dates';
+import { planFree, planTraining, taperBudget, type Segment, type SessionPlan } from '../../src/engine/planner';
 import { createRng } from '../../src/engine/rng';
 import { mean } from '../../src/engine/stats';
 import { pzmr } from '../../src/modules/reaction/pzmr';
@@ -100,15 +101,61 @@ interface SimCase {
 /** Free ПЗМР: 5 minutes, 8 blocks of 40 s. */
 const free = (planSeed: number): Promise<SessionPlan> => Promise.resolve(planFree('pzmr', planSeed));
 
+/** A ПЗМР reaction slot: 5 minutes, 11 blocks of 28 s (in the taper × 0.6: 7 blocks). */
+const pzmrSlot = (taper: boolean): Segment => ({ module: 'pzmr', budgetMs: taper ? taperBudget(300_000) : 300_000, purpose: 'reaction' });
+
 /**
- * A training session cut to its first segment: the 2-minute ПЗМР warm-up, 5 blocks of 28 s. Planned as Home
- * does: the phase from the first session (firstSessionAt) and no test date.
+ * A training session cut to the day's ПЗМР warm-up (2 minutes, 5 blocks of 28 s; 1 minute, 3 blocks in the taper)
+ * and a ПЗМР reaction slot (F5: ПЗМР is in the reaction pool, and only that slot moves L_saved). Planned as Home
+ * does: the phase from the first session (firstSessionAt).
  */
-async function warmup(planSeed: number, repo: MemoryRepository, todayIso: string): Promise<SessionPlan> {
+async function warmupAndSlot(planSeed: number, repo: MemoryRepository, todayIso: string, testDate: string | null = null): Promise<SessionPlan> {
   const [states, sessions] = await Promise.all([repo.getModuleStates(), repo.listSessions()]);
-  const phase = currentPhase({ firstSessionAt: firstSessionAt(sessions), today: todayIso, testDate: null, states });
+  const phase = currentPhase({ firstSessionAt: firstSessionAt(sessions), today: todayIso, testDate, states });
   const plan = planTraining(states, todayIso, planSeed, phase);
-  return { ...plan, segments: plan.segments.slice(0, 1) };
+  const warmup = plan.segments.find((s) => s.purpose === 'warmup');
+  if (warmup === undefined) throw new Error('a training plan starts with the warm-up');
+  return { ...plan, segments: [warmup, pzmrSlot(phase.phase === 'taper')] };
+}
+
+/** Plays one session through the controller, `blockMs` of the clock per block; the number of blocks played. */
+async function playSession(repo: MemoryRepository, plan: SessionPlan, startMs: number, blockMs: number, respond: (L: number) => Respond): Promise<number> {
+  let nowMs = startMs;
+  let blocks = 0;
+  const ctl = await SessionController.start({
+    repo,
+    plan,
+    layout: 'keyboard',
+    now: () => new Date(nowMs),
+    appVersion: 'sim',
+    sleep: () => Promise.resolve(),
+  });
+  for (let guard = 0; ctl.step.kind !== 'done'; guard++) {
+    if (guard > 100) throw new Error('session did not finish');
+    const step = ctl.step;
+    switch (step.kind) {
+      case 'instruction':
+        ctl.ackInstruction();
+        break;
+      case 'reaction_block':
+        nowMs += blockMs;
+        blocks++;
+        await ctl.submitReaction(playTimeline(step.specs, respond(step.L)));
+        break;
+      case 'summary':
+        await ctl.continueAfterSummary();
+        break;
+      case 'fatigue_prompt': // this player never tires; kept for safety
+        await ctl.answerFatigue(false);
+        break;
+      case 'wellbeing':
+        await ctl.submitWellbeing(null);
+        break;
+      default:
+        throw new Error(`unexpected step ${step.kind}`);
+    }
+  }
+  return blocks;
 }
 
 async function runMonths(c: SimCase, seed: number): Promise<{ savedHistory: number[]; blocks: number }> {
@@ -118,40 +165,8 @@ async function runMonths(c: SimCase, seed: number): Promise<{ savedHistory: numb
   let blocks = 0;
   for (let s = 0; s < SESSIONS; s++) {
     day += s === 0 ? 0 : gapBefore(s);
-    let nowMs = START + day * DAY_MS;
-    const ctl = await SessionController.start({
-      repo,
-      plan: await c.plan(seed * 1000 + s, repo, new Date(nowMs).toISOString()),
-      layout: 'keyboard',
-      now: () => new Date(nowMs),
-      appVersion: 'sim',
-      sleep: () => Promise.resolve(),
-    });
-    for (let guard = 0; ctl.step.kind !== 'done'; guard++) {
-      if (guard > 100) throw new Error('session did not finish');
-      const step = ctl.step;
-      switch (step.kind) {
-        case 'instruction':
-          ctl.ackInstruction();
-          break;
-        case 'reaction_block':
-          nowMs += c.blockMs;
-          blocks++;
-          await ctl.submitReaction(playTimeline(step.specs, respond(step.L)));
-          break;
-        case 'summary':
-          await ctl.continueAfterSummary();
-          break;
-        case 'fatigue_prompt': // this player never tires; kept for safety
-          await ctl.answerFatigue(false);
-          break;
-        case 'wellbeing':
-          await ctl.submitWellbeing(null);
-          break;
-        default:
-          throw new Error(`unexpected step ${step.kind}`);
-      }
-    }
+    const startMs = START + day * DAY_MS;
+    blocks += await playSession(repo, await c.plan(seed * 1000 + s, repo, new Date(startMs).toISOString()), startMs, c.blockMs, respond);
   }
   return { savedHistory: (await repo.getModuleStates()).pzmr.savedHistory, blocks };
 }
@@ -160,7 +175,13 @@ const CASES: SimCase[] = [
   { name: 'free, logistic-limited', player: { ability: 10, medianRt: 300 }, blockMs: 40_000, blocksPerSession: 8, plan: free },
   { name: 'free, mixed', player: { ability: 18, medianRt: 220 }, blockMs: 40_000, blocksPerSession: 8, plan: free },
   { name: 'free, window-limited', player: { ability: 30, medianRt: 250 }, blockMs: 40_000, blocksPerSession: 8, plan: free },
-  { name: 'training warm-up, mixed', player: { ability: 18, medianRt: 220 }, blockMs: 28_000, blocksPerSession: 5, plan: warmup },
+  {
+    name: 'training warm-up and ПЗМР reaction slot, mixed',
+    player: { ability: 18, medianRt: 220 },
+    blockMs: 28_000,
+    blocksPerSession: 16,
+    plan: (planSeed, repo, todayIso) => warmupAndSlot(planSeed, repo, todayIso),
+  },
 ];
 
 describe('session simulation (R6, R28a, R29): months of daily sessions through the controller', () => {
@@ -182,5 +203,46 @@ describe('session simulation (R6, R28a, R29): months of daily sessions through t
       expect(mean(drifts)).toBeGreaterThanOrEqual(-0.5);
     },
     30_000,
+  );
+});
+
+/** Local 18:00 of course day `day` (local calendar days, DST-safe). */
+const courseDay = (day: number): Date => new Date(2026, 10, 2 + day, 18);
+const COURSE_DAYS = 90;
+const TAPER_CHECK_DAYS = 10;
+
+/**
+ * L_saved of ПЗМР at the start of each course day: daily sessions with a day off after every 6, the test on day 90,
+ * so the last 9 days are the taper (shorter warm-up and slot).
+ */
+async function runCourse(seed: number): Promise<number[]> {
+  const repo = new MemoryRepository();
+  const respond = responder({ ability: 18, medianRt: 220 }, seed);
+  const testDate = localDayIso(courseDay(COURSE_DAYS).toISOString());
+  const lSaved: number[] = [];
+  for (let day = 0; day <= COURSE_DAYS; day++) {
+    lSaved.push((await repo.getModuleStates()).pzmr.lSaved);
+    if (day === COURSE_DAYS || day % 7 === 6) continue;
+    const start = courseDay(day);
+    const plan = await warmupAndSlot(seed * 1000 + day, repo, start.toISOString(), testDate);
+    await playSession(repo, plan, start.getTime(), 28_000, respond);
+  }
+  return lSaved;
+}
+
+describe('session simulation (F5): the taper', () => {
+  it(
+    'the taper does not pull ПЗМР L_saved down (F5): test day ≥ 10 days before − 0.25',
+    async () => {
+      // 90 daily sessions (a day off after every 6), test date = day 90; plan = the day's warm-up + a ПЗМР reaction
+      // segment of 5 min (taperBudget in the taper); player { ability: 18, medianRt: 220 }; seeds 1–5.
+      const drops: number[] = [];
+      for (const seed of SEEDS) {
+        const lSaved = await runCourse(seed);
+        drops.push((lSaved[COURSE_DAYS] ?? NaN) - (lSaved[COURSE_DAYS - TAPER_CHECK_DAYS] ?? NaN));
+      }
+      expect(mean(drops)).toBeGreaterThanOrEqual(-0.25);
+    },
+    120_000,
   );
 });

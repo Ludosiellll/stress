@@ -6,6 +6,7 @@ import { REACTION_MODULE_IDS } from '../engine/types';
 import {
   AUDIO_NOT_PLAYED,
   conditionLines,
+  dayFormLine,
   ERROR_KINDS,
   errorLine,
   MEMORY_SPAN_INSTRUCTION,
@@ -17,6 +18,7 @@ import {
   spanLines,
   stabilityLine,
   tableLines,
+  WARMUP_LEVEL_NOTE,
 } from './steps';
 
 const NO_COUNTS: Record<Outcome, number> = {
@@ -365,5 +367,25 @@ describe('Russian plurals and the series diagnostic instruction', () => {
     expect(seriesDiagnosticInstruction(5, 180_000)).toBe('5 задач, общее время — 3 минуты. Найди закономерность и введи следующее число.');
     expect(seriesDiagnosticInstruction(1, 1000)).toBe('1 задача, общее время — 1 секунда. Найди закономерность и введи следующее число.');
     expect(seriesDiagnosticInstruction(4, null)).toBe('4 задачи. Найди закономерность и введи следующее число.');
+  });
+});
+
+describe('dayFormLine', () => {
+  it('the form of the day against the usual one, whole ms (F5)', () => {
+    const f = { today: { median: 236.4, sd: 31.2 }, usual: { median: 241, sd: 35 } };
+    expect(dayFormLine({ ...f, verdict: 'same' })).toBe('Форма дня: медиана 236 мс (обычно 241) · разброс 31 мс (обычно 35) — как обычно.');
+    expect(dayFormLine({ ...f, verdict: 'better' })).toBe('Форма дня: медиана 236 мс (обычно 241) · разброс 31 мс (обычно 35) — лучше обычного.');
+    expect(dayFormLine({ ...f, verdict: 'worse' })).toBe('Форма дня: медиана 236 мс (обычно 241) · разброс 31 мс (обычно 35) — хуже обычного.');
+    expect(dayFormLine({ today: f.today, usual: null, verdict: null })).toBe(
+      'Форма дня: мало данных — нужно 3 разминки за 14 дней на этой нагрузке.',
+    );
+    // Halves round up, as every whole-ms number on screen (whole).
+    expect(dayFormLine({ today: { median: 240.5, sd: 0.4 }, usual: { median: 240.5, sd: 9.5 }, verdict: 'same' })).toBe(
+      'Форма дня: медиана 241 мс (обычно 241) · разброс 0 мс (обычно 10) — как обычно.',
+    );
+  });
+
+  it('the level note of a warm-up', () => {
+    expect(WARMUP_LEVEL_NOTE).toBe('Разминка: уровень не меняется');
   });
 });

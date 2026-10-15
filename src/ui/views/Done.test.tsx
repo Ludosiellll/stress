@@ -54,7 +54,7 @@ const WITH_PREVIOUS: DiagnosticComparison = {
 };
 
 function view(over: Partial<BlockSummaryView>): BlockSummaryView {
-  return { module: 'pzmr', title: 'ПЗМР', lBefore: 0, lAfter: 0, changes: [], score: 1, lines: [], flags: [], showLevel: true, ...over };
+  return { module: 'pzmr', title: 'ПЗМР', lBefore: 0, lAfter: 0, changes: [], score: 1, lines: [], flags: [], showLevel: true, levelNote: null, ...over };
 }
 
 function headers(): string[] {

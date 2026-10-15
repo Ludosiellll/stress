@@ -14,9 +14,11 @@ import {
   planFree,
   planTraining,
   taperBudget,
+  warmupLevel,
   type ModuleState,
   type SessionPlan,
 } from './planner';
+import { localDayIso } from './dates';
 import { MODULE_IDS, type ModuleId } from './types';
 
 const TODAY = '2026-10-14';
@@ -128,6 +130,18 @@ describe('daysBetween', () => {
       }),
       { numRuns: 1000 },
     );
+  });
+});
+
+describe('localDayIso', () => {
+  it('is the local calendar day as YYYY-MM-DD', () => {
+    expect(localDayIso('2026-10-15')).toBe('2026-10-15');
+    expect(localDayIso('2026-10-15T23:59:00')).toBe('2026-10-15');
+    expect(localDayIso('2026-10-16T00:00:00')).toBe('2026-10-16');
+    const late = new Date(2026, 0, 1, 23, 30);
+    expect(localDayIso(late.toISOString())).toBe('2026-01-01');
+    expect(localDayIso('2024-02-29T12:00:00')).toBe('2024-02-29');
+    expect(() => localDayIso('yesterday')).toThrow(RangeError);
   });
 });
 
@@ -243,9 +257,9 @@ describe('planTraining', () => {
     const allNew = trained(Object.fromEntries([...REACTION_POOL, ...MEMORY_SLOT_POOL].map((m) => [m, FRESH])));
     expect(modules(planTraining(allNew, TODAY, 1, phaseInfo('taper')))).toEqual(['pzmr', 'szmr', 'gonogo', 'gorbov', 'memory', 'numseries']);
     // One trained reaction module takes a slot; the slot left over takes the first module of the pool.
-    const oneTrained = trained({ szmr: FRESH, gonogo: FRESH, pomeh: FRESH });
+    const oneTrained = trained({ szmr: FRESH, gonogo: FRESH, pomeh: FRESH, pzmr: FRESH });
     expect(reaction(planTraining(oneTrained, TODAY, 1, phaseInfo('taper')))).toEqual(['rdo', 'szmr']);
-    const onlySzmr = trained({ gonogo: FRESH, rdo: FRESH, pomeh: FRESH });
+    const onlySzmr = trained({ gonogo: FRESH, rdo: FRESH, pomeh: FRESH, pzmr: FRESH });
     expect(reaction(planTraining(onlySzmr, TODAY, 1, phaseInfo('taper')))).toEqual(['szmr', 'gonogo']);
     // The memory slot: its pool without the attention pick, in order.
     const onlySchulte = trained({ memory: FRESH, gorbov: FRESH, stroop: FRESH, taskswitch: FRESH });
@@ -284,7 +298,25 @@ describe('planTraining', () => {
     expect(plan.segments.every((s) => s.overload === undefined)).toBe(true);
   });
 
-  it('reaction slots: the two highest priorities of szmr, gonogo, rdo, pomeh; ties keep pool order', () => {
+  it('REACTION_POOL ends with ПЗМР (F5): at equal priority it is picked last', () => {
+    expect(REACTION_POOL).toEqual(['szmr', 'gonogo', 'rdo', 'pomeh', 'pzmr']);
+    const atNorm = (m: ModuleId): Partial<ModuleState> => ({ lSaved: L_NORM[m], lastTrainedAt: '2026-10-13' });
+    const three = allStates({ szmr: atNorm('szmr'), gonogo: atNorm('gonogo'), rdo: atNorm('rdo') });
+    expect(reaction(planTraining(three, TODAY, 1, DEV))).toEqual(['pomeh', 'pzmr']);
+    // Trained less recently, ПЗМР wins its slot.
+    const all = allStates({ szmr: atNorm('szmr'), gonogo: atNorm('gonogo'), rdo: atNorm('rdo'), pomeh: atNorm('pomeh'), pzmr: atNorm('pzmr') });
+    const stale = { ...all, pzmr: { ...all.pzmr, lastTrainedAt: '2026-10-10' } };
+    expect(reaction(planTraining(stale, TODAY, 1, DEV))[0]).toBe('pzmr');
+  });
+
+  it('warmupLevel = max(0, L_saved − 1)', () => {
+    expect(warmupLevel(6)).toBe(5);
+    expect(warmupLevel(0.5)).toBe(0);
+    expect(warmupLevel(0)).toBe(0);
+    expect(warmupLevel(13.5)).toBe(12.5);
+  });
+
+  it('reaction slots: the two highest priorities of the reaction pool; ties keep pool order', () => {
     expect(reaction(planTraining(allStates(), TODAY, 1, DEV))).toEqual(['szmr', 'gonogo']);
     const atNorm = (m: ModuleId): Partial<ModuleState> => ({ lSaved: L_NORM[m], lastTrainedAt: '2026-10-13' });
     expect(reaction(planTraining(allStates({ szmr: atNorm('szmr') }), TODAY, 1, DEV))).toEqual(['gonogo', 'rdo']);
@@ -298,12 +330,13 @@ describe('planTraining', () => {
         gonogo: { lSaved: 5, lastTrainedAt: '2026-10-12' },
         rdo: { lSaved: 0, lastTrainedAt: '2026-10-13' },
         pomeh: { lSaved: 14, lastTrainedAt: TODAY },
+        pzmr: { lSaved: 14, lastTrainedAt: TODAY },
       }),
       TODAY,
       1,
       DEV,
     );
-    // rdo: 1/7 + 1 ; gonogo: 2/7 + 0.5 ; szmr, pomeh: 0
+    // rdo: 1/7 + 1 ; gonogo: 2/7 + 0.5 ; szmr, pomeh, pzmr: 0
     expect(reaction(plan)).toEqual(['rdo', 'gonogo']);
   });
 
@@ -311,14 +344,14 @@ describe('planTraining', () => {
     const base = { lSaved: 8, lastTrainedAt: '2026-10-13' } as const;
     const norm = { lSaved: 14, lastTrainedAt: TODAY } as const;
     const plan = planTraining(
-      allStates({ szmr: { ...base }, gonogo: { ...base }, rdo: { lSaved: 10, lastTrainedAt: TODAY }, pomeh: norm }),
+      allStates({ szmr: { ...base }, gonogo: { ...base }, rdo: { lSaved: 10, lastTrainedAt: TODAY }, pomeh: norm, pzmr: norm }),
       TODAY,
       1,
       DEV,
     );
     expect(reaction(plan)).toEqual(['szmr', 'gonogo']);
     const plateau = planTraining(
-      allStates({ szmr: { ...base }, gonogo: { ...base }, rdo: { lSaved: 10, lastTrainedAt: TODAY, plateau: true }, pomeh: norm }),
+      allStates({ szmr: { ...base }, gonogo: { ...base }, rdo: { lSaved: 10, lastTrainedAt: TODAY, plateau: true }, pomeh: norm, pzmr: norm }),
       TODAY,
       1,
       DEV,

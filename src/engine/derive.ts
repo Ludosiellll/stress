@@ -15,9 +15,9 @@ export function isCountedSession(kind: SessionKind): boolean {
   return COUNTED_KINDS.has(kind);
 }
 
-const UNCLEAN_FLAGS: readonly BlockFlag[] = ['fatigued', 'timing_unreliable', 'overload'];
+const UNCLEAN_FLAGS: readonly BlockFlag[] = ['fatigued', 'timing_unreliable', 'overload', 'warmup'];
 
-/** A block that may move L_saved and feeds fatigue detection: without fatigued, timing_unreliable or overload. */
+/** A block that may move L_saved and feeds fatigue detection: without fatigued, timing_unreliable, overload or warmup. */
 export function isCleanBlock(flags: readonly BlockFlag[]): boolean {
   return !flags.some((f) => UNCLEAN_FLAGS.includes(f));
 }
@@ -57,8 +57,9 @@ const LEVELLESS: ReadonlySet<ModuleId> = new Set<ModuleId>(['numseries']);
  * Module states from training and free sessions only (diagnostics never count).
  * A session's end level is lAfter of its last clean block of the module (by startedAt, isCleanBlock);
  * sessions without such a block add nothing. Ties keep input order.
- * Every block counts in lifetimeBlocks; lastTrainedAt is the last block that was not an overload block, so a
- * finisher does not make its module look trained and take away its regular slot (W2-R40).
+ * Every block counts in lifetimeBlocks; lastTrainedAt is the last block that was neither an overload nor a warm-up
+ * block, so a finisher or the daily ПЗМР warm-up does not make its module look trained and take away its regular
+ * slot (W2-R40, F5).
  * Number series keep the default state except lifetimeBlocks and lastTrainedAt.
  */
 export function deriveModuleStates(
@@ -74,7 +75,7 @@ export function deriveModuleStates(
   for (const b of ordered) {
     const st = states[b.module];
     st.lifetimeBlocks++;
-    if (!b.flags.includes('overload')) st.lastTrainedAt = b.startedAt;
+    if (!b.flags.includes('overload') && !b.flags.includes('warmup')) st.lastTrainedAt = b.startedAt;
     if (LEVELLESS.has(b.module) || !isCleanBlock(b.flags)) continue;
     let perModule = endLevels.get(b.sessionId);
     if (!perModule) {

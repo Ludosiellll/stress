@@ -32,3 +32,14 @@ export function cv(xs: readonly number[]): number {
   const m = mean(xs);
   return m === 0 ? 0 : sd(xs) / m;
 }
+
+/**
+ * SD with the outliers left out once: the mean m and SD s of all values, then the SD of those with |x − m| ≤ 3s
+ * (Справочник F7). 0 for fewer than two values.
+ */
+export function sdTrimmed(xs: readonly number[]): number {
+  if (xs.length < 2) return 0;
+  const m = mean(xs);
+  const s = sd(xs);
+  return sd(xs.filter((x) => Math.abs(x - m) <= 3 * s));
+}

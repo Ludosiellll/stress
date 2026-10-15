@@ -78,6 +78,25 @@ function Assessment({ model }: { model: ProgressModel }) {
   );
 }
 
+function FormOfDay({ model }: { model: ProgressModel }) {
+  return (
+    <section aria-labelledby="form-of-day-title">
+      <h2 id="form-of-day-title">Форма дня</h2>
+      <div className="chart-grid">
+        <ChartCard
+          title="Разминка ПЗМР: медиана по дням, мс"
+          note="меньше — лучше"
+          yLabel="мс"
+          lowerIsBetter
+          series={[{ name: 'Разминка ПЗМР', points: model.formOfDay }]}
+          domain={{ min: 0 }}
+          whole
+        />
+      </div>
+    </section>
+  );
+}
+
 function Diagnostics({ model }: { model: ProgressModel }) {
   return (
     <section aria-labelledby="diagnostics-title">
@@ -218,6 +237,7 @@ export default function Progress({ onBack }: ProgressProps) {
         <>
           <ReadinessBlock readiness={model.readiness} />
           <Assessment model={model} />
+          <FormOfDay model={model} />
           <Diagnostics model={model} />
           <Levels model={model} />
           <History model={model} />

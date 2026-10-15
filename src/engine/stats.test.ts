@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cv, mean, median, medianOfSorted, sd } from './stats';
+import { cv, mean, median, medianOfSorted, sd, sdTrimmed } from './stats';
 
 describe('stats', () => {
   it('mean', () => {
@@ -36,5 +36,25 @@ describe('stats', () => {
     expect(cv([0, 0])).toBe(0);
     expect(cv([-1, 1])).toBe(0);
     expect(cv([8, 12])).toBeCloseTo(sd([8, 12]) / 10, 10);
+  });
+
+  it('sdTrimmed drops |z| > 3 once', () => {
+    // The outlier goes: mean 381, SD 371, 2000 − 381 > 3·371; the rest has SD 0.
+    expect(sdTrimmed([...Array<number>(20).fill(300), 2000])).toBe(0);
+    expect(sdTrimmed([300, 310, 320])).toBe(10);
+    expect(sdTrimmed([5])).toBe(0);
+    expect(sdTrimmed([])).toBe(0);
+  });
+
+  it('sdTrimmed trims only once; without outliers it is the sample SD', () => {
+    // Without trimming it is the plain sample SD.
+    expect(sdTrimmed([1, 2, 3, 4, 100])).toBe(sd([1, 2, 3, 4, 100]));
+    const xs = [...Array<number>(30).fill(300), 400, 2000];
+    const m = mean(xs);
+    const s = sd(xs);
+    const kept = xs.filter((x) => Math.abs(x - m) <= 3 * s);
+    expect(kept).toHaveLength(31);
+    // 400 would be an outlier of the rest, but the trim runs once.
+    expect(sdTrimmed(xs)).toBe(sd(kept));
   });
 });

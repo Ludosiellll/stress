@@ -186,15 +186,20 @@ describe('parseExportBundle: errors (the first one found)', () => {
     );
   });
 
+  it('reads a block with the warm-up flag (F5)', () => {
+    const b = parsed(variant((x) => Object.assign(rows(x, 'blocks')[0] ?? {}, { flags: ['warmup', 'fatigued'] })));
+    expect(b.blocks[0]?.flags).toEqual(['warmup', 'fatigued']);
+  });
+
   it('unknown module, kind and family; flags outside BlockFlag; mood outside 1…5', () => {
     expect(errorOf(variant((b) => Object.assign(rows(b, 'blocks')[0] ?? {}, { module: 'tetris' })))).toBe(
       'Запись blocks[0]: поле module должно быть одним из: pzmr, szmr, gonogo, rdo, gorbov, schulte, stroop, taskswitch, pomeh, memory, numseries.',
     );
     expect(errorOf(variant((b) => Object.assign(rows(b, 'blocks')[0] ?? {}, { flags: ['bad'] })))).toBe(
-      'Запись blocks[0]: поле flags должно быть списком из: fatigued, timing_unreliable, calibration, overload.',
+      'Запись blocks[0]: поле flags должно быть списком из: fatigued, timing_unreliable, calibration, overload, warmup.',
     );
     expect(errorOf(variant((b) => Object.assign(rows(b, 'blocks')[0] ?? {}, { flags: 'calibration' })))).toBe(
-      'Запись blocks[0]: поле flags должно быть списком из: fatigued, timing_unreliable, calibration, overload.',
+      'Запись blocks[0]: поле flags должно быть списком из: fatigued, timing_unreliable, calibration, overload, warmup.',
     );
     expect(errorOf(variant((b) => Object.assign(rows(b, 'sessions')[0] ?? {}, { kind: 'cloud' })))).toBe(
       'Запись sessions[0]: поле kind должно быть одним из: training, diagnostic, free.',

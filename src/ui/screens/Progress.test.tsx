@@ -126,7 +126,8 @@ describe('Progress edge cases', () => {
     expect(screen.getByText('Пройди диагностику, чтобы увидеть индекс')).toBeTruthy();
     // One chart per diagnostic metric + one level chart per module with a level (all but number series).
     const levelModules = MODULE_IDS.filter((m) => m !== 'numseries').length;
-    expect(screen.getAllByText('Нет данных')).toHaveLength(diagnosticCharts([]).length + levelModules);
+    // …and the form-of-day chart.
+    expect(screen.getAllByText('Нет данных')).toHaveLength(diagnosticCharts([]).length + levelModules + 1);
     expect(screen.getByText('Сессий пока нет')).toBeTruthy();
     expect(screen.queryByText('≈ формат теста')).toBeNull();
   });
@@ -165,7 +166,7 @@ describe('Progress edge cases', () => {
     const headings = screen.getAllByRole('heading').map((h) => h.textContent);
     const at = headings.indexOf('Оценка по модулям');
     expect(at).toBe(headings.indexOf('Индекс готовности') + 1);
-    expect(at).toBe(headings.indexOf('Контрольные диагностики') - 1);
+    expect(at).toBe(headings.indexOf('Форма дня') - 1);
 
     const table = screen.getByRole('table', { name: 'Оценка по модулям' });
     expect(within(table).getAllByRole('columnheader').map((c) => c.textContent)).toEqual([
@@ -189,6 +190,27 @@ describe('Progress edge cases', () => {
     expect(table.nextElementSibling?.textContent).toBe(
       'Ступень — по сохранённому уровню. Ориентир — опубликованные нормы, ориентировочно; источники — в руководстве.',
     );
+  });
+
+  it('«Форма дня» follows «Оценка по модулям»: the daily median of the ПЗМР warm-up (F5)', async () => {
+    const repo = new MemoryRepository();
+    const day = (d: number): string => new Date(Date.now() - d * 86_400_000).toISOString();
+    for (const d of [3, 1]) {
+      await repo.createSession(session(`s${String(d)}`, day(d), { endedAt: day(d) }));
+      await repo.addBlock(
+        block(`w${String(d)}`, `s${String(d)}`, day(d), { flags: ['warmup'], summaryJson: JSON.stringify({ cleanHitRts: [300 - d, 310 - d] }) }),
+        [],
+        [],
+      );
+    }
+    await renderProgress(repo);
+    const headings = screen.getAllByRole('heading').map((h) => h.textContent);
+    const at = headings.indexOf('Форма дня');
+    expect(at).toBe(headings.indexOf('Оценка по модулям') + 1);
+    expect(headings[at + 1]).toBe('Разминка ПЗМР: медиана по дням, мс');
+    const card = chartOf('Разминка ПЗМР: медиана по дням, мс');
+    expect(within(card).getByText('меньше — лучше')).toBeTruthy();
+    expect(card.querySelectorAll('circle')).toHaveLength(2);
   });
 
   it('a failing block history read shows the error and the retry, never a broken screen', async () => {

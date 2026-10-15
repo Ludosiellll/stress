@@ -31,6 +31,11 @@ export function localDayNumber(iso: string): number {
   return Date.UTC(y, m, d) / MS_PER_DAY;
 }
 
+/** The local calendar day of an ISO string as 'YYYY-MM-DD' (localDayNumber; RangeError as there). */
+export function localDayIso(iso: string): string {
+  return new Date(localDayNumber(iso) * MS_PER_DAY).toISOString().slice(0, 10);
+}
+
 /** Signed difference in local calendar days (to − from). */
 export function signedDaysBetween(fromIso: string, toIso: string): number {
   return localDayNumber(toIso) - localDayNumber(fromIso);

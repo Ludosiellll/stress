@@ -68,7 +68,7 @@ const MS_PER_MIN = 60_000;
 const DIAGNOSTIC_INTERVAL_DAYS = 14;
 
 /** Pools of the training slots (§7.1). Pool order is the tie order at equal priority. */
-export const REACTION_POOL: readonly ModuleId[] = ['szmr', 'gonogo', 'rdo', 'pomeh'];
+export const REACTION_POOL: readonly ModuleId[] = ['szmr', 'gonogo', 'rdo', 'pomeh', 'pzmr'];
 export const ATTENTION_POOL: readonly ModuleId[] = ['gorbov', 'schulte', 'stroop', 'taskswitch'];
 /** The «внимание и память» slot; the module already picked for attention is left out. */
 export const MEMORY_SLOT_POOL: readonly ModuleId[] = ['memory', ...ATTENTION_POOL];
@@ -85,6 +85,14 @@ const BUDGET_STEP_MS = 30_000;
 /** Taper rehearsals (П5): two control diagnostics from TAPER_DAYS before the test date on, at least 2 days apart. */
 const REHEARSALS = 2;
 const REHEARSAL_GAP_DAYS = 2;
+
+/**
+ * The level of every warm-up block: one below L_saved, at least 0 (F5). The warm-up never moves a level, so it is
+ * the same all session.
+ */
+export function warmupLevel(lSaved: number): number {
+  return Math.max(0, lSaved - 1);
+}
 
 /** min(daysSince, 7)/7 + clamp(1 − L_saved/L_norm, 0, 1) + (plateau ? 0.5 : 0); never-trained counts as 7 days. */
 export function modulePriority(s: ModuleState, todayIso: string): number {
@@ -128,11 +136,12 @@ function pick(
 }
 
 /**
- * The daily session (§7.1) for the phase (§7.2): ПЗМР warm-up 2 min; two reaction modules 5 min each (6 in the
- * overload phase); an attention module and a memory-or-attention module 5 min each; number series 10 min; then the
- * finisher (3 min in development, 5 in overload; none in base and taper). The taper scales every budget by 0.6
- * (to 30 s) and skips never-trained modules. A reaction, attention or memory segment whose module is on a plateau
- * mixes in overload blocks; the warm-up and the finisher never do, and nothing does in the taper (it cuts the load).
+ * The daily session (§7.1) for the phase (§7.2): ПЗМР warm-up 2 min (at warmupLevel, F5); two reaction modules
+ * 5 min each (6 in the overload phase; ПЗМР is in their pool too, F5); an attention module and a memory-or-attention
+ * module 5 min each; number series 10 min; then the finisher (3 min in development, 5 in overload; none in base and
+ * taper). The taper scales every budget by 0.6 (to 30 s) and skips never-trained modules. A reaction, attention or
+ * memory segment whose module is on a plateau mixes in overload blocks; the warm-up and the finisher never do, and
+ * nothing does in the taper (it cuts the load).
  */
 export function planTraining(
   states: Record<ModuleId, ModuleState>,

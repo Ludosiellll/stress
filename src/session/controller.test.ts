@@ -40,7 +40,15 @@ import {
 import { assessBlock } from './assessment';
 import { appendBlock } from './blockHistory';
 import { SessionController, type SessionStartOptions } from './controller';
-import { AUDIO_NOT_PLAYED, MEMORY_SPAN_INSTRUCTION, OVERLOAD_SOUND_PREFIX, type BlockSummaryView, type Step, type StepOf } from './steps';
+import {
+  AUDIO_NOT_PLAYED,
+  MEMORY_SPAN_INSTRUCTION,
+  OVERLOAD_SOUND_PREFIX,
+  WARMUP_LEVEL_NOTE,
+  type BlockSummaryView,
+  type Step,
+  type StepOf,
+} from './steps';
 
 // The real functions, observed: a test can make one call throw (A-R19).
 vi.mock('./assessment', async (importOriginal) => {
@@ -451,6 +459,7 @@ describe('SessionController — levels and persistence', () => {
       lines: ['Ошибок нет.', 'Медиана: 300 мс', 'Среднее: 300 мс', 'Разброс (SD): 0 мс', 'Стабильность (CV): 0,00', 'Пропуски: 0'],
       flags: ['calibration'],
       showLevel: true,
+      levelNote: null,
       assessment: {
         step: 'Ступень 1 из 5+ — начальная (уровень 2; формат теста — 14)',
         goal: 'До ступени 2 «на подходе к формату теста»: уровень 7 (+5). Там: окно ответа: 808 → 497 мс',
@@ -515,6 +524,8 @@ describe('SessionController — levels and persistence', () => {
     const first = await playReaction(h, player(1, 300));
     expect(first.view.score).toBe(0.95);
     expect(first.view.lines[0]).toBe('Ошибки: неверная клавиша — 0, фальстарты — 1. Штраф −2 из 20, балл 0,85.');
+    // The first block of the segment: g = 1 on the penalised s 0.85 (below 0.9), although the share is 0.95.
+    expect(first.view.lAfter - first.view.lBefore).toBe(0.25);
     await h.c.continueAfterSummary();
     const second = await playReaction(h, player(0, 300));
     expect(second.view.lBefore).toBe(first.view.lAfter);
@@ -757,6 +768,24 @@ describe('SessionController — levels and persistence', () => {
     expect(view).toMatchObject({ lBefore: 5, lAfter: 7, flags: [] });
   });
 
+  it('the first-block boost is only for a segment that started with the start drop (T-R36)', async () => {
+    const repo = new MemoryRepository();
+    await repo.saveModuleState(stateWith('pzmr', { lSaved: 6, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    const h = await begin({ kind: 'free', seed: 3, segments: [segment('pzmr', 1), segment('rdo', 1), segment('pzmr', 1)] }, { repo });
+    // One miss: s 14/15 is below 0.95, so the previous-score rule gives the later block nothing.
+    const first = await playReaction(h, (spec, idx) => (idx === 0 ? null : perfectPlayer(spec, idx)));
+    expect(first.view.lBefore).toBe(5);
+    h.clock.advance(1);
+    await h.c.continueAfterSummary();
+    await playReaction(h);
+    h.clock.advance(1);
+    await h.c.continueAfterSummary();
+    // The module comes back at its level in the session, without a drop: s 1.0 gets g = 1.
+    const again = await playReaction(h);
+    expect(again.view.lBefore).toBe(first.view.lAfter);
+    expect(again.view.lAfter - again.view.lBefore).toBe(1);
+  });
+
   it('calibration covers the first 3 blocks of a module ever', async () => {
     const repo = new MemoryRepository();
     await repo.saveModuleState(stateWith('pzmr', { lSaved: 4, lastTrainedAt: T0, lifetimeBlocks: 1 }));
@@ -882,12 +911,16 @@ describe('SessionController — levels and persistence', () => {
     // Module state is re-derived from history: the block counts, but gives no session-end level.
     expect((await h.repo.getModuleStates()).pzmr).toMatchObject({ lifetimeBlocks: 1, sessionEndLevels: [], lSaved: 0 });
 
-    // The unreliable s = 1 does not count as the previous score: g stays 1 for the next block. That block is not the
-    // segment's first either: the unreliable one is a stored level-moving block (F6).
+    // The unreliable s = 1 does not count as the previous score, and it measured nothing, so it does not use up the
+    // segment's first-block boost (T-R35): the next block, s 14/15 ≥ 0.9, gets g = 2 as the first one.
     await h.c.continueAfterSummary();
     const next = await playReaction(h, (spec, idx) => (idx === 0 ? null : perfectPlayer(spec, idx)));
     expect(next.view.score).toBeCloseTo(14 / 15, 12);
-    expect(next.view.lAfter).toBeCloseTo(9 + (14 / 15 - 0.8) / 0.2, 9);
+    expect(next.view.lAfter).toBeCloseTo(9 + (2 * (14 / 15 - 0.8)) / 0.2, 9);
+    // That block was stored: the one after it is not the first any more (s 14/15 again, g = 1).
+    await h.c.continueAfterSummary();
+    const third = await playReaction(h, (spec, idx) => (idx === 0 ? null : perfectPlayer(spec, idx)));
+    expect(third.view.lAfter - third.view.lBefore).toBeCloseTo((14 / 15 - 0.8) / 0.2, 9);
   });
 
   it('state writes never read the whole block history (R26); it is read once at session start (О11)', async () => {
@@ -961,6 +994,150 @@ describe('SessionController — levels and persistence', () => {
     await h.c.continueAfterSummary();
     h.c.ackInstruction();
     expect(expectStep(h.c, 'reaction_block').L).toBe(first.view.lAfter);
+  });
+});
+
+describe('SessionController — warm-up and the form of the day (F5)', () => {
+  const daysAgo = (d: number): string => new Date(new Date(T0).getTime() - d * DAY).toISOString();
+  const warmup = (minutes: number): Segment => ({ module: 'pzmr', budgetMs: minutes * MIN, purpose: 'warmup' });
+  const training = (...segments: Segment[]): SessionPlan => ({ kind: 'training', seed: 1, phase: 'base', segments });
+  /** Plays the blocks of the segment on screen, `blockMs` each, until it is over (its level never changes the instruction). */
+  async function playSegment(h: Harness, respond: Respond = perfectPlayer, blockMs = 30_000): Promise<BlockSummaryView[]> {
+    const views: BlockSummaryView[] = [];
+    do {
+      views.push((await playReaction(h, respond)).view);
+      h.clock.advance(blockMs);
+      await h.c.continueAfterSummary();
+    } while (h.c.step.kind === 'reaction_block');
+    return views;
+  }
+  /** A finished training session `d` days ago with these blocks. */
+  async function pastTraining(repo: Repository, id: string, d: number, blocks: Partial<BlockRow>[]): Promise<void> {
+    await repo.createSession(session(id, daysAgo(d), { endedAt: daysAgo(d) }));
+    for (const [i, over] of blocks.entries()) await repo.addBlock(block(`${id}b${String(i)}`, id, daysAgo(d), over), [], []);
+  }
+
+  it('the warm-up plays every block at L_saved − 1 and moves nothing', async () => {
+    const repo = new MemoryRepository();
+    await pastTraining(repo, 's0', 1, [{ module: 'pzmr', lBefore: 6, lAfter: 6 }]);
+    const before = deriveModuleStates(await repo.listSessions(), await repo.listBlocks()).pzmr;
+    expect(before).toMatchObject({ lSaved: 6, lastTrainedAt: daysAgo(1), lifetimeBlocks: 1 });
+    await repo.saveModuleState(before);
+    const h = await begin(training(warmup(2)), { repo });
+    const views = await playSegment(h);
+    expect(h.c.step.kind).toBe('wellbeing');
+    expect(views).toHaveLength(4);
+    for (const view of views) {
+      expect(view).toMatchObject({ lBefore: 5, lAfter: 5, flags: ['warmup'], showLevel: false, levelNote: WARMUP_LEVEL_NOTE });
+      expect(view.lines[1]).toBe('Форма дня: мало данных — нужно 3 разминки за 14 дней на этой нагрузке.');
+    }
+    const rows = (await repo.listBlocks()).filter((b) => b.sessionId === h.c.sessionId);
+    expect(rows.map((b) => [b.lBefore, b.lAfter, b.flags])).toEqual(Array(4).fill([5, 5, ['warmup']]));
+    expect((await repo.getModuleStates()).pzmr).toMatchObject({ lSaved: 6, lastTrainedAt: daysAgo(1), lifetimeBlocks: 5 });
+  });
+
+  it('the form of the day compares with three earlier warm-up days on the same band', async () => {
+    const repo = new MemoryRepository();
+    const summaryJson = JSON.stringify({ meanRt: 300, cleanHitRts: [290, 300, 310] });
+    for (const d of [1, 2, 3]) await pastTraining(repo, `s${String(d)}`, d, [{ module: 'pzmr', lBefore: 5, lAfter: 5, flags: ['warmup'], summaryJson }]);
+    await repo.saveModuleState(stateWith('pzmr', { lSaved: 6, lastTrainedAt: daysAgo(1), lifetimeBlocks: 10 }));
+    const h = await begin(training(warmup(2)), { repo });
+    const { view } = await playReaction(h);
+    expect(view.lBefore).toBe(5);
+    expect(view.lines[1]).toBe('Форма дня: медиана 300 мс (обычно 300) · разброс 0 мс (обычно 10) — как обычно.');
+  });
+
+  it('the form of the day adds up today’s warm-ups once each, and is left out when the history could not be read (Р18)', async () => {
+    const repo = new MemoryRepository();
+    const summaryJson = JSON.stringify({ meanRt: 300, cleanHitRts: [300, 300, 300] });
+    for (const d of [1, 2, 3]) await pastTraining(repo, `s${String(d)}`, d, [{ module: 'pzmr', lBefore: 5, lAfter: 5, flags: ['warmup'], summaryJson }]);
+    await repo.saveModuleState(stateWith('pzmr', { lSaved: 6, lastTrainedAt: daysAgo(1), lifetimeBlocks: 10 }));
+    const h = await begin(training(warmup(2)), { repo });
+    // 300 ms, then 340 ms: today's median is 300 after the first block, 320 after the second (15 + 15 RTs; a block
+    // counted twice would keep it at 300).
+    const first = await playReaction(h, (spec, idx) => perfectPlayer(spec, idx));
+    expect(first.view.lines[1]).toMatch(/^Форма дня: медиана 300 мс \(обычно 300\)/);
+    h.clock.advance(30_000);
+    await h.c.continueAfterSummary();
+    const at340: Respond = (spec, idx) => {
+      const r = perfectPlayer(spec, idx);
+      return r === null ? null : { ...r, rtMs: 340 };
+    };
+    const second = await playReaction(h, at340);
+    expect(second.view.lines[1]).toBe('Форма дня: медиана 320 мс (обычно 300) · разброс 20 мс (обычно 0) — хуже обычного.');
+
+    vi.spyOn(repo, 'listBlocks').mockRejectedValueOnce(new Error('disk I/O error'));
+    const unread = await begin(training(warmup(2)), { repo });
+    const { view } = await playReaction(unread);
+    expect(view.levelNote).toBe(WARMUP_LEVEL_NOTE);
+    expect(view.lines.some((l) => l.startsWith('Форма дня'))).toBe(false);
+  });
+
+  it('every reaction summary keeps cleanHitRts rounded to 0.1 ms', async () => {
+    const h = await begin(planFree('pzmr', 1));
+    const rtOf = (idx: number): number => 300 + 0.123 * idx;
+    h.c.ackInstruction();
+    const step = expectStep(h.c, 'reaction_block');
+    const respond: Respond = (spec, idx) => {
+      const r = perfectPlayer(spec, idx);
+      return r === null ? null : { ...r, rtMs: rtOf(idx) };
+    };
+    await h.c.submitReaction(playTimeline(step.specs, respond));
+    const expected = step.specs.flatMap((t, idx) => (t.practice === true ? [] : [Math.round(10 * rtOf(idx)) / 10]));
+    expect(expected).toHaveLength(15);
+    const [row] = await h.repo.listBlocks();
+    expect((JSON.parse(row?.summaryJson ?? '{}') as { cleanHitRts: unknown }).cleanHitRts).toEqual(expected);
+    // A diagnostic block keeps them too.
+    const d = await begin(planDiagnostic(1));
+    await playReaction(d);
+    const [diag] = await d.repo.listBlocks();
+    expect((JSON.parse(diag?.summaryJson ?? '{}') as { cleanHitRts: unknown[] }).cleanHitRts.length).toBeGreaterThan(0);
+  });
+
+  it('a warm-up block is not the previous block for g = 2 and not in fatigue', async () => {
+    const repo = new MemoryRepository();
+    await repo.saveModuleState(stateWith('pzmr', { lSaved: 6, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    const reaction: Segment = { module: 'pzmr', budgetMs: 1, purpose: 'reaction' };
+    const h = await begin(training(reaction, warmup(1), reaction), { repo });
+    // One miss: s 14/15 is below 0.95.
+    const first = await playReaction(h, (spec, idx) => (idx === 0 ? null : perfectPlayer(spec, idx)));
+    h.clock.advance(1);
+    await h.c.continueAfterSummary();
+    const warm = await playSegment(h);
+    expect(warm.map((v) => v.score)).toEqual([1, 1]);
+    // The third segment comes back at the module's level, so no first-block boost; the warm-up's s 1.0 is not the
+    // previous score either: g = 1.
+    const after = await playReaction(h);
+    expect(after.view.lBefore).toBe(first.view.lAfter);
+    expect(after.view.lAfter - after.view.lBefore).toBe(1);
+
+    // Fatigue: two fast perfect warm-up blocks and two slow ones with false starts would be fatigue if the warm-up
+    // counted; the reaction blocks alone are even.
+    const fresh = await begin(training(warmup(1), { module: 'pzmr', budgetMs: 5 * MIN, purpose: 'reaction' }));
+    await playSegment(fresh);
+    const slow: Respond = (spec, idx) => {
+      const r = perfectPlayer(spec, idx);
+      return r === null ? null : { ...r, rtMs: idx < 1 ? 50 : 400 };
+    };
+    for (let i = 0; i < 2; i++) {
+      await playReaction(fresh, slow);
+      fresh.clock.advance(30_000);
+      await fresh.c.continueAfterSummary();
+    }
+    expect(fresh.c.step.kind).toBe('reaction_block');
+  });
+
+  it('warm-up blocks are not calibration blocks and do not use up the calibration of a new module (T-R11)', async () => {
+    const h = await begin(training(warmup(1), { module: 'pzmr', budgetMs: 5 * MIN, purpose: 'reaction' }));
+    const warm = await playSegment(h);
+    expect(warm.map((v) => v.flags)).toEqual([['warmup'], ['warmup']]);
+    const flags: string[][] = [];
+    for (let i = 0; i < 4; i++) {
+      flags.push((await playReaction(h)).view.flags);
+      h.clock.advance(30_000);
+      await h.c.continueAfterSummary();
+    }
+    expect(flags).toEqual([['calibration'], ['calibration'], ['calibration'], []]);
   });
 });
 

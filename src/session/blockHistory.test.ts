@@ -295,6 +295,19 @@ describe('buildBlockHistory', () => {
     expect(buildBlockHistory(blocks, SESSIONS).size).toBe(0);
   });
 
+  it('a warm-up block goes to its own variant pzmr:warmup (F5, Р29): never the main ПЗМР variant or its «лучший»', () => {
+    const pzmrSummary = '{"meanRt":300,"sdRt":20,"counts":{"miss":0,"late":0}}';
+    const warmup = row({ module: 'pzmr', flags: ['warmup'], lBefore: 5, summaryJson: '{"meanRt":250,"sdRt":20,"counts":{"miss":0,"late":0}}', startedAt: ago(2) });
+    const regular = row({ module: 'pzmr', lBefore: 6, summaryJson: pzmrSummary, startedAt: ago(1) });
+    expect(variantOf(warmup)).toBe('pzmr:warmup');
+    expect(variantOf({ ...warmup, flags: ['warmup', 'fatigued'] })).toBe('pzmr:warmup');
+    const h = buildBlockHistory([warmup, regular], SESSIONS);
+    expect(h.get('pzmr:warmup')?.map((e) => [e.value, e.L])).toEqual([[250, 5]]);
+    expect(h.get('pzmr')?.map((e) => e.value)).toEqual([300]);
+    expect(mainVariant('pzmr', h)).toBe('pzmr');
+    expect(historyStats(h.get(mainVariant('pzmr', h) ?? '') ?? [], NOW, 'lower')?.best).toBe(300);
+  });
+
   it('unfinished tables have no number', () => {
     expect(historyEntry(table('alternate', null))).toBeNull();
   });

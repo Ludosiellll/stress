@@ -52,6 +52,7 @@ const SUMMARY: BlockSummaryView = {
   lines: ['Медиана: 280 мс'],
   flags: [],
   showLevel: true,
+  levelNote: null,
 };
 
 const TABLE: StepOf<'table_block'> = {

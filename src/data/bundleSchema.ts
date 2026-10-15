@@ -35,7 +35,7 @@ type Table = (typeof TABLES)[number];
 
 // Records rather than lists: the compiler checks that each holds every member of its type and nothing else.
 const SESSION_KINDS: Readonly<Record<SessionKind, true>> = { training: true, diagnostic: true, free: true };
-const BLOCK_FLAGS: Readonly<Record<BlockFlag, true>> = { fatigued: true, timing_unreliable: true, calibration: true, overload: true };
+const BLOCK_FLAGS: Readonly<Record<BlockFlag, true>> = { fatigued: true, timing_unreliable: true, calibration: true, overload: true, warmup: true };
 const LAYOUTS: Readonly<Record<LayoutId, true>> = { keyboard: true, mouse: true, pult: true };
 const keysOf = <K extends string>(r: Readonly<Record<K, true>>): K[] => Object.keys(r) as K[];
 const RESTORED_SETTINGS: Readonly<Record<RestoredSetting, true>> = { testDate: true, layout: true };

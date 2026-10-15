@@ -2,11 +2,12 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Repository } from '../data/repository';
 import type { BlockRow, LogicItemRow, TrialRow, WellbeingRow } from '../data/rows';
 import { detectFatigue, nextLevel, stabilityHold, startLevel, type DeltaInput } from '../engine/adaptive';
-import { daysBetween } from '../engine/dates';
+import { daysBetween, localDayIso } from '../engine/dates';
+import { dayForm } from '../engine/dayForm';
 import { deriveModuleStates, isCleanBlock } from '../engine/derive';
 import { parseResults, type DiagnosticResults } from '../engine/diagnostic';
 import type { Rating } from '../engine/elo';
-import { OVERLOAD_LEVEL_STEP, type ModuleState, type Segment, type SessionPlan } from '../engine/planner';
+import { OVERLOAD_LEVEL_STEP, warmupLevel, type ModuleState, type Segment, type SessionPlan } from '../engine/planner';
 import { stabilityOf } from '../engine/reaction/stability';
 import type { BlockTimeline } from '../engine/reaction/types';
 import { readinessOfLatest } from '../engine/readiness';
@@ -18,7 +19,7 @@ import { moduleTitles, reactionModules } from '../modules/registry';
 import type { TableTaskId } from '../modules/tables/gorbov';
 import { scoreTableRun, type TableRun } from '../modules/tables/score';
 import { assessBlock, meanFamilyRating, type BlockAssessment } from './assessment';
-import { appendBlock, buildBlockHistory, type BlockHistory } from './blockHistory';
+import { appendBlock, type BlockHistory } from './blockHistory';
 import {
   blockInstruction,
   buildBlock,
@@ -34,11 +35,13 @@ import {
   type DiagnosticPart,
   type PlanContext,
 } from './blocks';
+import { appendPast, pastBlocks, warmupDays, type PastBlocks } from './pastBlocks';
 import { blockRow, errorLogRow, logicItemRows, sessionRow, trialRows, wellbeingRow } from './rowsBuild';
 import { SaveQueue, type SaveOutcome, type Write } from './saveQueue';
 import {
   AUDIO_NOT_PLAYED,
   conditionLines,
+  dayFormLine,
   memoryLines,
   reactionLines,
   saveErrorMessage,
@@ -47,6 +50,7 @@ import {
   stabilityLine,
   tableLines,
   UNRELIABLE_REPLAY_NOTICE,
+  WARMUP_LEVEL_NOTE,
   type BlockSummaryView,
   type DiagnosticComparison,
   type PastDiagnostic,
@@ -99,10 +103,18 @@ interface SegmentRun {
   segment: Segment;
   /** Segment level: the next block plays at it (a mix overload block above it, planBlock). */
   L: number;
+  /**
+   * The segment started at startLevel (the drop after the break): only then does its first block get the first-block
+   * boost (F6, T-R36). A module that comes back later in the session starts from its level here, without a drop.
+   */
+  startDrop: boolean;
   /** Wall-clock ms of the first instruction ack; null before it. */
   clockStart: number | null;
   blocksDone: number;
-  /** A level-moving block (not an overload block) of the segment is stored: the next one is not the first (F6). */
+  /**
+   * A level-moving block of the segment is stored: the next one is not the first (F6). Overload and warm-up blocks do
+   * not move the level, and a timing_unreliable one measured nothing (T-R35): none of them counts.
+   */
   levelBlockStored: boolean;
   /** Discards of the current block. */
   attempt: number;
@@ -111,6 +123,15 @@ interface SegmentRun {
   /** Text and key hint of the last instruction shown in the segment. */
   lastInstruction: string | null;
 }
+
+/**
+ * Overload and warm-up blocks do not move the level: they are not calibration blocks, the previous block for g = 2 or
+ * a segment's first.
+ */
+const isLevelMoving = (flags: readonly BlockFlag[]): boolean => !flags.includes('overload') && !flags.includes('warmup');
+
+/** RTs as summaryJson.cleanHitRts keeps them: 0.1 ms (Справочник F3). */
+const tenthMs = (x: number): number => Math.round(10 * x) / 10;
 
 /** A finished block of this session, for calibration, the g = 2 rule and fatigue. */
 interface SessionBlock {
@@ -182,12 +203,15 @@ function compareWithPrevious(earlier: readonly PastDiagnostic[], readiness: numb
  * - Overload blocks (Segment.overload): a finisher starts at L_saved + 3 and moves only its own level; a mix
  *   overload block's lAfter goes to history only. Their flag keeps them out of L_saved, fatigue and g = 2 (an overload
  *   block is never a segment's first block).
+ * - The warm-up (F5) plays every block at warmupLevel(L_saved) and moves no level; its flag keeps it out of L_saved,
+ *   lastTrainedAt, fatigue, calibration and g = 2. Its summary says so and shows «Форма дня» from the warm-ups of the
+ *   history read at start, those of this session and the block itself.
  * - After each block: addBlock (with its trials / logic items); then the block's in-memory effects; then for
  *   training and free sessions the module state derived from the module's history (listBlockLevels) and, for
  *   number series, the ratings. Writes are tried 3 times (pauses 100 and 500 ms), then `save_error` keeps
  *   everything in memory until `retrySave` succeeds or `abandonPending` gives up on it.
- * - Assessment (the «Оценка» of a block summary): training and free sessions read the whole block history once
- *   at start (О11) and append each block once it is stored, so a dropped block never enters it.
+ * - Assessment (the «Оценка» of a block summary) and «Форма дня»: training and free sessions read the whole block
+ *   history once at start (О11) and append each block once it is stored, so a dropped block never enters it.
  * - Training and free segments start a new block only while the budget (from the first instruction ack) is
  *   not used up; diagnostic segments play a fixed number of blocks (`runs`, default 1).
  * - An instruction comes before the first block of a segment, before every Gorbov run, and again whenever
@@ -238,6 +262,8 @@ export class SessionController {
    * is stored. null: a diagnostic, or the read failed (no history line then, О10).
    */
   private readonly history: BlockHistory | null;
+  /** The same history as stored rows, for «Форма дня» (F5); null exactly when `history` is (Р18). */
+  private readonly past: PastBlocks | null;
 
   private constructor(
     o: SessionStartOptions,
@@ -245,7 +271,7 @@ export class SessionController {
     states: Record<ModuleId, ModuleState>,
     ratings: Map<FamilyId, Rating>,
     earlierDiagnostics: PastDiagnostic[] | null,
-    history: BlockHistory | null,
+    read: { history: BlockHistory; past: PastBlocks } | null,
   ) {
     this.repo = o.repo;
     this.plan = o.plan;
@@ -257,7 +283,8 @@ export class SessionController {
     this.states = states;
     this.ratings = ratings;
     this.earlierDiagnostics = earlierDiagnostics;
-    this.history = history;
+    this.history = read?.history ?? null;
+    this.past = read?.past ?? null;
   }
 
   /** Creates the session row and shows the first instruction (or `save_error` if the row cannot be written). */
@@ -268,13 +295,13 @@ export class SessionController {
       throw new RangeError('a diagnostic plan needs diagnosticNumber');
     }
     const diagnostic = o.plan.kind === 'diagnostic';
-    const [states, ratings, earlier, history] = await Promise.all([
+    const [states, ratings, earlier, read] = await Promise.all([
       o.repo.getModuleStates(),
       o.repo.getRatings(),
       diagnostic ? SessionController.readOrLog(o, 'earlier diagnostics', () => SessionController.earlierDiagnostics(o.repo)) : [],
       diagnostic ? null : SessionController.readOrLog(o, 'block history', () => SessionController.blockHistory(o.repo)),
     ]);
-    const c = new SessionController(o, scale, states, ratings, earlier, history);
+    const c = new SessionController(o, scale, states, ratings, earlier, read);
     const row = sessionRow(c.sessionId, o.now().toISOString(), o.plan.kind, o.appVersion, o.plan.phase ?? 'none');
     await c.save(
       { what: 'session start', stage: () => 'session_start', onSaved: () => c.enterSegment(0), onAbandon: null },
@@ -308,10 +335,21 @@ export class SessionController {
     });
   }
 
-  /** The whole block history, read once per training or free session (О11); state writes read only listBlockLevels. */
-  private static async blockHistory(repo: Repository): Promise<BlockHistory> {
+  /**
+   * The whole block history, read once per training or free session (О11); state writes read only listBlockLevels.
+   * One pass fills the assessment history and the past blocks, as the commit of a block does (T-R19).
+   */
+  private static async blockHistory(repo: Repository): Promise<{ history: BlockHistory; past: PastBlocks }> {
     const [blocks, sessions] = await Promise.all([repo.listBlocks(), repo.listSessions()]);
-    return buildBlockHistory(blocks, sessions);
+    const past = pastBlocks([], sessions);
+    const history: BlockHistory = new Map();
+    for (const row of blocks) {
+      const kind = past.kinds.get(row.sessionId);
+      if (kind === undefined) continue;
+      appendBlock(history, row, kind);
+      appendPast(past, row, kind);
+    }
+    return { history, past };
   }
 
   get step(): Step {
@@ -367,6 +405,7 @@ export class SessionController {
         hitRts,
         summary: {
           ...summary,
+          cleanHitRts: hitRts.map(tenthMs),
           frameMs: tl.frameMs ?? null,
           conditions,
           ...(tl.audioPlayed === undefined ? {} : { audioPlayed: tl.audioPlayed }),
@@ -584,10 +623,12 @@ export class SessionController {
       await this.finish();
       return;
     }
+    const { L, startDrop } = this.segmentLevel(segment);
     this.seg = {
       index,
       segment,
-      L: this.segmentLevel(segment),
+      L,
+      startDrop,
       clockStart: null,
       blocksDone: 0,
       levelBlockStored: false,
@@ -598,17 +639,21 @@ export class SessionController {
     this.presentNext();
   }
 
-  private segmentLevel(segment: Segment): number {
+  /** The level the segment starts at, and whether it is the start drop of startLevel (T-R36). */
+  private segmentLevel(segment: Segment): { L: number; startDrop: boolean } {
     const { module } = segment;
-    if (!this.counted) return segment.fixedL ?? 0;
-    if (module === 'numseries') return 0;
+    const at = (L: number): { L: number; startDrop: boolean } => ({ L, startDrop: false });
+    if (!this.counted) return at(segment.fixedL ?? 0);
+    if (module === 'numseries') return at(0);
     // The finisher takes a module that is not in the plan: no level in this session yet (§6.3).
-    if (segment.overload === 'finisher') return this.states[module].lSaved + OVERLOAD_LEVEL_STEP;
+    if (segment.overload === 'finisher') return at(this.states[module].lSaved + OVERLOAD_LEVEL_STEP);
+    // The warm-up plays one fixed level and leaves the module's level in the session alone (F5).
+    if (segment.purpose === 'warmup') return at(warmupLevel(this.states[module].lSaved));
     const current = this.levels.get(module);
-    if (current !== undefined) return current;
+    if (current !== undefined) return at(current);
     const st = this.states[module];
     const today = this.now().toISOString();
-    return startLevel(st.lSaved, daysBetween(st.lastTrainedAt ?? today, today));
+    return { L: startLevel(st.lSaved, daysBetween(st.lastTrainedAt ?? today, today)), startDrop: true };
   }
 
   /** After a block: the next block (fatigue prompt first, if due) or the next segment. */
@@ -723,15 +768,22 @@ export class SessionController {
   private async completeBlock(b: FinishedBlock): Promise<void> {
     const seg = this.segment();
     const active = this.block();
-    const calibration = b.level !== null && this.isCalibration(b.module);
     const overload = active.plan.kind !== 'numseries' && active.plan.overload;
-    const firstOfSegment = !overload && !seg.levelBlockStored;
+    // A training warm-up block (F5): lAfter = lBefore, no stability rule, no calibration and no g = 2 (T-R11).
+    const warmup = this.counted && seg.segment.purpose === 'warmup';
+    const calibration = b.level !== null && !warmup && this.isCalibration(b.module);
+    const firstOfSegment = !overload && !warmup && seg.startDrop && !seg.levelBlockStored;
     const input: DeltaInput | null =
-      this.counted && b.level !== null
+      this.counted && b.level !== null && !warmup
         ? { score: b.score, calibration, prevScoreSameSession: this.prevScore(b.module), firstOfSegment, ...b.level }
         : null;
     const lAfter = input === null ? b.L : nextLevel(b.L, input);
     const lines = [...b.lines];
+    if (warmup) {
+      // «Форма дня» right after the error line; left out when the history could not be read (Р18) or without a hit.
+      const form = this.dayFormOf(active.startedAt, b.L, b.hitRts);
+      if (form !== null) lines.splice(1, 0, form);
+    }
     let summary = b.summary;
     if (b.level !== null && b.level.cvMax !== null) {
       // The stability rule (F2): what it saw and what it did to the step nextLevel took. A diagnostic moves no level.
@@ -746,6 +798,7 @@ export class SessionController {
     if (b.level?.timingUnreliable === true) flags.push('timing_unreliable');
     if (this.fatigueContinued.has(b.module)) flags.push('fatigued');
     if (overload) flags.push('overload');
+    if (warmup) flags.push('warmup');
 
     const id = uuidv4();
     const row = blockRow(id, this.sessionId, { module: b.module, lBefore: b.L, lAfter, score: b.score, flags }, active, JSON.stringify(summary));
@@ -760,7 +813,8 @@ export class SessionController {
       score: b.viewScore ?? b.score,
       lines,
       flags,
-      showLevel: this.counted && b.level !== null,
+      showLevel: this.counted && b.level !== null && !warmup,
+      levelNote: warmup ? WARMUP_LEVEL_NOTE : null,
     };
     if (assessment !== undefined) view.assessment = assessment;
 
@@ -785,6 +839,7 @@ export class SessionController {
           try {
             this.record({ module: b.module, score: b.score, flags, hitRts: b.hitRts }, lAfter);
             if (this.history !== null) appendBlock(this.history, row, this.plan.kind);
+            if (this.past !== null) appendPast(this.past, row, this.plan.kind);
             b.onCommit?.();
           } catch (e) {
             // The run again skips the rest of the commit, so the failure would leave no trace without this line.
@@ -826,6 +881,18 @@ export class SessionController {
   }
 
   /**
+   * «Форма дня» of a warm-up block (F5): the warm-ups of the history and of this session stored so far, and this block
+   * (not stored yet, so it counts once, T-R12), on the block's local day and band. null: no history (Р18) or no RT today.
+   */
+  private dayFormOf(startedAt: string, L: number, hitRts: readonly number[]): string | null {
+    if (this.past === null) return null;
+    const day = localDayIso(startedAt);
+    const band = Math.floor(L / 4);
+    const form = dayForm([...warmupDays(this.past), { day, band, rts: hitRts.map(tenthMs) }], day, band);
+    return form === null ? null : dayFormLine(form);
+  }
+
+  /**
    * The «Оценка» of a block; a failure leaves the summary without the section (the block is stored all the same) and
    * goes to the log when the log can be written, without waiting for it.
    */
@@ -848,35 +915,40 @@ export class SessionController {
   /**
    * Book-keeping for a stored block; the segment level becomes lAfter. An overload block leaves the module's
    * level in the session alone, and in a mix the segment level too (only the finisher moves its own level).
+   * A warm-up block touches neither (F5).
    */
   private record(b: SessionBlock, lAfter: number): void {
     const seg = this.segment();
-    const overload = b.flags.includes('overload');
+    const moving = isLevelMoving(b.flags);
     this.sessionBlocks.push(b);
-    if (!overload || seg.segment.overload === 'finisher') seg.L = lAfter;
-    if (!overload) seg.levelBlockStored = true;
+    if (moving || seg.segment.overload === 'finisher') seg.L = lAfter;
+    if (moving && !b.flags.includes('timing_unreliable')) seg.levelBlockStored = true;
     seg.blocksDone++;
     seg.attempt = 0;
     seg.unreliableReplayed = false;
     this.active = null;
-    if (b.module !== 'numseries' && !overload) this.levels.set(b.module, lAfter);
+    if (b.module !== 'numseries' && moving) this.levels.set(b.module, lAfter);
     if (this.counted && isReactionModule(b.module)) {
       const clean = this.sessionBlocks.filter((x) => x.module === b.module && isCleanBlock(x.flags));
       if (detectFatigue(clean)) this.fatigueDetected.add(b.module);
     }
   }
 
+  /**
+   * One of the first CALIBRATION_BLOCKS blocks of the module: lifetimeBlocks at start (every stored block) plus the
+   * level-moving blocks of this session, so the warm-up does not use up a new module's calibration (T-R11).
+   */
   private isCalibration(module: ModuleId): boolean {
     if (!this.counted) return false;
-    const thisSession = this.sessionBlocks.filter((b) => b.module === module).length;
+    const thisSession = this.sessionBlocks.filter((b) => b.module === module && isLevelMoving(b.flags)).length;
     return this.states[module].lifetimeBlocks + thisSession < CALIBRATION_BLOCKS;
   }
 
-  /** s of the previous block of the module in this session that was neither timing_unreliable nor overload. */
+  /** s of the previous level-moving block of the module in this session that was not timing_unreliable. */
   private prevScore(module: ModuleId): number | null {
     for (let i = this.sessionBlocks.length - 1; i >= 0; i--) {
       const b = this.sessionBlocks[i];
-      if (b?.module === module && !b.flags.includes('timing_unreliable') && !b.flags.includes('overload')) return b.score;
+      if (b?.module === module && !b.flags.includes('timing_unreliable') && isLevelMoving(b.flags)) return b.score;
     }
     return null;
   }

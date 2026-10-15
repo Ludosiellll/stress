@@ -14,6 +14,7 @@ const VIEW: BlockSummaryView = {
   lines: ['Ошибки: фальстарты — 1. Штраф −2 из 20, балл 0,75.', 'Медиана: 312 мс', 'Разброс (SD): 41 мс', 'Пропуски: 2'],
   flags: ['calibration', 'fatigued', 'timing_unreliable'],
   showLevel: true,
+  levelNote: null,
 };
 
 describe('BlockSummary', () => {
@@ -35,6 +36,21 @@ describe('BlockSummary', () => {
   it('an overload block says it does not touch the saved level', () => {
     render(<BlockSummary view={{ ...VIEW, flags: ['overload'] }} busy={false} onContinue={vi.fn()} />);
     expect(screen.getByText('Блок с перегрузкой: на сохранённый уровень не влияет')).toBeTruthy();
+  });
+
+  it('a warm-up: the level note stands where the level would, and says it once (F5, T-R27)', () => {
+    const warmup: BlockSummaryView = { ...VIEW, lBefore: 5, lAfter: 5, changes: [], showLevel: false, levelNote: 'Разминка: уровень не меняется' };
+    render(<BlockSummary view={{ ...warmup, flags: ['warmup', 'timing_unreliable'] }} busy={false} onContinue={vi.fn()} />);
+    expect(screen.getByText('Разминка: уровень не меняется').className).toBe('summary-level');
+    expect(screen.queryByText(/Уровень:/)).toBeNull();
+    // The note of the flag says the same again: left out. A warning still shows.
+    expect(screen.queryByText('Разминка: на сохранённый уровень не влияет')).toBeNull();
+    expect(screen.getByText('Замер ненадёжен: пропуски кадров — уровень не менялся')).toBeTruthy();
+  });
+
+  it('the warm-up flag has its note when there is no level note', () => {
+    render(<BlockSummary view={{ ...VIEW, flags: ['warmup'] }} busy={false} onContinue={vi.fn()} />);
+    expect(screen.getByText('Разминка: на сохранённый уровень не влияет').className).toBe('muted');
   });
 
   it('rounds the level to one decimal and leaves out what did not happen', () => {

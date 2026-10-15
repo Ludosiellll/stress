@@ -18,10 +18,11 @@ const FLAG_TEXT: Record<BlockFlag, string> = {
   fatigued: 'Блок помечен: усталость',
   timing_unreliable: 'Замер ненадёжен: пропуски кадров — уровень не менялся',
   overload: 'Блок с перегрузкой: на сохранённый уровень не влияет',
+  warmup: 'Разминка: на сохранённый уровень не влияет',
 };
 
 /** Notes, not warnings. */
-const NOTE_FLAGS: ReadonlySet<BlockFlag> = new Set<BlockFlag>(['calibration', 'overload']);
+const NOTE_FLAGS: ReadonlySet<BlockFlag> = new Set<BlockFlag>(['calibration', 'overload', 'warmup']);
 
 /** The «Оценка» lines in order: step, goal, norms, history; empty ones are left out. */
 function assessmentLines(a: BlockAssessment | undefined): string[] {
@@ -29,7 +30,7 @@ function assessmentLines(a: BlockAssessment | undefined): string[] {
   return [a.step, a.goal, ...a.norms, a.history].filter((line): line is string => line !== null);
 }
 
-/** Result of the block that just ended: level, changed parameters, score, metrics, assessment, flags. Enter goes on. */
+/** Result of the block that just ended: level (or its note), changed parameters, score, metrics, assessment, flags. Enter goes on. */
 export default function BlockSummary({ view, busy, onContinue }: BlockSummaryProps) {
   useKeyDown((e) => {
     if (busy || !isEnter(e) || fromControl(e)) return;
@@ -38,14 +39,20 @@ export default function BlockSummary({ view, busy, onContinue }: BlockSummaryPro
   });
   const assessment = assessmentLines(view.assessment);
   const assessmentId = useId();
+  // The level note says what the notes of the flags would say again: they are left out then (T-R27), warnings stay.
+  const flags = view.levelNote === null ? view.flags : view.flags.filter((f) => !NOTE_FLAGS.has(f));
 
   return (
     <div className="screen-center summary">
       <h2 tabIndex={-1}>{view.title}</h2>
-      {view.showLevel && (
-        <p className="summary-level">
-          Уровень: {decimal(view.lBefore)} → {decimal(view.lAfter)}
-        </p>
+      {view.levelNote !== null ? (
+        <p className="summary-level">{view.levelNote}</p>
+      ) : (
+        view.showLevel && (
+          <p className="summary-level">
+            Уровень: {decimal(view.lBefore)} → {decimal(view.lAfter)}
+          </p>
+        )
       )}
       {view.showLevel && view.changes.length > 0 && (
         <ul aria-label="Изменения">
@@ -70,7 +77,7 @@ export default function BlockSummary({ view, busy, onContinue }: BlockSummaryPro
           </ul>
         </section>
       )}
-      {view.flags.map((f) => (
+      {flags.map((f) => (
         <p key={f} className={NOTE_FLAGS.has(f) ? 'muted' : 'warning'}>
           {FLAG_TEXT[f]}
         </p>

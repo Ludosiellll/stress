@@ -11,8 +11,8 @@ import { MODULE_IDS, type BlockFlag, type ModuleId } from '../../src/engine/type
  * and only recency, plateaus and the finisher steer the plan.
  *
  * Each segment adds BLOCKS_PER_SEGMENT blocks the way the session builds them (blocks.ts isOverloadBlock): a finisher
- * plays only overload blocks; a mix (plateau) alternates a normal block and an overload block; other segments play
- * normal blocks. A normal block ends at L_NORM, an overload block 3 levels higher.
+ * plays only overload blocks; a mix (plateau) alternates a normal block and an overload block; the warm-up plays
+ * warm-up blocks (F5); other segments play normal blocks. A normal block ends at L_NORM, an overload block 3 levels higher.
  *
  * The finisher must not hide a module from its regular slot: every module gets a normal block at least every
  * MAX_GAP_DAYS days. Before the fix the finisher's overload blocks set lastTrainedAt, so the finisher module looked
@@ -46,24 +46,26 @@ function simulate(): Record<ModuleId, number[]> {
     for (const segment of plan.segments) {
       for (let i = 0; i < BLOCKS_PER_SEGMENT; i++) {
         const overload = isOverloadBlock(segment, i);
-        const flags: BlockFlag[] = overload ? ['overload'] : [];
+        // The warm-up is no regular block (F5): it keeps out of L_saved and lastTrainedAt like an overload block.
+        const warmup = segment.purpose === 'warmup';
+        const flags: BlockFlag[] = overload ? ['overload'] : warmup ? ['warmup'] : [];
         const lAfter = L_NORM[segment.module] + (overload ? OVERLOAD_LEVEL_STEP : 0);
         blocks.push({ sessionId, module: segment.module, lAfter, flags, startedAt: at(day, minute++) });
         const days = regularDays[segment.module];
-        if (!overload && days.at(-1) !== day) days.push(day);
+        if (flags.length === 0 && days.at(-1) !== day) days.push(day);
       }
     }
   }
   return regularDays;
 }
 
-/** The longest run of days without a normal block, counting from the course start and up to its end. */
-function longestGap(days: readonly number[]): number {
+/** The runs of days without a normal block, counting from the course start and up to its end. */
+function gapsOf(days: readonly number[]): number[] {
   const points = [-1, ...days, DAYS];
-  let longest = 0;
-  for (let i = 1; i < points.length; i++) longest = Math.max(longest, (points[i] ?? 0) - (points[i - 1] ?? 0));
-  return longest;
+  return points.slice(1).map((p, i) => p - (points[i] ?? 0));
 }
+
+const longestGap = (days: readonly number[]): number => Math.max(...gapsOf(days));
 
 describe('planner simulation (W2-R40): 120 days with every module at its norm', () => {
   it(`every module plays a normal block at least every ${String(MAX_GAP_DAYS)} days`, () => {
@@ -71,5 +73,11 @@ describe('planner simulation (W2-R40): 120 days with every module at its norm', 
     const gaps = Object.fromEntries(MODULE_IDS.map((m) => [m, longestGap(regularDays[m])]));
     const tooLong = Object.entries(gaps).filter(([, gap]) => gap > MAX_GAP_DAYS);
     expect(tooLong).toEqual([]);
+  });
+
+  it('ПЗМР gets a regular reaction slot at least once in 7 days on average (F5)', () => {
+    const gaps = gapsOf(simulate().pzmr);
+    expect(gaps.length).toBeGreaterThan(1);
+    expect(gaps.reduce((a, b) => a + b, 0) / gaps.length).toBeLessThanOrEqual(MAX_GAP_DAYS);
   });
 });

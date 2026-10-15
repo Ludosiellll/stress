@@ -1,4 +1,5 @@
 import { LAPSE_HOLD_CAP } from '../engine/adaptive';
+import { DAY_FORM_DAYS, DAY_FORM_MIN_DAYS, type DayForm } from '../engine/dayForm';
 import type { DiagnosticResults } from '../engine/diagnostic';
 import { BASE_ITEM_LIMIT_MS } from '../engine/itemLimit';
 import { condPairOf, type ConditionStats } from '../engine/reaction/conditions';
@@ -118,6 +119,8 @@ export interface BlockSummaryView {
   flags: BlockFlag[];
   /** Training and free blocks of modules with a level; diagnostics play at a fixed level and hide it (M5). */
   showLevel: boolean;
+  /** Said instead of the level line (a warm-up: WARMUP_LEVEL_NOTE); null: none. */
+  levelNote: string | null;
   /** The «Оценка» lines (assessBlock); absent: no section. */
   assessment?: BlockAssessment;
 }
@@ -133,6 +136,8 @@ export interface SeriesAnswer {
 export const OVERLOAD_PREFIX = 'Блок с перегрузкой: уровень на 3 выше обычного. ';
 /** Opens the instruction of an overload reaction block: it plays the finisher sound on every trial (M1). */
 export const OVERLOAD_SOUND_PREFIX = 'Блок с перегрузкой: уровень на 3 выше обычного, со звуковыми помехами. Надень наушники. ';
+/** The level line of a warm-up block (F5): it plays at L_saved − 1 and moves nothing. */
+export const WARMUP_LEVEL_NOTE = 'Разминка: уровень не меняется';
 export const UNRELIABLE_REPLAY_NOTICE = 'Замер ненадёжен (пропуски кадров). Блок будет повторён.';
 /** Summary line of a block that had sound which did not play (no device, a blocked context, volume 0). */
 export const AUDIO_NOT_PLAYED = 'Звук не воспроизводился: проверь устройство вывода и громкость помех в настройках.';
@@ -291,6 +296,27 @@ export function conditionLines(module: ReactionModuleId, stats: ConditionStats, 
   if (slow !== null) lines.push(`${labels.slow}: ${String(whole(slow))} мс`);
   if (fast !== null && slow !== null) lines.push(`${labels.cost}: ${signedMs(displayedCost(fast, slow))} мс`);
   return lines;
+}
+
+const VERDICT_TEXT: Readonly<Record<NonNullable<DayForm['verdict']>, string>> = {
+  same: 'как обычно',
+  better: 'лучше обычного',
+  worse: 'хуже обычного',
+};
+
+/**
+ * «Форма дня» of a warm-up block (F5): «Форма дня: медиана 236 мс (обычно 241) · разброс 31 мс (обычно 35) — как
+ * обычно.», or that there are not enough earlier warm-ups on this band yet. Whole ms.
+ */
+export function dayFormLine(f: DayForm): string {
+  if (f.usual === null || f.verdict === null) {
+    return `Форма дня: мало данных — нужно ${String(DAY_FORM_MIN_DAYS)} разминки за ${String(DAY_FORM_DAYS)} дней на этой нагрузке.`;
+  }
+  const ms = (x: number): string => String(whole(x));
+  return (
+    `Форма дня: медиана ${ms(f.today.median)} мс (обычно ${ms(f.usual.median)}) · ` +
+    `разброс ${ms(f.today.sd)} мс (обычно ${ms(f.usual.sd)}) — ${VERDICT_TEXT[f.verdict]}.`
+  );
 }
 
 /** What the stability rule saw and the cap it put on the level step (stabilityHold). */

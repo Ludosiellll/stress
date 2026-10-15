@@ -30,6 +30,6 @@ export function isReactionModule(m: ModuleId): m is ReactionModuleId {
 export type TableModuleId = 'gorbov' | 'schulte';
 export type LayoutId = 'keyboard' | 'mouse' | 'pult';
 export type InputKey = string;
-export type BlockFlag = 'fatigued' | 'timing_unreliable' | 'calibration' | 'overload';
+export type BlockFlag = 'fatigued' | 'timing_unreliable' | 'calibration' | 'overload' | 'warmup';
 export type SessionKind = 'training' | 'diagnostic' | 'free';
 export type FamilyId = 'arith' | 'geom' | 'second' | 'alt' | 'fib' | 'linrec' | 'powers' | 'opcycle';

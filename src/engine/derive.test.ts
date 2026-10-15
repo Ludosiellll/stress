@@ -122,16 +122,34 @@ describe('deriveModuleStates', () => {
     expect(states.szmr.lastTrainedAt).toBe(day(1, 8, 1));
   });
 
+  it('warm-up blocks are like overload blocks for L_saved and lastTrainedAt but count in lifetimeBlocks', () => {
+    const states = deriveModuleStates(
+      [ses('s1', day(1)), ses('s2', day(2))],
+      [
+        blk('s1', 'pzmr', 5, day(1, 8, 1), ['warmup']),
+        blk('s1', 'pzmr', 7, day(1, 8, 5)),
+        // s2 plays ПЗМР only in the warm-up: no end level and no training date for s2.
+        blk('s2', 'pzmr', 6, day(2, 8, 1), ['warmup']),
+        blk('s2', 'pzmr', 6, day(2, 8, 2), ['warmup']),
+      ],
+    );
+    expect(states.pzmr.sessionEndLevels).toEqual([7]);
+    expect(states.pzmr.lSaved).toBe(7);
+    expect(states.pzmr.lifetimeBlocks).toBe(4);
+    expect(states.pzmr.lastTrainedAt).toBe(day(1, 8, 5));
+    expect(isCleanBlock(['warmup'])).toBe(false);
+  });
+
   it('a module played only in overload blocks counts its blocks but has no training date (W2-R40)', () => {
     const states = deriveModuleStates([ses('s1', day(1))], [blk('s1', 'taskswitch', 13, day(1, 8, 1), ['overload'])]);
     expect(states.taskswitch.lifetimeBlocks).toBe(1);
     expect(states.taskswitch.lastTrainedAt).toBeNull();
   });
 
-  it('isCleanBlock: a block without fatigued, timing_unreliable or overload', () => {
+  it('isCleanBlock: a block without fatigued, timing_unreliable, overload or warmup', () => {
     expect(isCleanBlock([])).toBe(true);
     expect(isCleanBlock(['calibration'])).toBe(true);
-    for (const f of ['fatigued', 'timing_unreliable', 'overload'] as const) expect(isCleanBlock(['calibration', f])).toBe(false);
+    for (const f of ['fatigued', 'timing_unreliable', 'overload', 'warmup'] as const) expect(isCleanBlock(['calibration', f])).toBe(false);
   });
 
   it('ignores diagnostic sessions and blocks of unknown sessions; free sessions count', () => {

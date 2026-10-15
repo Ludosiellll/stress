@@ -101,6 +101,18 @@ describe('assessBlock', () => {
     });
   });
 
+  it('a warm-up: the step by the played level, no goal; its history is the warm-up variant (F5, Р29)', () => {
+    const summaryJson = '{"meanRt":250,"sdRt":40}';
+    const warmup = row({ module: 'pzmr', lBefore: 5, lAfter: 5, flags: ['warmup'], summaryJson });
+    // The step reads lBefore: a probe whose lAfter differs shows it is not lAfter.
+    const probe = assessBlock({ ...warmup, lAfter: 9 }, ctx);
+    expect(probe.step).toBe(assessBlock(row({ module: 'pzmr', lBefore: 3, lAfter: 5, summaryJson }), ctx).step);
+    expect(probe.goal).toBeNull();
+    const a = assessBlock(warmup, { ...ctx, history: new Map([['pzmr', [e(1, 200, 6)]], ['pzmr:warmup', [e(1, 300, 5)]]]) });
+    expect(a.history).toBe('Раньше в этом блоке: прошлый раз 300 мс (ур. 5) · лучший 300 мс · в среднем за 7 дней 300 мс — новый лучший результат');
+    expect(assessBlock(warmup, withHistory('pzmr', [e(1, 200, 6)])).history).toBe('Первый такой блок — будет с чем сравнивать');
+  });
+
   it('timing_unreliable gets no mark', () => {
     const a = assessBlock(
       row({ module: 'pzmr', lBefore: 5, lAfter: 5, flags: ['timing_unreliable'], summaryJson: '{"meanRt":250,"sdRt":40}' }),
