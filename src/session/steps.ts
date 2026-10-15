@@ -139,9 +139,11 @@ export function seriesDiagnosticInstruction(count: number, totalLimitMs: number 
 }
 
 /** Rounded to a whole number; never «-0». */
-const whole = (x: number): number => Math.round(x) + 0;
+export const whole = (x: number): number => Math.round(x) + 0;
+/** Rounded to one decimal as `decimal(x, 1)` shows it (seconds of the tables, A-R2). */
+export const round1 = (x: number): number => Number(x.toFixed(1));
 /** Fixed decimals with a comma: 41,2. */
-const decimal = (x: number, digits: number): string => x.toFixed(digits).replace('.', ',');
+export const decimal = (x: number, digits: number): string => x.toFixed(digits).replace('.', ',');
 
 type CountLine = [label: string, count: (c: Record<Outcome, number>) => number];
 
