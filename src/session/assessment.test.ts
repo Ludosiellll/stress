@@ -437,7 +437,14 @@ describe('assessModules', () => {
   it('the step and the goal come from the shown level (A-R7)', () => {
     // 11,97 shows as 12,0 → step 3 of Горбов, not step 2 with «+0,03».
     const rows = assess({ gorbov: { lSaved: 11.97, lifetimeBlocks: 1 } }, []);
-    expect(rowOf(rows, 'gorbov')).toMatchObject({ step: '3 — формат теста (ур. 12; формат теста — 12)', goal: 'ур. 17 (+5)' });
+    expect(rowOf(rows, 'gorbov')).toEqual({
+      module: 'gorbov',
+      title: 'Красно-чёрные таблицы Горбова — чередование',
+      step: '3 — формат теста (ур. 12; формат теста — 12)',
+      lastBest: '—',
+      norm: '—',
+      goal: 'ур. 17 (+5)',
+    });
   });
 
   it('the last ПЗМР block had a miss: no reference band (FW2)', () => {
@@ -445,7 +452,14 @@ describe('assessModules', () => {
       stored('pzmr', 2, { summaryJson: `{"meanRt":230,${CLEAN}}` }),
       stored('pzmr', 1, { summaryJson: '{"meanRt":240,"counts":{"hit":14,"miss":1,"late":0}}' }),
     ]);
-    expect(rowOf(rows, 'pzmr')).toMatchObject({ lastBest: '240 мс / 230 мс', norm: '—' });
+    expect(rowOf(rows, 'pzmr')).toEqual({
+      module: 'pzmr',
+      title: 'ПЗМР',
+      step: '1 — начальная (ур. 0; формат теста — 14)',
+      lastBest: '240 мс / 230 мс',
+      norm: '—',
+      goal: 'ур. 7 (+7)',
+    });
   });
 
   it('unreadable stored blocks are left out; nothing throws', () => {
@@ -453,6 +467,13 @@ describe('assessModules', () => {
       stored('pzmr', 2, { summaryJson: `{"meanRt":230,${CLEAN}}` }),
       stored('pzmr', 1, { summaryJson: '{not json' }),
     ]);
-    expect(rowOf(rows, 'pzmr')).toMatchObject({ lastBest: '230 мс / 230 мс', norm: 'выше среднего' });
+    expect(rowOf(rows, 'pzmr')).toEqual({
+      module: 'pzmr',
+      title: 'ПЗМР',
+      step: '1 — начальная (ур. 0; формат теста — 14)',
+      lastBest: '230 мс / 230 мс',
+      norm: 'выше среднего',
+      goal: 'ур. 7 (+7)',
+    });
   });
 });

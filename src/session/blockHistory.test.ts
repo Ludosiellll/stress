@@ -14,6 +14,7 @@ import {
   KEY_METRICS,
   mainVariant,
   normSamples,
+  schulteSize,
   variantOf,
   type BlockHistory,
   type HistoryEntry,
@@ -354,6 +355,14 @@ describe('mainVariant', () => {
     expect(mainVariant('pzmr', empty)).toBe('pzmr');
     expect(mainVariant('numseries', empty)).toBe('numseries');
     expect(mainVariant('schulte', empty)).toBeNull();
+  });
+
+  it('the grid size of a Шульте variant', () => {
+    expect(schulteSize('schulte:6')).toBe(6);
+    expect(schulteSize(variantOf(row({ module: 'schulte', paramsJson: '{"size":7}' })) ?? '')).toBe(7);
+    expect(schulteSize('schulte:abc')).toBeNull();
+    expect(schulteSize('schulte:')).toBeNull();
+    expect(schulteSize('gorbov:alternate')).toBeNull();
   });
 
   it('Шульте: the largest grid with entries', () => {

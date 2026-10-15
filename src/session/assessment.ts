@@ -16,6 +16,7 @@ import {
   KEY_METRICS,
   mainVariant,
   normSamples,
+  schulteSize,
   variantOf,
   type BlockHistory,
   type HistoryEntry,
@@ -225,16 +226,13 @@ const VARIANT_TITLES: ReadonlyMap<VariantKey, string> = new Map([
   ['gorbov:alternate', 'чередование'],
   ['memory:digits', 'цифры'],
 ]);
-const SCHULTE_PREFIX = 'schulte:';
-
 /** «Красно-чёрные таблицы Горбова — чередование», «Таблицы Шульте — 6×6»; Шульте without a finished grid: the bare title. */
 function moduleTitle(module: ModuleId, variant: VariantKey | null): string {
   const title = moduleTitles[module];
-  if (variant?.startsWith(SCHULTE_PREFIX) === true) {
-    const n = variant.slice(SCHULTE_PREFIX.length);
-    return `${title} — ${n}×${n}`;
-  }
-  const suffix = variant === null ? undefined : VARIANT_TITLES.get(variant);
+  if (variant === null) return title;
+  const n = schulteSize(variant);
+  if (n !== null) return `${title} — ${String(n)}×${String(n)}`;
+  const suffix = VARIANT_TITLES.get(variant);
   return suffix === undefined ? title : `${title} — ${suffix}`;
 }
 

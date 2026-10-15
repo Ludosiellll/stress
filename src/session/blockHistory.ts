@@ -71,6 +71,7 @@ const MEMORY_SPAN_MIN_EXACT = 4;
 const MS_PER_DAY = 86_400_000;
 
 const GORBOV_TASKS = ['black_up', 'red_down', 'alternate'] as const;
+const SCHULTE_PREFIX = 'schulte:';
 const MEMORY_MODES = ['digits', 'letters', 'positions', 'card'] as const;
 
 type Json = Readonly<Record<string, unknown>>;
@@ -145,7 +146,7 @@ function variantFrom(module: ModuleId, summary: Json | null, paramsJson: string)
     }
     case 'schulte': {
       const size = num(parseObject(paramsJson), 'size');
-      return size !== null && Number.isInteger(size) && size >= 1 ? `schulte:${String(size)}` : null;
+      return size !== null && Number.isInteger(size) && size >= 1 ? `${SCHULTE_PREFIX}${String(size)}` : null;
     }
     case 'memory': {
       const mode = oneOf(summary, 'mode', MEMORY_MODES);
@@ -367,16 +368,21 @@ export function historyStats(entries: readonly HistoryEntry[], now: Date, better
 }
 
 const MAIN_VARIANTS: Partial<Record<ModuleId, VariantKey>> = { gorbov: 'gorbov:alternate', memory: 'memory:digits' };
-const SCHULTE_PREFIX = 'schulte:';
+
+/** The grid size N of a Шульте variant «schulte:N»; null for any other variant. */
+export function schulteSize(variant: VariantKey): number | null {
+  if (!variant.startsWith(SCHULTE_PREFIX)) return null;
+  const size = Number(variant.slice(SCHULTE_PREFIX.length));
+  return Number.isInteger(size) && size >= 1 ? size : null;
+}
 
 /** The variant «Прогресс» shows: Шульте — the largest grid with entries (none: null); otherwise fixed. */
 export function mainVariant(module: ModuleId, history: BlockHistory): VariantKey | null {
   if (module !== 'schulte') return MAIN_VARIANTS[module] ?? module;
   let largest: number | null = null;
   for (const [key, entries] of history) {
-    if (!key.startsWith(SCHULTE_PREFIX) || entries.length === 0) continue;
-    const size = Number(key.slice(SCHULTE_PREFIX.length));
-    if (Number.isInteger(size) && (largest === null || size > largest)) largest = size;
+    const size = schulteSize(key);
+    if (size !== null && entries.length > 0 && (largest === null || size > largest)) largest = size;
   }
   return largest === null ? null : `${SCHULTE_PREFIX}${String(largest)}`;
 }
