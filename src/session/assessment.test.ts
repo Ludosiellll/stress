@@ -334,6 +334,31 @@ describe('assessModules', () => {
     });
   });
 
+  it('the last result and the best of 30 days are different numbers: lower is better (FW13)', () => {
+    const rows = assess({ gorbov: { lSaved: 13.5, lifetimeBlocks: 9 } }, [gorbovBlock('alternate', 10, 130_000), gorbovBlock('alternate', 1, 140_520)]);
+    expect(rowOf(rows, 'gorbov')).toEqual({
+      module: 'gorbov',
+      title: 'Красно-чёрные таблицы Горбова — чередование',
+      step: '3 — формат теста (ур. 13,5; формат теста — 12)',
+      lastBest: '140,5 с / 130,0 с',
+      norm: 'выше среднего',
+      goal: 'ур. 17 (+3,5)',
+    });
+  });
+
+  it('the last result and the best of 30 days are different numbers: higher is better (FW13)', () => {
+    const series = (d: number, correct: number): BlockRow => stored('numseries', d, { summaryJson: JSON.stringify({ correct, total: 10 }) });
+    const rows = assess({ numseries: { lifetimeBlocks: 3 } }, [series(20, 8), series(1, 7)], 1180.4);
+    expect(rowOf(rows, 'numseries')).toEqual({
+      module: 'numseries',
+      title: 'Числовые ряды',
+      step: '2 — на подходе к формату теста (рейтинг 1180; формат теста — 1376)',
+      lastBest: '70 % / 80 %',
+      norm: '—',
+      goal: 'рейтинг 1376 (+196)',
+    });
+  });
+
   it('number series by the mean rating', () => {
     const rows = assess({ numseries: { lifetimeBlocks: 3 } }, [stored('numseries', 2, { summaryJson: '{"correct":7,"total":10}' })], 1180.4);
     expect(rowOf(rows, 'numseries')).toEqual({
