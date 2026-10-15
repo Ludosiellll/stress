@@ -1,0 +1,191 @@
+import type { BlockRow } from '../data/rows';
+import { isCountedSession } from '../engine/derive';
+import { R0, type Rating } from '../engine/elo';
+import { levelStep, R_FORMAT, ratingStep, stepName } from '../engine/levelSteps';
+import { cutText, gradeByBands, NORM_HINTS, NORMS, type NormTable } from '../engine/norms';
+import { L_NORM } from '../engine/planner';
+import type { FamilyId, ModuleId, SessionKind } from '../engine/types';
+import { changeText, describeChanges, type ParamChange } from '../modules/describe';
+import { FAMILIES } from '../modules/numseries/families';
+import type { TableTaskId } from '../modules/tables/gorbov';
+import {
+  entersHistory,
+  historyStats,
+  keyMetric,
+  KEY_METRICS,
+  normSamples,
+  variantOf,
+  type BlockHistory,
+  type HistoryEntry,
+  type HistoryStats,
+  type NormSample,
+  type VariantKey,
+} from './blockHistory';
+import { decimal, round1, signedMs, whole } from './steps';
+
+/**
+ * The «Оценка» lines of a block summary (assessment spec §3.1, Справочник «Оценка после блока»): the trainer step,
+ * the goal (the next step and what changes there), the norm lines or a hint, and the history of the block variant.
+ * A diagnostic block gets only the norms and hints. Nothing here throws on an unreadable stored row.
+ */
+export interface BlockAssessment {
+  step: string | null;
+  goal: string | null;
+  /** 0–2 lines: norm lines (ПЗМР gives the mean and the SD) or one hint. */
+  norms: string[];
+  history: string | null;
+}
+
+export interface AssessContext {
+  kind: SessionKind;
+  /** Before this block; null: it could not be read (no history line, О10). */
+  history: BlockHistory | null;
+  now: Date;
+  /** Number series in training and free sessions: meanFamilyRating after the block; null otherwise. */
+  meanRating: number | null;
+}
+
+const FIRST_BLOCK = 'Первый такой блок — будет с чем сравнивать';
+const NEW_BEST = ' — новый лучший результат';
+const BETTER_THAN_LAST = ' — лучше прошлого раза';
+/** Steps 1–4 say «из 5+»; from step 5 there is no ceiling (О14). */
+const STEPS_SHOWN_OF = 4;
+const GORBOV_PREFIX = 'gorbov:';
+
+const HINTS: ReadonlyMap<VariantKey, string> = new Map([
+  ['gonogo', NORM_HINTS.gonogo],
+  ['stroop', NORM_HINTS.stroop],
+  ['taskswitch', NORM_HINTS.taskswitch],
+  ['schulte:5', NORM_HINTS.schulte5],
+]);
+
+/** The mean of the 8 family ratings; a family without a rating counts as R0. */
+export function meanFamilyRating(ratings: ReadonlyMap<FamilyId, Rating>): number {
+  return FAMILIES.reduce((sum, f) => sum + (ratings.get(f)?.rating ?? R0), 0) / FAMILIES.length;
+}
+
+/** A level as shown: «12», «13,5». */
+function levelText(L: number): string {
+  const v = round1(L);
+  return Number.isInteger(v) ? String(v) : decimal(v, 1);
+}
+
+/** A norm value as shown: «262 мс», «44,0 с», «7». */
+function normValue(value: number, unit: NormTable['unit']): string {
+  if (unit === 'с') return `${decimal(value, 1)} с`;
+  const v = String(whole(value));
+  return unit === '' ? v : `${v} ${unit}`;
+}
+
+/** «Норма (ориентир), среднее: 262 мс — средний; выше среднего — меньше 234 мс. {note}». */
+export function normLine(sample: NormSample): string {
+  const table = NORMS[sample.id];
+  const grade = gradeByBands(sample.value, table);
+  const metric = table.metric === null ? '' : `, ${table.metric}`;
+  const next = grade.toNext === null ? '' : `; ${grade.nextLabel ?? ''} — ${cutText(grade.toNext, table)}`;
+  return `Норма (ориентир)${metric}: ${normValue(sample.value, table.unit)} — ${grade.label}${next}. ${table.note}`;
+}
+
+/** The key metric as shown: «44,0 с», «+85 мс», «262 мс», «67 %». Rounds by itself. */
+export function formatMetric(module: ModuleId, value: number): string {
+  const metric = KEY_METRICS[module];
+  switch (metric.unit) {
+    case 'мс':
+      return `${metric.signed ? signedMs(value) : String(whole(value))} мс`;
+    case 'с':
+      return `${decimal(value, 1)} с`;
+    case '%':
+      return `${String(whole(value))} %`;
+  }
+}
+
+/** Norm lines of the block; without any, the hint of its variant (if there is one). */
+function normTexts(row: BlockRow, variant: VariantKey | null): string[] {
+  const samples = normSamples(row);
+  if (samples.length > 0) return samples.map(normLine);
+  const hint = variant === null ? undefined : HINTS.get(variant);
+  return hint === undefined ? [] : [hint];
+}
+
+/** «Ступень 3 из 5+ — формат теста», «Ступень 6 — далеко сверх нормы». */
+function stepHead(step: number, name: string): string {
+  return step <= STEPS_SHOWN_OF ? `Ступень ${String(step)} из 5+ — ${name}` : `Ступень ${String(step)} — ${name}`;
+}
+
+/** «До ступени 4 «сверх нормы»». */
+function goalHead(step: number): string {
+  return `До ступени ${String(step + 1)} «${stepName(step + 1)}»`;
+}
+
+const lowerFirst = (s: string): string => s.charAt(0).toLocaleLowerCase('ru') + s.slice(1);
+
+/** What changes from L to the next step; Горбов needs its task from the variant, unreadable → nothing (A-R14). */
+function paramChanges(module: ModuleId, L: number, next: number, variant: VariantKey | null): ParamChange[] {
+  if (module !== 'gorbov') return describeChanges(module, L, next);
+  if (variant === null) return [];
+  // variantOf names a Горбов variant only with one of its three tasks.
+  return describeChanges(module, L, next, variant.slice(GORBOV_PREFIX.length) as TableTaskId);
+}
+
+/**
+ * Step and goal by level: lAfter, or lBefore (the played level) for an overload block, which has no goal (О4).
+ * Both come from the shown level (A-R7); the parameters come from the level the next block plays.
+ */
+function levelLines(row: BlockRow, variant: VariantKey | null): Pick<BlockAssessment, 'step' | 'goal'> {
+  const overload = row.flags.includes('overload');
+  const Lnorm = L_NORM[row.module];
+  const L = round1(overload ? row.lBefore : row.lAfter);
+  const s = levelStep(L, Lnorm);
+  const note = overload ? '; перегрузка' : '';
+  const step = `${stepHead(s.step, s.name)} (уровень ${levelText(L)}; формат теста — ${levelText(Lnorm)}${note})`;
+  if (overload) return { step, goal: null };
+  const changes = paramChanges(row.module, row.lAfter, s.nextStepL, variant);
+  const there = changes.length === 0 ? '' : `. Там: ${changes.map((c) => lowerFirst(changeText(c))).join('; ')}`;
+  const goal = `${goalHead(s.step)}: уровень ${levelText(s.nextStepL)} (+${levelText(s.nextStepL - L)})${there}`;
+  return { step, goal };
+}
+
+/** Number series: step and goal by the mean family rating, rounded as shown (A-R7). */
+function ratingLines(meanRating: number | null): Pick<BlockAssessment, 'step' | 'goal'> {
+  if (meanRating === null) return { step: null, goal: null };
+  const R = whole(meanRating);
+  const s = ratingStep(R);
+  return {
+    step: `${stepHead(s.step, s.name)} (рейтинг ${String(R)}; формат теста — ${String(R_FORMAT)})`,
+    goal: `${goalHead(s.step)}: рейтинг ${String(s.nextStepR)} (+${String(Math.ceil(s.nextStepR - R))})`,
+  };
+}
+
+/** « (ур. 11)», « (ряд 7, ур. 9)»; number series have no level. */
+function entryDetail(module: ModuleId, entry: HistoryEntry): string {
+  if (module === 'numseries') return '';
+  const length = entry.length === null ? '' : `ряд ${String(entry.length)}, `;
+  return ` (${length}ур. ${levelText(entry.L)})`;
+}
+
+/** Only a block that itself enters the history is marked; values compare as shown (О2). */
+function mark(row: BlockRow, kind: SessionKind, stats: HistoryStats): string {
+  const value = keyMetric(row);
+  if (value === null || !entersHistory(row.flags, kind)) return '';
+  const better = (a: number, b: number): boolean => (KEY_METRICS[row.module].better === 'lower' ? a < b : a > b);
+  if (better(value, stats.best)) return NEW_BEST;
+  return better(value, stats.last.value) ? BETTER_THAN_LAST : '';
+}
+
+function historyLine(row: BlockRow, variant: VariantKey | null, ctx: AssessContext): string | null {
+  if (ctx.history === null || variant === null) return null;
+  const stats = historyStats(ctx.history.get(variant) ?? [], ctx.now, KEY_METRICS[row.module].better);
+  if (stats === null) return FIRST_BLOCK;
+  const f = (v: number): string => formatMetric(row.module, v);
+  const mean = stats.mean7d === null ? '' : ` · в среднем за 7 дней ${f(stats.mean7d)}`;
+  const last = `прошлый раз ${f(stats.last.value)}${entryDetail(row.module, stats.last)}`;
+  return `Раньше в этом блоке: ${last} · лучший ${f(stats.best)}${mean}${mark(row, ctx.kind, stats)}`;
+}
+
+export function assessBlock(row: BlockRow, ctx: AssessContext): BlockAssessment {
+  const variant = variantOf(row);
+  const norms = normTexts(row, variant);
+  if (!isCountedSession(ctx.kind)) return { step: null, goal: null, norms, history: null };
+  const { step, goal } = row.module === 'numseries' ? ratingLines(ctx.meanRating) : levelLines(row, variant);
+  return { step, goal, norms, history: historyLine(row, variant, ctx) };
+}
