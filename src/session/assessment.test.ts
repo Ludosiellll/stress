@@ -216,6 +216,29 @@ describe('assessBlock', () => {
     expect(a.goal).toBe('До ступени 7 «далеко сверх нормы»: уровень 34 (+4). Там: окно ответа: 168 → 161 мс');
   });
 
+  it('step 5 starts at Lnorm + 10 and drops «из 5+»: ПЗМР at 23,9 and 24', () => {
+    const pzmr = (lAfter: number): BlockRow => row({ module: 'pzmr', lBefore: lAfter, lAfter, summaryJson: '{"meanRt":240}' });
+    expect(assessBlock(pzmr(23.9), ctx).step).toBe('Ступень 4 из 5+ — сверх нормы (уровень 23,9; формат теста — 14)');
+    expect(assessBlock(pzmr(24), ctx).step).toBe('Ступень 5 — далеко сверх нормы (уровень 24; формат теста — 14)');
+    expect(assessBlock(pzmr(24), ctx).goal).toMatch(/^До ступени 6 «далеко сверх нормы»: уровень 29 \(\+5\)\. Там: /);
+  });
+
+  it('number series: the rating as shown decides the step at the edge (A-R7)', () => {
+    const series = row({ module: 'numseries', lBefore: 0, lAfter: 0, summaryJson: '{"correct":7,"total":10}' });
+    const at = (meanRating: number): Pick<ReturnType<typeof assessBlock>, 'step' | 'goal'> => {
+      const { step, goal } = assessBlock(series, { ...ctx, history: new Map(), meanRating });
+      return { step, goal };
+    };
+    expect(at(1375.6)).toEqual({
+      step: 'Ступень 3 из 5+ — формат теста (рейтинг 1376; формат теста — 1376)',
+      goal: 'До ступени 4 «сверх нормы»: рейтинг 1576 (+200)',
+    });
+    expect(at(1375.4)).toEqual({
+      step: 'Ступень 2 из 5+ — на подходе к формату теста (рейтинг 1375; формат теста — 1376)',
+      goal: 'До ступени 3 «формат теста»: рейтинг 1376 (+1)',
+    });
+  });
+
   it('step and distance come from the shown level (A-R7)', () => {
     const a = assessBlock(gorbovRow('black_up', 11, 11.97, 44_000), ctx);
     expect(a.step).toBe('Ступень 3 из 5+ — формат теста (уровень 12; формат теста — 12)');

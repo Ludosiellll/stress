@@ -8,9 +8,9 @@ import { MODULE_IDS, type FamilyId, type ModuleId, type SessionKind } from '../e
 import { changeText, describeChanges, type ParamChange } from '../modules/describe';
 import { FAMILIES } from '../modules/numseries/families';
 import { moduleTitles } from '../modules/registry';
-import type { TableTaskId } from '../modules/tables/gorbov';
 import {
   entersHistory,
+  gorbovTaskOf,
   historyStats,
   keyMetric,
   KEY_METRICS,
@@ -28,7 +28,8 @@ import { decimal, round1, signedMs, whole } from './steps';
 /**
  * The «Оценка» lines of a block summary (assessment spec §3.1, Справочник «Оценка после блока»): the trainer step,
  * the goal (the next step and what changes there), the norm lines or a hint, and the history of the block variant.
- * A diagnostic block gets only the norms and hints. Nothing here throws on an unreadable stored row.
+ * A diagnostic block gets only the norms and hints. An unreadable stored row never makes it throw; a level of the
+ * current block that is negative or not finite does (levelStep), and the controller guards the call (assessOrLog).
  */
 export interface BlockAssessment {
   step: string | null;
@@ -54,7 +55,6 @@ const NEW_BEST = ' — новый лучший результат';
 const BETTER_THAN_LAST = ' — лучше прошлого раза';
 /** Steps 1–4 say «из 5+»; from step 5 there is no ceiling (О14). */
 const STEPS_SHOWN_OF = 4;
-const GORBOV_PREFIX = 'gorbov:';
 
 const HINTS: ReadonlyMap<VariantKey, string> = new Map([
   ['gonogo', NORM_HINTS.gonogo],
@@ -123,12 +123,11 @@ function goalHead(step: number): string {
 
 const lowerFirst = (s: string): string => s.charAt(0).toLocaleLowerCase('ru') + s.slice(1);
 
-/** What changes from L to the next step; Горбов needs its task from the variant, unreadable → nothing (A-R14). */
-function paramChanges(module: ModuleId, L: number, next: number, variant: VariantKey | null): ParamChange[] {
-  if (module !== 'gorbov') return describeChanges(module, L, next);
-  if (variant === null) return [];
-  // variantOf names a Горбов variant only with one of its three tasks.
-  return describeChanges(module, L, next, variant.slice(GORBOV_PREFIX.length) as TableTaskId);
+/** What changes from lAfter to the next step; Горбов needs its task, unreadable → nothing (A-R14). */
+function paramChanges(row: BlockRow, next: number): ParamChange[] {
+  if (row.module !== 'gorbov') return describeChanges(row.module, row.lAfter, next);
+  const task = gorbovTaskOf(row);
+  return task === null ? [] : describeChanges(row.module, row.lAfter, next, task);
 }
 
 /** The step of a level as shown (A-R7), with the shown level, the test format and «+Δ» to the next step. */
@@ -149,13 +148,13 @@ function shownRatingStep(meanRating: number): { R: string; s: RatingStep; toNext
  * Step and goal by level: lAfter, or lBefore (the played level) for an overload block, which has no goal (О4).
  * Both come from the shown level (A-R7); the parameters come from the level the next block plays.
  */
-function levelLines(row: BlockRow, variant: VariantKey | null): Pick<BlockAssessment, 'step' | 'goal'> {
+function levelLines(row: BlockRow): Pick<BlockAssessment, 'step' | 'goal'> {
   const overload = row.flags.includes('overload');
   const { L, Lnorm, s, toNext } = shownLevelStep(row.module, overload ? row.lBefore : row.lAfter);
   const note = overload ? '; перегрузка' : '';
   const step = `${stepHead(s.step, s.name)} (уровень ${L}; формат теста — ${Lnorm}${note})`;
   if (overload) return { step, goal: null };
-  const changes = paramChanges(row.module, row.lAfter, s.nextStepL, variant);
+  const changes = paramChanges(row, s.nextStepL);
   const there = changes.length === 0 ? '' : `. Там: ${changes.map((c) => lowerFirst(changeText(c))).join('; ')}`;
   const goal = `${goalHead(s.step)}: уровень ${levelText(s.nextStepL)} (+${toNext})${there}`;
   return { step, goal };
@@ -206,7 +205,7 @@ export function assessBlock(row: BlockRow, ctx: AssessContext): BlockAssessment 
   const variant = variantOf(row);
   const norms = normTexts(row, variant, ctx.kind);
   if (!isCountedSession(ctx.kind)) return { step: null, goal: null, norms, history: null };
-  const { step, goal } = row.module === 'numseries' ? ratingLines(ctx.meanRating) : levelLines(row, variant);
+  const { step, goal } = row.module === 'numseries' ? ratingLines(ctx.meanRating) : levelLines(row);
   return { step, goal, norms, history: historyLine(row, variant, ctx) };
 }
 

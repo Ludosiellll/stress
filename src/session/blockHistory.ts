@@ -120,9 +120,16 @@ function oneOf<T extends string>(o: Json | null, key: string, values: readonly T
   return typeof v === 'string' && (values as readonly string[]).includes(v) ? (v as T) : null;
 }
 
+export type GorbovTask = (typeof GORBOV_TASKS)[number];
+
 /** The Горбов task: from the summary, else from the params. */
-function gorbovTask(summary: Json | null, paramsJson: string): (typeof GORBOV_TASKS)[number] | null {
+function gorbovTask(summary: Json | null, paramsJson: string): GorbovTask | null {
   return oneOf(summary, 'task', GORBOV_TASKS) ?? oneOf(parseObject(paramsJson), 'task', GORBOV_TASKS);
+}
+
+/** The task of a Горбов block, as its variant names it; null: unreadable. */
+export function gorbovTaskOf(row: Pick<BlockRow, 'paramsJson' | 'summaryJson'>): GorbovTask | null {
+  return gorbovTask(parseObject(row.summaryJson), row.paramsJson);
 }
 
 /** A finished table's time in seconds, rounded to 0,1 and above 0; null: not finished (or unreadable). */
