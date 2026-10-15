@@ -184,6 +184,9 @@ function metricFrom(module: ModuleId, summary: Json | null): number | null {
     }
     case 'numseries':
       return percent(num(summary, 'correct'), num(summary, 'total'));
+    default:
+      // An imported row is checked only as text: a module this version does not know has no number.
+      return null;
   }
 }
 
@@ -284,7 +287,7 @@ function keyedEntry(row: HistoryRow): { variant: VariantKey; entry: HistoryEntry
       at: row.startedAt,
       value,
       L: row.lBefore,
-      length: row.module === 'memory' ? num(summary, 'length') : null,
+      length: row.module === 'memory' ? positiveWhole(summary, 'length') : null,
       // History entries are of training and free blocks only.
       norms: normsFrom(row, summary, 'training'),
     },

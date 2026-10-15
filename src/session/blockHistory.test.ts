@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { block, session } from '../data/repository.contract';
 import { szmr } from '../modules/reaction/szmr';
 import type { BlockRow } from '../data/rows';
+import type { ModuleId } from '../engine/types';
 import {
   appendBlock,
   buildBlockHistory,
@@ -120,11 +121,37 @@ describe('keyMetric', () => {
   });
 
   it('has a key metric description for every module', () => {
-    expect(KEY_METRICS.gorbov).toEqual({ unit: 'с', better: 'lower', signed: false });
-    expect(KEY_METRICS.stroop).toEqual({ unit: 'мс', better: 'lower', signed: true });
-    expect(KEY_METRICS.memory).toEqual({ unit: '%', better: 'higher', signed: false });
-    expect(KEY_METRICS.numseries).toEqual({ unit: '%', better: 'higher', signed: false });
-    expect(KEY_METRICS.pzmr).toEqual({ unit: 'мс', better: 'lower', signed: false });
+    const ms = { unit: 'мс', better: 'lower', signed: false };
+    const cost = { unit: 'мс', better: 'lower', signed: true };
+    const seconds = { unit: 'с', better: 'lower', signed: false };
+    const percent = { unit: '%', better: 'higher', signed: false };
+    expect(KEY_METRICS).toEqual({
+      pzmr: ms,
+      szmr: ms,
+      gonogo: ms,
+      rdo: ms,
+      gorbov: seconds,
+      schulte: seconds,
+      stroop: cost,
+      taskswitch: cost,
+      pomeh: cost,
+      memory: percent,
+      numseries: percent,
+    });
+  });
+
+  it('a row of a module it does not know has no number and no entry', () => {
+    const odd = row({ module: 'tapping' as ModuleId, summaryJson: '{"meanRt":300}' });
+    expect(keyMetric(odd)).toBeNull();
+    expect(buildBlockHistory([odd], SESSIONS).size).toBe(0);
+  });
+
+  it('a "__proto__" key in stored JSON is a plain field, never an inherited value', () => {
+    expect(keyMetric({ module: 'pzmr', summaryJson: '{"__proto__":{"meanRt":300}}' })).toBeNull();
+    expect(keyMetric({ module: 'stroop', summaryJson: '{"conditions":{"__proto__":{"congruent":{"medianRt":500},"incongruent":{"medianRt":580}}}}' })).toBeNull();
+    expect(variantOf(row({ module: 'schulte', paramsJson: '{"__proto__":{"size":6}}' }))).toBeNull();
+    expect(variantOf(row({ module: 'gorbov', paramsJson: '{"task":"__proto__"}', summaryJson: '{"task":"constructor"}' }))).toBeNull();
+    expect(variantOf(memory({ mode: 'toString' }))).toBeNull();
   });
 });
 
@@ -271,10 +298,12 @@ describe('buildBlockHistory', () => {
     expect(historyEntry(table('alternate', null))).toBeNull();
   });
 
-  it('memory entries keep the row length', () => {
+  it('memory entries keep the row length, whole as shown', () => {
     const r = memory({ mode: 'digits', length: 7, exact: 4, positionsCorrect: 36, answers: answers(6) }, { lBefore: 9, startedAt: ago(1) });
     expect(historyEntry(r)).toEqual({ at: ago(1), value: 67, L: 9, length: 7, norms: [{ id: 'memorySpan', value: 7 }] });
     expect(historyEntry(memory({ mode: 'letters', exact: 3, answers: answers(6) }))).toMatchObject({ value: 50, length: null });
+    expect(historyEntry(memory({ mode: 'letters', length: 6.6, exact: 3, answers: answers(6) }))).toMatchObject({ length: 7 });
+    expect(historyEntry(memory({ mode: 'letters', length: -2, exact: 3, answers: answers(6) }))).toMatchObject({ length: null });
   });
 
   it('appendBlock adds a block exactly as buildBlockHistory does', () => {
