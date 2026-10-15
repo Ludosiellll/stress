@@ -68,6 +68,9 @@ describe('BlockSummary', () => {
     expect(screen.getByRole('heading', { name: 'Оценка' })).toBeTruthy();
     const list = screen.getByRole('list', { name: 'Оценка' });
     expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['S', 'G', 'N1', 'N2', 'H']);
+    // Named by its heading, not by a second copy of the word.
+    expect(list.getAttribute('aria-label')).toBeNull();
+    expect(document.getElementById(list.getAttribute('aria-labelledby') ?? '')).toBe(screen.getByRole('heading', { name: 'Оценка' }));
     const metrics = screen.getByRole('list', { name: 'Показатели' });
     expect(metrics.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });

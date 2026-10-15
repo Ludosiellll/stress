@@ -867,6 +867,19 @@ describe('SessionController — assessment', () => {
     expect((await h.repo.listBlocks()).map((b) => b.flags)).toEqual([['calibration'], ['calibration'], ['calibration']]);
   });
 
+  it('a throw inside the commit goes to the log instead of vanishing on the retry', async () => {
+    const h = await begin(planFree('rdo', 1));
+    vi.mocked(appendBlock).mockImplementationOnce(() => {
+      throw new Error('history: out of memory');
+    });
+    const { view } = await playReaction(h);
+    expect(view.module).toBe('rdo');
+    expect(await h.repo.listBlocks()).toHaveLength(1);
+    const log = (await h.repo.listLog(5)).find((r) => r.message === 'session: block commit failed');
+    expect(log).toMatchObject({ level: 'error' });
+    expect(JSON.parse(log?.detail ?? '')).toEqual({ sessionId: h.c.sessionId, module: 'rdo', error: 'history: out of memory' });
+  });
+
   it('a diagnostic reads no block history; its summaries carry norms only', async () => {
     const repo = new SpyRepo();
     const h = await begin(planDiagnostic(1), { repo, scale: 0.02 });

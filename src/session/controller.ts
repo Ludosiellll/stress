@@ -750,9 +750,15 @@ export class SessionController {
           // Once only: a throw after record() must not count the block twice when the queue runs this write again.
           if (committed) return Promise.resolve();
           committed = true;
-          this.record({ module: b.module, score: b.score, flags, hitRts: b.hitRts }, lAfter);
-          if (this.history !== null) appendBlock(this.history, row, this.plan.kind);
-          b.onCommit?.();
+          try {
+            this.record({ module: b.module, score: b.score, flags, hitRts: b.hitRts }, lAfter);
+            if (this.history !== null) appendBlock(this.history, row, this.plan.kind);
+            b.onCommit?.();
+          } catch (e) {
+            // The run again skips the rest of the commit, so the failure would leave no trace without this line.
+            this.logLater('session: block commit failed', { sessionId: this.sessionId, module: b.module, error: errorText(e) });
+            throw e;
+          }
           return Promise.resolve();
         },
       },
@@ -795,12 +801,16 @@ export class SessionController {
     try {
       return assessBlock(row, { kind: this.plan.kind, history: this.history, now: this.now(), meanRating });
     } catch (e) {
-      const detail = { sessionId: this.sessionId, module: row.module, error: errorText(e) };
-      this.repo.appendLog(errorLogRow(this.now().toISOString(), 'session: block assessment failed', detail)).catch(() => {
-        // The database is failing already; the assessment failure simply goes unlogged.
-      });
+      this.logLater('session: block assessment failed', { sessionId: this.sessionId, module: row.module, error: errorText(e) });
       return undefined;
     }
+  }
+
+  /** An error line for the log, best effort and without waiting for it. */
+  private logLater(message: string, detail: Record<string, unknown>): void {
+    this.repo.appendLog(errorLogRow(this.now().toISOString(), message, detail)).catch(() => {
+      // The database is failing already; the error simply goes unlogged.
+    });
   }
 
   /**

@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import type { BlockFlag } from '../../engine/types';
 import { changeText } from '../../modules/describe';
 import type { BlockAssessment } from '../../session/assessment';
@@ -36,6 +37,7 @@ export default function BlockSummary({ view, busy, onContinue }: BlockSummaryPro
     onContinue();
   });
   const assessment = assessmentLines(view.assessment);
+  const assessmentId = useId();
 
   return (
     <div className="screen-center summary">
@@ -60,8 +62,8 @@ export default function BlockSummary({ view, busy, onContinue }: BlockSummaryPro
       </ul>
       {assessment.length > 0 && (
         <section className="assessment">
-          <h3>Оценка</h3>
-          <ul aria-label="Оценка">
+          <h3 id={assessmentId}>Оценка</h3>
+          <ul aria-labelledby={assessmentId}>
             {assessment.map((line) => (
               <li key={line}>{noBreakUnits(line)}</li>
             ))}
