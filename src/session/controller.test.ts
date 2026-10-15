@@ -36,8 +36,20 @@ import {
   playTimeline,
   type Respond,
 } from '../testing/sessionPlayers';
+import { assessBlock } from './assessment';
+import { appendBlock } from './blockHistory';
 import { SessionController, type SessionStartOptions } from './controller';
 import { AUDIO_NOT_PLAYED, MEMORY_SPAN_INSTRUCTION, OVERLOAD_SOUND_PREFIX, type BlockSummaryView, type Step, type StepOf } from './steps';
+
+// The real functions, observed: a test can make one call throw (A-R19).
+vi.mock('./assessment', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./assessment')>();
+  return { ...actual, assessBlock: vi.fn(actual.assessBlock) };
+});
+vi.mock('./blockHistory', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./blockHistory')>();
+  return { ...actual, appendBlock: vi.fn(actual.appendBlock) };
+});
 
 const MIN = 60_000;
 const DAY = 86_400_000;
@@ -812,6 +824,49 @@ describe('SessionController — assessment', () => {
     expect(view.assessment?.step).not.toBeNull();
   });
 
+  it('a failing assessment never loses the block: stored, summary without the section, logged (A-R19)', async () => {
+    const repo = new MemoryRepository();
+    const h = await begin(planFree('pzmr', 1), { repo });
+    vi.mocked(assessBlock).mockImplementationOnce(() => {
+      throw new RangeError('levelStep: bad level');
+    });
+    const { view } = await playReaction(h);
+    expect(view.assessment).toBeUndefined();
+    expect('assessment' in view).toBe(false);
+    expect(view.lines.length).toBeGreaterThan(0);
+    expect(await repo.listBlocks()).toHaveLength(1);
+    const [log] = await repo.listLog(5);
+    expect(log).toMatchObject({ level: 'error', message: 'session: block assessment failed' });
+    expect(JSON.parse(log?.detail ?? '')).toEqual({ sessionId: h.c.sessionId, module: 'pzmr', error: 'levelStep: bad level' });
+    // The next block is assessed again, and the stored one is in its history.
+    await h.c.continueAfterSummary();
+    const next = await playReaction(h);
+    expect(next.view.assessment?.history).toMatch(/^Раньше в этом блоке: прошлый раз 300 мс/);
+  });
+
+  it('a failing assessment goes unlogged when the log cannot be written; the block is still stored', async () => {
+    const repo = new MemoryRepository();
+    vi.spyOn(repo, 'appendLog').mockRejectedValueOnce(new Error('disk I/O error'));
+    const h = await begin(planFree('pzmr', 1), { repo });
+    vi.mocked(assessBlock).mockImplementationOnce(() => {
+      throw new RangeError('boom');
+    });
+    const { view } = await playReaction(h);
+    expect(view.assessment).toBeUndefined();
+    expect(await repo.listBlocks()).toHaveLength(1);
+    expect(await repo.listLog(5)).toEqual([]);
+  });
+
+  it('a throw after the block was counted does not count it twice when the commit runs again (A-R19)', async () => {
+    const h = await begin(planFree('rdo', 3));
+    vi.mocked(appendBlock).mockImplementationOnce(() => {
+      throw new Error('history: out of memory');
+    });
+    await drive(h, { blockMs: 100_000 });
+    // Calibration covers the first three blocks of a module: block 1 counted twice would end it at block 3.
+    expect((await h.repo.listBlocks()).map((b) => b.flags)).toEqual([['calibration'], ['calibration'], ['calibration']]);
+  });
+
   it('a diagnostic reads no block history; its summaries carry norms only', async () => {
     const repo = new SpyRepo();
     const h = await begin(planDiagnostic(1), { repo, scale: 0.02 });
@@ -1280,6 +1335,30 @@ describe('SessionController — save errors', () => {
     expect(summary.view.lAfter).toBe(2);
     expect(await repo.listBlocks()).toHaveLength(1);
     expect((await repo.getModuleStates()).pzmr.lifetimeBlocks).toBe(1);
+  });
+
+  it('a block stored on retrySave enters the history once (A-R19)', async () => {
+    const repo = new FlakyRepo();
+    const h = await begin(planFree('pzmr', 1), { repo });
+    const rt = (ms: number): Respond => (spec, idx) => {
+      const p = perfectPlayer(spec, idx);
+      return p === null ? null : { ...p, rtMs: ms };
+    };
+    repo.failures.addBlock = 3;
+    h.c.ackInstruction();
+    await h.c.submitReaction(playTimeline(expectStep(h.c, 'reaction_block').specs, rt(300)));
+    expectStep(h.c, 'save_error');
+    await h.c.retrySave();
+    expectStep(h.c, 'summary');
+    await h.c.continueAfterSummary();
+    await playReaction(h, rt(360));
+    await h.c.continueAfterSummary();
+    const third = await playReaction(h, rt(450));
+    // (300 + 360) / 2 = 330; block 1 counted twice would make it (300 + 300 + 360) / 3 = 320.
+    expect(third.view.assessment?.history).toMatch(
+      /^Раньше в этом блоке: прошлый раз 360 мс \(ур\. [\d,]+\) · лучший 300 мс · в среднем за 7 дней 330 мс$/,
+    );
+    expect(await repo.listBlocks()).toHaveLength(3);
   });
 
   it('a failure after the block was stored repeats only what is left', async () => {

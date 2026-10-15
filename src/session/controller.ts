@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { Repository } from '../data/repository';
-import type { LogicItemRow, TrialRow, WellbeingRow } from '../data/rows';
+import type { BlockRow, LogicItemRow, TrialRow, WellbeingRow } from '../data/rows';
 import { detectFatigue, nextLevel, startLevel } from '../engine/adaptive';
 import { daysBetween } from '../engine/dates';
 import { deriveModuleStates, isCleanBlock } from '../engine/derive';
@@ -16,7 +16,7 @@ import { memorySpan, scoreMemoryTrial, type MemoryAnswer } from '../modules/memo
 import { moduleTitles, reactionModules } from '../modules/registry';
 import type { TableTaskId } from '../modules/tables/gorbov';
 import { scoreTableRun, type TableRun } from '../modules/tables/score';
-import { assessBlock, meanFamilyRating } from './assessment';
+import { assessBlock, meanFamilyRating, type BlockAssessment } from './assessment';
 import { appendBlock, buildBlockHistory, type BlockHistory } from './blockHistory';
 import {
   blockInstruction,
@@ -46,6 +46,7 @@ import {
   stabilityLine,
   tableLines,
   UNRELIABLE_REPLAY_NOTICE,
+  type BlockSummaryView,
   type DiagnosticComparison,
   type PastDiagnostic,
   type SaveErrorWhat,
@@ -717,8 +718,8 @@ export class SessionController {
     const id = uuidv4();
     const row = blockRow(id, this.sessionId, { module: b.module, lBefore: b.L, lAfter, score: b.score, flags }, active, b.summaryJson);
     const { trials, items } = b.rows(id);
-    const assessment = assessBlock(row, { kind: this.plan.kind, history: this.history, now: this.now(), meanRating: b.meanRating ?? null });
-    const view = {
+    const assessment = this.assessOrLog(row, b.meanRating ?? null);
+    const view: BlockSummaryView = {
       module: b.module,
       title: moduleTitles[b.module],
       lBefore: b.L,
@@ -728,8 +729,8 @@ export class SessionController {
       lines,
       flags,
       showLevel: this.counted && b.level !== null,
-      assessment,
     };
+    if (assessment !== undefined) view.assessment = assessment;
 
     let committed = false;
     let addTried = false;
@@ -746,6 +747,8 @@ export class SessionController {
       {
         label: 'commit',
         run: () => {
+          // Once only: a throw after record() must not count the block twice when the queue runs this write again.
+          if (committed) return Promise.resolve();
           committed = true;
           this.record({ module: b.module, score: b.score, flags, hitRts: b.hitRts }, lAfter);
           if (this.history !== null) appendBlock(this.history, row, this.plan.kind);
@@ -782,6 +785,22 @@ export class SessionController {
       },
       writes,
     );
+  }
+
+  /**
+   * The «Оценка» of a block; a failure leaves the summary without the section (the block is stored all the same) and
+   * goes to the log when the log can be written, without waiting for it.
+   */
+  private assessOrLog(row: BlockRow, meanRating: number | null): BlockAssessment | undefined {
+    try {
+      return assessBlock(row, { kind: this.plan.kind, history: this.history, now: this.now(), meanRating });
+    } catch (e) {
+      const detail = { sessionId: this.sessionId, module: row.module, error: errorText(e) };
+      this.repo.appendLog(errorLogRow(this.now().toISOString(), 'session: block assessment failed', detail)).catch(() => {
+        // The database is failing already; the assessment failure simply goes unlogged.
+      });
+      return undefined;
+    }
   }
 
   /**
