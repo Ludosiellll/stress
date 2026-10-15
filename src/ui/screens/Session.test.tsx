@@ -463,7 +463,7 @@ describe('Session steps', () => {
       numseriesCorrect: 14,
       unreliable: [],
     };
-    const comparison = { previous: null, readiness: 61.6, readinessPrevious: null };
+    const comparison = { previous: null, readiness: 61.6, readinessPrevious: null, earlierUnreadable: false };
     await renderSession(fakeDriver({ kind: 'done', sessionId: 's', diagnostic, seriesTotal: 20, indexDeferred: true, comparison }), {
       plan: { ...PLAN, kind: 'diagnostic' },
     });

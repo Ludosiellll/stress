@@ -155,7 +155,7 @@ export default function Done({ diagnostic, seriesTotal, summaries, indexDeferred
       <h2 tabIndex={-1}>Сессия завершена</h2>
       {diagnostic !== null && <ResultsTable d={diagnostic} seriesTotal={seriesTotal} comparison={comparison} />}
       {diagnostic !== null && comparison !== null && comparison.previous === null && (
-        <p>Первая диагностика — сравнивать пока не с чем</p>
+        <p>{comparison.earlierUnreadable ? 'Прошлые диагностики не прочитаны — сравнивать не с чем.' : 'Первая диагностика — сравнивать пока не с чем'}</p>
       )}
       {diagnostic !== null && index !== null && <p>{index}</p>}
       {diagnostic !== null && indexDeferred && <p className="muted">{DEFERRED_NOTE}</p>}

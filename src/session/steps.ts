@@ -86,6 +86,8 @@ export interface DiagnosticComparison {
   readiness: number | null;
   /** readinessOfLatest(earlier without the last, the last).overall; null without a previous diagnostic. */
   readinessPrevious: number | null;
+  /** No previous one although this is not the first diagnostic (its number is above 1): the earlier ones are unreadable. */
+  earlierUnreadable: boolean;
 }
 
 /**

@@ -50,6 +50,7 @@ const WITH_PREVIOUS: DiagnosticComparison = {
   previous: PAST,
   readiness: 72.4,
   readinessPrevious: 65.2,
+  earlierUnreadable: false,
 };
 
 function view(over: Partial<BlockSummaryView>): BlockSummaryView {
@@ -112,11 +113,20 @@ describe('Done', () => {
   });
 
   it('the first diagnostic says there is nothing to compare with', () => {
-    render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} comparison={{ previous: null, readiness: 60, readinessPrevious: null }} onHome={vi.fn()} />);
+    render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} comparison={{ previous: null, readiness: 60, readinessPrevious: null, earlierUnreadable: false }} onHome={vi.fn()} />);
     expect(screen.getByText('Первая диагностика — сравнивать пока не с чем')).toBeTruthy();
     expect(screen.getByText('Индекс: 60')).toBeTruthy();
     expect(headers()).toEqual(['Показатель', 'Результат', 'Ориентир']);
     expect(cells()[0]).toEqual(['ПЗМР — медиана времени реакции', '251 мс', 'по среднему 262 мс: средний']);
+  });
+
+  it('diagnostic №N > 1 whose earlier diagnostics cannot be read says so, not «Первая диагностика» (FW10)', () => {
+    const comparison = { previous: null, readiness: 60, readinessPrevious: null, earlierUnreadable: true };
+    render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} comparison={comparison} onHome={vi.fn()} />);
+    expect(screen.getByText('Прошлые диагностики не прочитаны — сравнивать не с чем.')).toBeTruthy();
+    expect(screen.queryByText(/Первая диагностика/)).toBeNull();
+    expect(headers()).toEqual(['Показатель', 'Результат', 'Ориентир']);
+    expect(screen.getByText('Индекс: 60')).toBeTruthy();
   });
 
   it('a previous value that is missing reads «нет данных» and has no change', () => {

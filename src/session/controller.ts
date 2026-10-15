@@ -149,11 +149,11 @@ const errorText = (e: unknown): string => (e instanceof Error ? e.message : Stri
  * The comparison of the done step: the previous diagnostic is the last earlier one by date (W2-R33), and its index is
  * what readinessOfLatest gave it after the ones before it.
  */
-function compareWithPrevious(earlier: readonly PastDiagnostic[], readiness: number | null): DiagnosticComparison {
+function compareWithPrevious(earlier: readonly PastDiagnostic[], readiness: number | null, number: number): DiagnosticComparison {
   const previous = earlier.at(-1) ?? null;
   const readinessPrevious =
     previous === null ? null : readinessOfLatest(earlier.slice(0, -1).map((e) => e.metrics), previous.metrics).overall;
-  return { previous, readiness, readinessPrevious };
+  return { previous, readiness, readinessPrevious, earlierUnreadable: previous === null && number > 1 };
 }
 
 /**
@@ -664,7 +664,7 @@ export class SessionController {
     if (diagnostic !== null && earlier !== null) {
       const latest = readinessOfLatest(earlier.map((e) => e.metrics), diagnostic);
       indexDeferred = latest.deferred;
-      comparison = compareWithPrevious(earlier, latest.overall);
+      comparison = compareWithPrevious(earlier, latest.overall, this.diagnosticNumber());
     }
     this.current = { kind: 'done', sessionId: this.sessionId, diagnostic, seriesTotal, indexDeferred, comparison };
   }

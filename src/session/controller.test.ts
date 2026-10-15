@@ -1882,6 +1882,7 @@ describe('SessionController — diagnostics', () => {
       previous: { number: 1, at: '2026-10-05T10:30:00.000Z', metrics: parseResults(row1) },
       readiness: readinessOfLatest([m2, m1], diagnostic).overall,
       readinessPrevious: readinessOfLatest([m2], m1).overall,
+      earlierUnreadable: false,
     });
     expect(done.comparison?.readiness).toEqual(expect.any(Number));
     expect(done.comparison?.readinessPrevious).toEqual(expect.any(Number));
@@ -1893,8 +1894,21 @@ describe('SessionController — diagnostics', () => {
     await drive(h);
     const done = expectStep(h.c, 'done');
     const d = done.diagnostic as DiagnosticResults;
-    expect(done.comparison).toEqual({ previous: null, readiness: readinessOfLatest([], d).overall, readinessPrevious: null });
+    expect(done.comparison).toEqual({ previous: null, readiness: readinessOfLatest([], d).overall, readinessPrevious: null, earlierUnreadable: false });
     expect(done.comparison?.readiness).toEqual(expect.any(Number));
+  });
+
+  it('diagnostic №3 whose earlier diagnostics are stored but unreadable: no previous, and it says so (FW10)', async () => {
+    const repo = new MemoryRepository();
+    await repo.createSession(session('s1', '2026-10-01T10:00:00.000Z', { kind: 'diagnostic' }));
+    await repo.createSession(session('s2', '2026-10-05T10:00:00.000Z', { kind: 'diagnostic' }));
+    await repo.addDiagnostic({ id: 'd1', sessionId: 's1', number: 1, at: '2026-10-01T10:30:00.000Z', resultsJson: '{not json' });
+    await repo.addDiagnostic({ id: 'd2', sessionId: 's2', number: 2, at: '2026-10-05T10:30:00.000Z', resultsJson: '42' });
+    const h = await begin(planDiagnostic(3), { repo, scale: 0.02 });
+    await drive(h);
+    const done = expectStep(h.c, 'done');
+    const d = done.diagnostic as DiagnosticResults;
+    expect(done.comparison).toEqual({ previous: null, readiness: readinessOfLatest([], d).overall, readinessPrevious: null, earlierUnreadable: true });
   });
 
   it('gorbov metrics need all three runs completed; series count only inside the total limit', async () => {
