@@ -1,7 +1,7 @@
 import type { JSHandle, Page } from '@playwright/test';
 import { chooseExportFile, exportedFile, openApp, pageDate, playSession, setPressDelay, type Screen } from './bot';
 import { NORM_HINTS } from '../../src/engine/norms';
-import { E2E_URL, expect, freshPage, lineCount, pauseWithEscape, shot, test } from './fixtures';
+import { E2E_URL, expect, expectFitsWidth, freshPage, lineCount, pauseWithEscape, shot, test } from './fixtures';
 
 /**
  * Screenshots of every screen at 1280×800 into test-results/screens/<name>.png for the visual check
@@ -464,6 +464,9 @@ test('screens: a training session with pause, wellbeing and done; schulte', asyn
   for (const cell of await cells.all()) {
     expect(await lineCount(cell), await cell.innerText()).toBe(1);
   }
+  // Trained rows too: the table fits its section at 1280×800, the page does not scroll sideways (A-R24).
+  await expectFitsWidth(page.getByRole('region', { name: 'Оценка по модулям' }), '«Оценка по модулям»');
+  await expectFitsWidth(page.locator('html'), 'the page');
   await shot(page, 'progress-assessment', true);
 });
 

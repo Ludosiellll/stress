@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { cancelPendingPresses, openApp, pageDate, playSession, type Screen } from './bot';
-import { E2E_URL, expect, lineCount, pauseWithEscape, shot, test } from './fixtures';
+import { E2E_URL, expect, expectFitsWidth, lineCount, pauseWithEscape, shot, test } from './fixtures';
 
 // Whole sessions at scale 0.02 still take tens of seconds each.
 test.describe.configure({ timeout: 240_000 });
@@ -114,6 +114,13 @@ test('diagnostic run writes results and home shows readiness', async ({ page }) 
     expect(await lineCount(change), await change.innerText()).toBe(1);
   }
   await expect(page.getByText(/^Индекс: \d+ \(прошлый — \d+\)$/)).toBeVisible();
+  // At 1280×800 the five columns fit the screen: neither the results nor the session scroll sideways (A-R24), and
+  // no header or cell wraps past two lines (in a 760 px column the labels, «Прошлая (№…)» and the norms take three).
+  await expectFitsWidth(page.locator('.screen-center.done'), '«Сессия завершена»');
+  await expectFitsWidth(page.locator('.session'), '.session');
+  for (const cell of await page.getByRole('table', { name: 'Результаты диагностики' }).locator('th, td').all()) {
+    expect(await lineCount(cell), await cell.innerText()).toBeLessThanOrEqual(2);
+  }
   // The table from its header row: «На главную» has the focus, which scrolls the screen to the bottom.
   await page.getByRole('table', { name: 'Результаты диагностики' }).evaluate((el) => { el.scrollIntoView({ block: 'start' }); });
   await shot(page, 'done-diagnostic-compare');
@@ -326,4 +333,6 @@ test('progress shows charts after a diagnostic', async ({ page }) => {
   for (const cell of await assessment.locator('tbody td.num').all()) {
     expect(await lineCount(cell), await cell.innerText()).toBe(1);
   }
+  // …and the table fits its section at 1280×800 (A-R24).
+  await expectFitsWidth(page.getByRole('region', { name: 'Оценка по модулям' }), '«Оценка по модулям»');
 });

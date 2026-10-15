@@ -74,6 +74,12 @@ export async function pauseWithEscape(page: Page): Promise<void> {
   }).toPass({ timeout: 20_000 });
 }
 
+/** Nothing inside the element sticks out sideways: its scrollWidth is within its clientWidth (A-R24). */
+export async function expectFitsWidth(element: Locator, what: string): Promise<void> {
+  const { scroll, client } = await element.evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }));
+  expect(scroll, `${what}: scrollWidth ${String(scroll)} px, clientWidth ${String(client)} px`).toBeLessThanOrEqual(client);
+}
+
 /** The number of lines the element's text is laid out on (distinct tops of its text boxes). */
 export function lineCount(element: Locator): Promise<number> {
   return element.evaluate((el) => {
