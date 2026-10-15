@@ -132,22 +132,26 @@ test('free training of rdo shows the assessment and compares with the previous s
   // Two whole free sessions of РДО.
   test.setTimeout(360_000);
   await openApp(page, E2E_URL);
-  /** The «Оценка» lines of the first block summary of each session. */
-  const firstAssessments: string[][] = [];
+  /**
+   * Every block summary of both sessions in order: its «Оценка» lines and whether it was marked «Замер ненадёжен»
+   * (headless Chromium can drop frames; such a block stays out of the history).
+   */
+  const blocks: { session: number; lines: string[]; unreliable: boolean }[] = [];
   for (let session = 0; session < 2; session++) {
     await page.getByRole('button', { name: 'Свободная тренировка' }).click();
     await page.getByRole('button', { name: 'Реакция на движущийся объект' }).click();
     const titles: string[] = [];
     const summaries = checkSummaries(page, titles);
-    const assessments: string[][] = [];
     const screens = await playSession(page, {
       onScreen: async (kind) => {
         await summaries(kind);
-        if (kind === 'summary') assessments.push(await page.getByRole('list', { name: 'Оценка' }).getByRole('listitem').allInnerTexts());
+        if (kind !== 'summary') return;
+        const lines = await page.getByRole('list', { name: 'Оценка' }).getByRole('listitem').allInnerTexts();
+        const unreliable = (await page.locator('.summary .warning').filter({ hasText: /^Замер ненадёжен/ }).count()) > 0;
+        blocks.push({ session, lines, unreliable });
       },
     });
-    expect(assessments.length, `session ${String(session + 1)}: block summaries`).toBeGreaterThan(0);
-    firstAssessments.push(assessments[0] ?? []);
+    expect(blocks.filter((b) => b.session === session).length, `session ${String(session + 1)}: block summaries`).toBeGreaterThan(0);
     expect(screens).not.toContain('wellbeing');
     expect(titles.length).toBeGreaterThan(0);
     expect(new Set(titles)).toEqual(new Set(['Реакция на движущийся объект']));
@@ -157,12 +161,17 @@ test('free training of rdo shows the assessment and compares with the previous s
     await page.getByRole('button', { name: 'На главную' }).click();
     await expect(home(page)).toBeVisible();
   }
-  const [firstSession = [], secondSession = []] = firstAssessments;
-  // The very first РДО block: step 1 at the start level, no history yet.
-  expect(firstSession[0]).toMatch(/^Ступень 1 из 5\+ — начальная \(уровень [\d,]+; формат теста — 10\)$/);
-  expect(firstSession.at(-1)).toBe('Первый такой блок — будет с чем сравнивать');
-  // The second session's first block is compared with the blocks of the first session.
-  expect(secondSession.at(-1)).toMatch(/^Раньше в этом блоке: прошлый раз \d+ мс \(ур\. [\d,]+\) · лучший \d+ мс/);
+  // The very first РДО block: step 1 at the start level, no history yet. Only a block that enters the history
+  // promises a comparison (FW4).
+  const [first] = blocks;
+  expect(first?.lines[0]).toMatch(/^Ступень 1 из 5\+ — начальная \(уровень [\d,]+; формат теста — 10\)$/);
+  expect(first?.lines.at(-1)).toBe(first?.unreliable === true ? 'Первый такой блок' : 'Первый такой блок — будет с чем сравнивать');
+  // Every later block, the second session's included, is compared with the reliable blocks before it.
+  blocks.forEach((b, i) => {
+    const kept = blocks.slice(0, i).some((x) => !x.unreliable);
+    const history = kept ? /^Раньше в этом блоке: прошлый раз \d+ мс \(ур\. [\d,]+\) · лучший \d+ мс/ : /^Первый такой блок/;
+    expect(b.lines.at(-1), `block ${String(i + 1)} (session ${String(b.session + 1)})`).toMatch(history);
+  });
 });
 
 test('free training of Струп reaches a summary with 100 %', async ({ page }) => {

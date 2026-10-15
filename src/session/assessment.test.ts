@@ -68,6 +68,18 @@ describe('assessBlock', () => {
     expect(assessBlock(gorbovRow('black_up', 12, 13.5, 44_000), { ...ctx, history: null }).history).toBeNull();
   });
 
+  it('a first block that will not enter the history promises nothing to compare with (FW4)', () => {
+    const empty: AssessContext = { ...ctx, history: new Map() };
+    const pzmr = (over: Partial<BlockRow>): BlockRow => row({ module: 'pzmr', lBefore: 5, lAfter: 5, summaryJson: '{"meanRt":250}', ...over });
+    expect(assessBlock(pzmr({}), empty).history).toBe('Первый такой блок — будет с чем сравнивать');
+    expect(assessBlock(pzmr({ flags: ['overload'] }), empty).history).toBe('Первый такой блок');
+    expect(assessBlock(pzmr({ flags: ['timing_unreliable'] }), empty).history).toBe('Первый такой блок');
+    expect(assessBlock(pzmr({ summaryJson: '{}' }), empty).history).toBe('Первый такой блок');
+    expect(assessBlock(gorbovRow('red_down', 0, 0, null), empty).history).toBe('Первый такой блок');
+    // Calibration and fatigued blocks do enter the history.
+    expect(assessBlock(pzmr({ flags: ['calibration', 'fatigued'] }), empty).history).toBe('Первый такой блок — будет с чем сравнивать');
+  });
+
   it('a Gorbov block whose task cannot be read: the goal has no «Там», nothing throws', () => {
     const a = assessBlock(gorbovRow('black_up', 12, 13.5, 44_000, { paramsJson: '{}', summaryJson: '{"timeMs":44000}' }), ctx);
     expect(a.step).toBe('Ступень 3 из 5+ — формат теста (уровень 13,5; формат теста — 12)');

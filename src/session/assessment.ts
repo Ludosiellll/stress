@@ -47,7 +47,9 @@ export interface AssessContext {
   meanRating: number | null;
 }
 
-const FIRST_BLOCK = 'Первый такой блок — будет с чем сравнивать';
+const FIRST_BLOCK = 'Первый такой блок';
+/** Only for a block that itself enters the history: the next one is compared with it (FW4). */
+const FIRST_BLOCK_KEPT = 'Первый такой блок — будет с чем сравнивать';
 const NEW_BEST = ' — новый лучший результат';
 const BETTER_THAN_LAST = ' — лучше прошлого раза';
 /** Steps 1–4 say «из 5+»; from step 5 there is no ceiling (О14). */
@@ -176,10 +178,15 @@ function entryDetail(module: ModuleId, entry: HistoryEntry): string {
   return ` (${length}ур. ${levelText(entry.L)})`;
 }
 
+/** The key metric of a block that itself enters the history; null: it does not (no number, overload, …). */
+function keptValue(row: BlockRow, kind: SessionKind): number | null {
+  return entersHistory(row.flags, kind) ? keyMetric(row) : null;
+}
+
 /** Only a block that itself enters the history is marked; values compare as shown (О2). */
 function mark(row: BlockRow, kind: SessionKind, stats: HistoryStats): string {
-  const value = keyMetric(row);
-  if (value === null || !entersHistory(row.flags, kind)) return '';
+  const value = keptValue(row, kind);
+  if (value === null) return '';
   const better = (a: number, b: number): boolean => (KEY_METRICS[row.module].better === 'lower' ? a < b : a > b);
   if (better(value, stats.best)) return NEW_BEST;
   return better(value, stats.last.value) ? BETTER_THAN_LAST : '';
@@ -188,7 +195,7 @@ function mark(row: BlockRow, kind: SessionKind, stats: HistoryStats): string {
 function historyLine(row: BlockRow, variant: VariantKey | null, ctx: AssessContext): string | null {
   if (ctx.history === null || variant === null) return null;
   const stats = historyStats(ctx.history.get(variant) ?? [], ctx.now, KEY_METRICS[row.module].better);
-  if (stats === null) return FIRST_BLOCK;
+  if (stats === null) return keptValue(row, ctx.kind) === null ? FIRST_BLOCK : FIRST_BLOCK_KEPT;
   const f = (v: number): string => formatMetric(row.module, v);
   const mean = stats.mean7d === null ? '' : ` · в среднем за 7 дней ${f(stats.mean7d)}`;
   const last = `прошлый раз ${f(stats.last.value)}${entryDetail(row.module, stats.last)}`;
