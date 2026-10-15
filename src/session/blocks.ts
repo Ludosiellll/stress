@@ -207,7 +207,7 @@ function plainInstruction(plan: BlockPlan, layout: LayoutId): { text: string; ke
   switch (plan.kind) {
     case 'reaction':
       return {
-        text: reactionModules[plan.module].instruction(layout, plan.params),
+        text: reactionModules[plan.module].instruction(layout, plan.params, plan.overload),
         keysHint: plan.keys.map(keyLabel).join(', '),
       };
     case 'table':

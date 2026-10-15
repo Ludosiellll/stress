@@ -279,6 +279,7 @@ export class SessionController {
         return;
       }
       const { results, summary, hitRts, conditions } = scored;
+      const { plan } = this.block();
       const seg = this.segment();
       if (!this.counted && summary.timingUnreliable && !seg.unreliableReplayed) {
         // A diagnostic value from a block with dropped frames is replayed once; a second one is kept and marked.
@@ -300,7 +301,7 @@ export class SessionController {
         }),
         lines: [
           ...reactionLines(module, summary),
-          ...conditionLines(module, conditions),
+          ...conditionLines(module, conditions, plan.kind === 'reaction' && plan.overload),
           ...(tl.audioPlayed === false ? [AUDIO_NOT_PLAYED] : []),
         ],
         rows: (blockId) => ({ trials: trialRows(blockId, step.specs, tl, results), items: [] }),

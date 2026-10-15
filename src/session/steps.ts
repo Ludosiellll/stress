@@ -209,14 +209,18 @@ const COND_LABELS: Partial<Record<ReactionModuleId, { fast: string; slow: string
   taskswitch: { fast: 'Правило повторяется', slow: 'Правило сменилось', cost: 'Цена переключения' },
   pomeh: { fast: 'Без помех', slow: 'С помехами', cost: 'Разница' },
 };
+/** An overload block plays the sound on every trial: pomeh's conditions then differ only by the figures (W2-R10, M2). */
+const OVERLOAD_COND_LABELS: Partial<Record<ReactionModuleId, { fast: string; slow: string; cost: string }>> = {
+  pomeh: { fast: 'Без отвлекающих фигур', slow: 'С отвлекающими фигурами', cost: 'Разница' },
+};
 
 /**
  * «Цвет совпадает со словом: 520 мс», «Не совпадает: 610 мс», «Интерференция: +90 мс»; a line only for a known value.
  * The difference is taken between the medians as shown (whole ms), so the three lines always agree.
  */
-export function conditionLines(module: ReactionModuleId, stats: ConditionStats): string[] {
+export function conditionLines(module: ReactionModuleId, stats: ConditionStats, overload = false): string[] {
   const pair = condPairOf(module);
-  const labels = COND_LABELS[module];
+  const labels = (overload ? OVERLOAD_COND_LABELS[module] : undefined) ?? COND_LABELS[module];
   if (pair === null || labels === undefined) return [];
   const fast = stats[pair.fast]?.medianRt ?? null;
   const slow = stats[pair.slow]?.medianRt ?? null;

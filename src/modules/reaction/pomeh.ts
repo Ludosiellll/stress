@@ -109,7 +109,7 @@ export const pomeh: ReactionModule<PomehParams> = {
 
   stressors: (p) => ({ noise: p.noise, audio: p.audio, gate: 'noisy' }),
 
-  instruction(layout, p) {
+  instruction(layout, p, overload = false) {
     const keys = keysFor(layout, keyCount(p));
     const rule =
       p.mode === 'choice'
@@ -120,7 +120,7 @@ export const pomeh: ReactionModule<PomehParams> = {
     return (
       rule +
       (p.noise.flicker ? ' Вместе с фигурами будет мерцать фон.' : '') +
-      (p.audio === null ? '' : ' В части блока будут звуковые помехи, надень наушники.')
+      (p.audio === null || overload ? '' : ' В части блока будут звуковые помехи, надень наушники.')
     );
   },
 

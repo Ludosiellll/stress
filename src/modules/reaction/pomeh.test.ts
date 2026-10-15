@@ -273,6 +273,13 @@ describe('pomeh texts', () => {
     );
   });
 
+  it('an overload block leaves out the sound line: its prefix announces the sound on every trial (M2)', () => {
+    expect(pomeh.instruction('keyboard', pomeh.params(20), true)).toBe(
+      'Красный круг в центре — F, зелёный круг — J. На остальные фигуры не реагируй. Вместе с фигурами будет мерцать фон.',
+    );
+    expect(pomeh.instruction('keyboard', pomeh.params(20), false)).toBe(pomeh.instruction('keyboard', pomeh.params(20)));
+  });
+
   it('choice instruction maps both circles to keys', () => {
     expect(pomeh.instruction('keyboard', pomeh.params(20))).toBe(
       'Красный круг в центре — F, зелёный круг — J. На остальные фигуры не реагируй.' +

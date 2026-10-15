@@ -8,8 +8,11 @@ import type { InputKey, LayoutId, ReactionModuleId } from '../../engine/types';
 export interface ReactionModule<P> {
   id: ReactionModuleId;
   title: string;
-  // Method syntax (bivariant in P) so a ReactionModule<XParams> fits the registry's ReactionModule<unknown>.
-  instruction(layout: LayoutId, p: P): string;
+  /**
+   * `overload`: an overload block, whose prefix announces the sound on every trial, so the module leaves out its own
+   * sound line (M2). Method syntax (bivariant in P) so a ReactionModule<XParams> fits the registry's ReactionModule<unknown>.
+   */
+  instruction(layout: LayoutId, p: P, overload?: boolean): string;
   lNorm: number;
   blockSize: number;
   params(L: number): P;

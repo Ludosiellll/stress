@@ -182,6 +182,19 @@ describe('Помехоустойчивость', () => {
     expect(conditionLines('pomeh', { quiet: stats.quiet, noisy: { n: 2, errors: 0, medianRt: null } })).toEqual(['Без помех: 300 мс']);
   });
 
+  it('conditionLines: an overload block plays the sound on every trial, so only the figures tell the conditions apart (M2)', () => {
+    const stats = { quiet: { n: 10, errors: 0, medianRt: 300 }, noisy: { n: 10, errors: 1, medianRt: 335.2 } };
+    expect(conditionLines('pomeh', stats, true)).toEqual([
+      'Без отвлекающих фигур: 300 мс',
+      'С отвлекающими фигурами: 335 мс',
+      'Разница: +35 мс',
+    ]);
+    expect(conditionLines('pomeh', stats, false)).toEqual(['Без помех: 300 мс', 'С помехами: 335 мс', 'Разница: +35 мс']);
+    // Other modules' conditions do not depend on the sound.
+    const stroop = { congruent: { n: 10, errors: 0, medianRt: 520 }, incongruent: { n: 10, errors: 0, medianRt: 610 } };
+    expect(conditionLines('stroop', stroop, true)).toEqual(conditionLines('stroop', stroop));
+  });
+
   it('the line for a block whose sound did not play', () => {
     expect(AUDIO_NOT_PLAYED).toBe('Звук не воспроизводился: проверь устройство вывода и громкость помех в настройках.');
   });

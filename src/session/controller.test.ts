@@ -946,6 +946,22 @@ describe('SessionController — overload', () => {
     expect(top.layers).toMatchObject({ audio: { layers: ['hum', 'beeps', 'metronome', 'babble'], gain: 0.95 }, gate: 'all' });
   });
 
+  it('a pomeh overload block names its conditions by the figures and announces the sound once (M2)', async () => {
+    const repo = new MemoryRepository();
+    await repo.saveModuleState(stateWith('pomeh', { lSaved: 17, lastTrainedAt: YESTERDAY, lifetimeBlocks: 10 }));
+    const h = await begin(training(overloadSegment('pomeh', 'finisher', 1)), { repo });
+    const { text } = expectStep(h.c, 'instruction');
+    expect(text).toBe(OVERLOAD_SOUND_PREFIX + pomeh.instruction('keyboard', pomeh.params(20), true));
+    expect(text).not.toContain('В части блока');
+    // The window at L 20 is 216 ms.
+    const slowerOnNoisy: Respond = (spec, idx) => {
+      const r = perfectPlayer(spec, idx);
+      return r === null ? null : { ...r, rtMs: spec.cond === 'noisy' ? 185 : 150 };
+    };
+    const { view } = await playReaction(h, slowerOnNoisy);
+    expect(view.lines.slice(-3)).toEqual(['Без отвлекающих фигур: 150 мс', 'С отвлекающими фигурами: 185 мс', 'Разница: +35 мс']);
+  });
+
   it('overload blocks are left out of fatigue and the g = 2 rule', async () => {
     const repo = await trainedRepo('szmr', 10);
     const h = await begin(training(overloadSegment('szmr', 'mix', 2 * MIN)), { repo });
