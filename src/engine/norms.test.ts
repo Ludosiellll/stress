@@ -145,6 +145,21 @@ describe('gradeByBands', () => {
     });
   });
 
+  it('every table runs its cuts from the best band to the worst, without a repeat', () => {
+    for (const id of NORM_IDS) {
+      const { better, cuts } = NORMS[id];
+      const at = cuts.map((c) => c.at);
+      const ordered = [...at].sort((a, b) => (better === 'lower' ? a - b : b - a));
+      expect(at, id).toEqual(ordered);
+      expect(new Set(at).size, id).toBe(at.length);
+    }
+  });
+
+  it('cutText writes a fractional bound with a decimal comma', () => {
+    expect(cutText({ at: 29.5, inclusive: true }, NORMS.gorbovSimple)).toBe('до 29,5 с');
+    expect(cutText({ at: 7.5, inclusive: false }, NORMS.memorySpan)).toBe('больше 7,5');
+  });
+
   it('rejects a value that is not a finite number', () => {
     for (const v of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
       expect(() => gradeByBands(v, NORMS.pzmrMean)).toThrow(RangeError);
