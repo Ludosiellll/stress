@@ -40,8 +40,14 @@ async function untilInstruction(page: Page, title: string, text?: string): Promi
   }
 }
 
-/** Ends the session from the screen on display (Escape → «Завершить сессию») and waits for Home. */
-async function endSession(page: Page): Promise<void> {
+/**
+ * Ends the session from the block summary on display (Escape → «Завершить сессию») and waits for Home. The
+ * session takes Escape only when no controller call runs («Дальше» enabled) and from the task after the screen
+ * mounted (useKeyDown attaches its listener in a timeout), so the press waits for both.
+ */
+async function endSessionFromSummary(page: Page): Promise<void> {
+  await expect(page.getByRole('button', { name: 'Дальше' })).toBeEnabled();
+  await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => { requestAnimationFrame(() => { r(); }); })));
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Завершить сессию' }).click();
   await expect(page.getByRole('button', { name: 'Начать тренировку' })).toBeVisible();
@@ -430,7 +436,7 @@ test('screens: a training session with pause, wellbeing and done; schulte', asyn
   await shot(page, 'table-schulte');
   // Each Шульте session ends after its first summary, so exactly one 5×5 block is stored per session (A-R4).
   await playSession(page, { stopAt: 'summary' });
-  await endSession(page);
+  await endSessionFromSummary(page);
 
   // The second session's block is compared with the first one and gets the paper norm.
   await page.getByRole('button', { name: 'Свободная тренировка' }).click();
@@ -440,7 +446,7 @@ test('screens: a training session with pause, wellbeing and done; schulte', asyn
   await expect(assessment.filter({ hasText: 'Раньше в этом блоке: прошлый раз' })).toHaveCount(1);
   await expect(assessment.filter({ hasText: NORM_HINTS.schulte5 })).toHaveCount(1);
   await shot(page, 'summary-assessment');
-  await endSession(page);
+  await endSessionFromSummary(page);
 
   await page.getByRole('button', { name: 'Прогресс' }).click();
   const schulte = page.getByRole('table', { name: 'Оценка по модулям' }).getByRole('row', { name: /^Таблицы Шульте — 5×5/ });
