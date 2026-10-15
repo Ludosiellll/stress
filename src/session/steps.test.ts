@@ -85,21 +85,18 @@ describe('reactionLines', () => {
     ]);
   });
 
-  it('rdo: signed mean error with the direction in words, exact hits, early and late answers', () => {
+  it('rdo: the error by modulus (what the history compares), the signed bias in words, exact hits, early and late answers (FW1)', () => {
     const counts = { hit: 6, early: 3, timing_late: 1 };
-    const rdo = (e: number | null): string[] =>
+    const rdo = (signed: number | null, abs: number | null): string[] =>
       reactionLines(
         'rdo',
-        summary(
-          { n: 10, medianRt: null, meanRt: null, sdRt: null, cvRt: null, meanSignedErrorMs: e, meanAbsErrorMs: e === null ? null : Math.abs(e) },
-          counts,
-        ),
+        summary({ n: 10, medianRt: null, meanRt: null, sdRt: null, cvRt: null, meanSignedErrorMs: signed, meanAbsErrorMs: abs }, counts),
       );
     const tail = ['Точных попаданий: 6 из 10', 'Опережений: 3, запаздываний: 1', 'Фальстарты: 0', 'Пропуски: 0'];
-    expect(rdo(12.2)).toEqual(['Средняя ошибка: +12 мс (запаздываешь)', ...tail]);
-    expect(rdo(-7.6)).toEqual(['Средняя ошибка: −8 мс (торопишься)', ...tail]);
-    expect(rdo(-0.4)).toEqual(['Средняя ошибка: 0 мс', ...tail]);
-    expect(rdo(null)).toEqual(tail);
+    expect(rdo(5, 25.4)).toEqual(['Средняя ошибка по модулю: 25 мс', 'Смещение: +5 мс (запаздываешь)', ...tail]);
+    expect(rdo(-30.4, 31)).toEqual(['Средняя ошибка по модулю: 31 мс', 'Смещение: −30 мс (торопишься)', ...tail]);
+    expect(rdo(-0.4, 12)).toEqual(['Средняя ошибка по модулю: 12 мс', 'Смещение: 0 мс', ...tail]);
+    expect(rdo(null, null)).toEqual(tail);
   });
 });
 

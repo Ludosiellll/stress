@@ -190,11 +190,12 @@ const COUNT_LINES: Record<ReactionModuleId, readonly CountLine[]> = {
   pomeh: [FALSE_STARTS, MISSES, ['Ошибки выбора', (c) => c.wrong]],
 };
 
-function timingErrorLine(meanSignedErrorMs: number): string {
+/** РДО: the signed mean error, «−» early and «+» late. */
+function biasLine(meanSignedErrorMs: number): string {
   const e = whole(meanSignedErrorMs);
-  if (e > 0) return `Средняя ошибка: +${String(e)} мс (запаздываешь)`;
-  if (e < 0) return `Средняя ошибка: −${String(-e)} мс (торопишься)`;
-  return 'Средняя ошибка: 0 мс';
+  if (e > 0) return `Смещение: +${String(e)} мс (запаздываешь)`;
+  if (e < 0) return `Смещение: −${String(-e)} мс (торопишься)`;
+  return 'Смещение: 0 мс';
 }
 
 export function reactionLines(module: ReactionModuleId, s: ReactionSummary): string[] {
@@ -203,7 +204,9 @@ export function reactionLines(module: ReactionModuleId, s: ReactionSummary): str
   if (s.meanRt !== null) lines.push(`Среднее: ${String(whole(s.meanRt))} мс`);
   if (s.sdRt !== null) lines.push(`Разброс (SD): ${String(whole(s.sdRt))} мс`);
   if (s.cvRt !== null) lines.push(`Стабильность (CV): ${decimal(s.cvRt, 2)}`);
-  if (s.meanSignedErrorMs !== null) lines.push(timingErrorLine(s.meanSignedErrorMs));
+  // The error by modulus is the РДО number the history and the diagnostic compare (FW1).
+  if (s.meanAbsErrorMs !== null) lines.push(`Средняя ошибка по модулю: ${String(whole(s.meanAbsErrorMs))} мс`);
+  if (s.meanSignedErrorMs !== null) lines.push(biasLine(s.meanSignedErrorMs));
   if (module === 'rdo') {
     lines.push(`Точных попаданий: ${String(s.counts.hit)} из ${String(s.n)}`);
     lines.push(`Опережений: ${String(s.counts.early)}, запаздываний: ${String(s.counts.timing_late)}`);

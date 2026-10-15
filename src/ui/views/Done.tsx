@@ -31,7 +31,7 @@ const LABELS: Readonly<Record<DiagnosticRowId, string>> = {
   pzmr: `${moduleTitles.pzmr} — медиана времени реакции`,
   szmr: `${moduleTitles.szmr} — медиана времени реакции`,
   gonogo: `${moduleTitles.gonogo} — верные ответы`,
-  rdo: `${moduleTitles.rdo} — средняя ошибка`,
+  rdo: `${moduleTitles.rdo} — средняя ошибка по модулю`,
   gorbovV: 'Горбов — V, среднее время 1-й и 2-й таблиц',
   gorbovP: 'Горбов — P, время 3-й таблицы',
   gorbovPi: 'Горбов — Π, переключение внимания',
