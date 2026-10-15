@@ -4,6 +4,7 @@ import type { Repository } from '../data/repository';
 import { rebuildCaches } from '../data/export';
 import { block, item, session } from '../data/repository.contract';
 import type { BlockRow, WellbeingRow } from '../data/rows';
+import { nextLevel } from '../engine/adaptive';
 import { FINISHER_AUDIO } from '../engine/audio/stressors';
 import { deriveModuleStates, deriveRatings, defaultModuleState } from '../engine/derive';
 import {
@@ -18,7 +19,7 @@ import { currentPhase, type PhaseInfo } from '../engine/phases';
 import { planFree, planTraining, type ModuleState, type Segment, type SessionPlan } from '../engine/planner';
 import { readinessOfLatest } from '../engine/readiness';
 import { createRng, deriveSeed } from '../engine/rng';
-import { MODULE_IDS, type LayoutId, type ModuleId } from '../engine/types';
+import { MODULE_IDS, type InputKey, type LayoutId, type ModuleId } from '../engine/types';
 import { describeChanges } from '../modules/describe';
 import { generateMemoryTrials, spanProtocolTrials, type MemoryTrial } from '../modules/memory/generate';
 import { memoryInstruction, memoryParams } from '../modules/memory/params';
@@ -436,7 +437,7 @@ describe('SessionController — levels and persistence', () => {
       lAfter: 2,
       changes: [{ label: 'Окно ответа', from: '1000 мс', to: '808 мс' }],
       score: 1,
-      lines: ['Медиана: 300 мс', 'Среднее: 300 мс', 'Разброс (SD): 0 мс', 'Стабильность (CV): 0,00', 'Фальстарты: 0', 'Пропуски: 0'],
+      lines: ['Ошибок нет.', 'Медиана: 300 мс', 'Среднее: 300 мс', 'Разброс (SD): 0 мс', 'Стабильность (CV): 0,00', 'Пропуски: 0'],
       flags: ['calibration'],
       showLevel: true,
       assessment: {
@@ -451,6 +452,67 @@ describe('SessionController — levels and persistence', () => {
     });
   });
 
+  it('the staircase runs on the penalised score; «Успешно» keeps the share of successes', async () => {
+    const repo = new MemoryRepository();
+    await repo.saveModuleState(stateWith('szmr', { lSaved: 4, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    const h = await begin(planFree('szmr', 1), { repo });
+    h.c.ackInstruction();
+    const block = expectStep(h.c, 'reaction_block');
+    expect(block.specs).toHaveLength(20);
+    const otherKey = (key: InputKey): InputKey => block.keys.find((k) => k !== key) as InputKey;
+    // Trial 0: a press 50 ms before its onset (a false start); trials 1 and 2: the other key; the rest: hits at 300 ms.
+    const respond: Respond = (spec, idx) => {
+      const r = perfectPlayer(spec, idx);
+      if (r === null) throw new Error('СЗМР trials are press trials');
+      if (idx === 0) return { ...r, rtMs: -50 };
+      return idx <= 2 ? { ...r, key: otherKey(r.key) } : r;
+    };
+    await h.c.submitReaction(playTimeline(block.specs, respond));
+    const { view } = expectStep(h.c, 'summary');
+    const [row] = await repo.listBlocks();
+    const summary = JSON.parse(row?.summaryJson ?? '{}') as { counts: unknown; score: number; penalizedScore: number; cvRt: number | null };
+    expect(summary.counts).toMatchObject({ hit: 17, wrong: 2, false_start: 1 });
+    expect(row?.score).toBeCloseTo(0.65, 12);
+    expect(summary.score).toBeCloseTo(0.85, 12);
+    expect(summary.penalizedScore).toBeCloseTo(0.65, 12);
+    const input = { score: 0.65, calibration: false, prevScoreSameSession: null, cvRt: summary.cvRt, cvMax: szmr.cvMax(view.lBefore), timingUnreliable: false };
+    expect(view.lAfter).toBe(nextLevel(view.lBefore, input));
+    // The share 0.85 would have raised the level; s 0.65 takes 0.75 off it.
+    expect(view.lAfter).toBe(view.lBefore - 0.75);
+    expect(view.score).toBe(0.85);
+    expect(view.lines[0]).toBe('Ошибки: неверная клавиша — 2, фальстарты — 1. Штраф −4 из 20, балл 0,65.');
+  });
+
+  it('the g = 2 rule and fatigue use the penalised score', async () => {
+    const repo = new MemoryRepository();
+    await repo.saveModuleState(stateWith('szmr', { lSaved: 4, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    const h = await begin(planFree('szmr', 1), { repo });
+    /** The first `falseStarts` trials answered 50 ms after onset (false starts), the others hit at `rtMs`. */
+    const player =
+      (falseStarts: number, rtMs: number): Respond =>
+      (spec, idx) => {
+        const r = perfectPlayer(spec, idx);
+        return r === null ? null : { ...r, rtMs: idx < falseStarts ? 50 : rtMs };
+      };
+    // 19 hits and 1 false start: the share 0.95 would give the next block g = 2; s 0.85 does not.
+    const first = await playReaction(h, player(1, 300));
+    expect(first.view.score).toBe(0.95);
+    expect(first.view.lines[0]).toBe('Ошибки: неверная клавиша — 0, фальстарты — 1. Штраф −2 из 20, балл 0,85.');
+    await h.c.continueAfterSummary();
+    const second = await playReaction(h, player(0, 300));
+    expect(second.view.lBefore).toBe(first.view.lAfter);
+    expect(second.view.lAfter - second.view.lBefore).toBe(1);
+    // Then 2 blocks at 400 ms with 2 false starts each: share 0.9, s 0.7. Against the first two blocks s fell by
+    // 0.925 − 0.7 = 0.225 ≥ 0.15 (the share only by 0.975 − 0.9 = 0.075), and the median RT rose by a third: fatigue.
+    await h.c.continueAfterSummary();
+    await playReaction(h, player(2, 400));
+    await h.c.continueAfterSummary();
+    const fourth = await playReaction(h, player(2, 400));
+    expect(fourth.view.score).toBe(0.9);
+    await h.c.continueAfterSummary();
+    expect(h.c.step).toEqual({ kind: 'fatigue_prompt', module: 'szmr' });
+  });
+
   it('stroop block stores conditions and shows the interference line', async () => {
     const h = await begin(planFree('stroop', 4));
     const slowerOnIncongruent: Respond = (spec, idx) => {
@@ -459,7 +521,7 @@ describe('SessionController — levels and persistence', () => {
     };
     const { view } = await playReaction(h, slowerOnIncongruent);
     expect(view.title).toBe('Струп');
-    expect(view.lines).toContain('Ошибки: 0');
+    expect(view.lines[0]).toBe('Ошибок нет.');
     expect(view.lines.slice(-3)).toEqual(['Цвет совпадает со словом: 300 мс', 'Не совпадает: 380 мс', 'Интерференция: +80 мс']);
     const [row] = await h.repo.listBlocks();
     const summary = JSON.parse(row?.summaryJson ?? '{}') as { conditions?: unknown; frameMs?: unknown };
@@ -483,7 +545,7 @@ describe('SessionController — levels and persistence', () => {
     };
     const { view } = await playReaction(h, slowerOnSwitch);
     expect(view.title).toBe('Переключение правил');
-    expect(view.lines).toContain('Ошибки: 0');
+    expect(view.lines[0]).toBe('Ошибок нет.');
     expect(view.lines.slice(-3)).toEqual(['Правило повторяется: 300 мс', 'Правило сменилось: 450 мс', 'Цена переключения: +150 мс']);
     const [row] = await h.repo.listBlocks();
     // L = 0: 20 trials, the first without a condition, round(0.2 · 19) = 4 switches.
@@ -505,7 +567,7 @@ describe('SessionController — levels and persistence', () => {
     };
     const { view } = await playReaction(h, slowerOnNoisy);
     expect(view.title).toBe('Помехоустойчивость');
-    expect(view.lines).toContain('Ошибки выбора: 0');
+    expect(view.lines[0]).toBe('Ошибок нет.');
     expect(view.lines.slice(-3)).toEqual(['Без помех: 300 мс', 'С помехами: 335 мс', 'Разница: +35 мс']);
     expect(view.lines).not.toContain(AUDIO_NOT_PLAYED);
     const [row] = await h.repo.listBlocks();
@@ -2218,6 +2280,28 @@ describe('SessionController — diagnostics', () => {
     await h.c.submitReaction(playTimeline(block.specs, perfectPlayer));
     await h.c.continueAfterSummary();
     expect((await h.repo.listDiagnostics())[0]?.number).toBe(1);
+  });
+
+  it('the diagnostic Go/No-Go value stays the share of successes', async () => {
+    const plan = planDiagnostic(1);
+    const gonogo = plan.segments.find((seg) => seg.module === 'gonogo') as Segment;
+    const h = await begin({ ...plan, segments: [gonogo] });
+    h.c.ackInstruction();
+    const block = expectStep(h.c, 'reaction_block');
+    const noGo = block.specs.findIndex((spec) => spec.practice !== true && spec.expected.kind === 'withhold');
+    // One press 300 ms into a no-go trial (inside its window): a no-go press.
+    const respond: Respond = (spec, idx) => (idx === noGo ? { key: block.keys[0] as InputKey, rtMs: 300 } : perfectPlayer(spec, idx));
+    await h.c.submitReaction(playTimeline(block.specs, respond));
+    const { view } = expectStep(h.c, 'summary');
+    const [row] = await h.repo.listBlocks();
+    const summary = JSON.parse(row?.summaryJson ?? '{}') as { counts: unknown; score: number; penalizedScore: number };
+    expect(summary.counts).toMatchObject({ commission: 1, false_start: 0, wrong: 0 });
+    expect(summary.score).toBeCloseTo(59 / 60, 12);
+    expect(summary.penalizedScore).toBeCloseTo(57 / 60, 12);
+    expect(row?.score).toBe(summary.penalizedScore);
+    expect(view.score).toBe(summary.score);
+    await h.c.continueAfterSummary();
+    expect(expectStep(h.c, 'done').diagnostic?.gonogoScore).toBe(summary.score * 100);
   });
 
   it('diagnostic summaries do not show a level (M5)', async () => {

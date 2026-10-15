@@ -98,7 +98,10 @@ export interface TrialResult {
 
 export interface ReactionSummary {
   n: number;
+  /** The share of successes (`hit`, `correct_reject`): «Успешно» and the diagnostic Go/No-Go value. */
   score: number;
+  /** s with the error penalty (penalizedScore, F1): the staircase score, stored as `blocks.score`. */
+  penalizedScore: number;
   meanRt: number | null;
   medianRt: number | null;
   sdRt: number | null;

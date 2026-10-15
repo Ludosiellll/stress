@@ -1,7 +1,8 @@
 import type { DiagnosticResults } from '../engine/diagnostic';
 import { BASE_ITEM_LIMIT_MS } from '../engine/itemLimit';
 import { condPairOf, type ConditionStats } from '../engine/reaction/conditions';
-import type { Outcome, ReactionSummary, TrialSpec } from '../engine/reaction/types';
+import { penaltyPoints } from '../engine/reaction/summary';
+import type { ReactionSummary, TrialSpec } from '../engine/reaction/types';
 import type { BlockFlag, InputKey, LayoutId, ModuleId, ReactionModuleId, TableModuleId } from '../engine/types';
 import type { ParamChange } from '../modules/describe';
 import type { MemoryTrial } from '../modules/memory/generate';
@@ -106,7 +107,10 @@ export interface BlockSummaryView {
   lAfter: number;
   /** Only the parameters whose value changed between lBefore and lAfter. */
   changes: ParamChange[];
-  /** Block score s ∈ [0, 1]. */
+  /**
+   * «Успешно»: the share of successes ∈ [0, 1]. For reaction blocks it is summary.score without the error penalty
+   * (the penalised s is in the error line, Р4); for the other modules it is their block score.
+   */
   score: number;
   lines: string[];
   flags: BlockFlag[];
@@ -175,22 +179,37 @@ export const round1 = (x: number): number => Number(x.toFixed(1));
 /** Fixed decimals with a comma: 41,2. */
 export const decimal = (x: number, digits: number): string => x.toFixed(digits).replace('.', ',');
 
-type CountLine = [label: string, count: (c: Record<Outcome, number>) => number];
+/** The outcomes the error penalty counts (PENALTY, F1). */
+export type ErrorKind = 'wrong' | 'false_start' | 'commission';
 
-const FALSE_STARTS: CountLine = ['Фальстарты', (c) => c.false_start];
-/** A miss is no answer inside the window (spec §5), so late answers count too. */
-const MISSES: CountLine = ['Пропуски', (c) => c.miss + c.late];
-
-/** Only the error kinds that can happen in the module. */
-const COUNT_LINES: Record<ReactionModuleId, readonly CountLine[]> = {
-  pzmr: [FALSE_STARTS, MISSES],
-  szmr: [FALSE_STARTS, MISSES, ['Ошибки выбора', (c) => c.wrong]],
-  gonogo: [FALSE_STARTS, MISSES, ['Нажатия на no-go', (c) => c.commission]],
-  rdo: [FALSE_STARTS, MISSES],
-  stroop: [FALSE_STARTS, MISSES, ['Ошибки', (c) => c.wrong]],
-  taskswitch: [FALSE_STARTS, MISSES, ['Ошибки', (c) => c.wrong]],
-  pomeh: [FALSE_STARTS, MISSES, ['Ошибки выбора', (c) => c.wrong]],
+/** The error kinds that can happen in the module, in the order of the error line. */
+export const ERROR_KINDS: Readonly<Record<ReactionModuleId, readonly ErrorKind[]>> = {
+  pzmr: ['false_start'],
+  szmr: ['wrong', 'false_start'],
+  gonogo: ['commission', 'false_start'],
+  rdo: ['false_start'],
+  stroop: ['wrong', 'false_start'],
+  taskswitch: ['wrong', 'false_start'],
+  pomeh: ['wrong', 'false_start'],
 };
+
+const ERROR_NAMES: Readonly<Record<ErrorKind, string>> = {
+  wrong: 'неверная клавиша',
+  false_start: 'фальстарты',
+  commission: 'нажатия на no-go',
+};
+
+/**
+ * The first line of a reaction block summary (F1): «Ошибки: неверная клавиша — 2, фальстарты — 1. Штраф −4 из 20,
+ * балл 0,65.» — every error kind of the module, the penalty and the penalised score the level moved by; «Ошибок нет.»
+ * when they are all 0.
+ */
+export function errorLine(module: ReactionModuleId, s: ReactionSummary): string {
+  const kinds = ERROR_KINDS[module];
+  if (kinds.every((k) => s.counts[k] === 0)) return 'Ошибок нет.';
+  const list = kinds.map((k) => `${ERROR_NAMES[k]} — ${String(s.counts[k])}`).join(', ');
+  return `Ошибки: ${list}. Штраф −${String(penaltyPoints(s.counts))} из ${String(s.n)}, балл ${decimal(s.penalizedScore, 2)}.`;
+}
 
 /** РДО: the signed mean error, «−» early and «+» late. */
 function biasLine(meanSignedErrorMs: number): string {
@@ -200,8 +219,9 @@ function biasLine(meanSignedErrorMs: number): string {
   return 'Смещение: 0 мс';
 }
 
+/** Errors first; then the times, the РДО lines, and the misses last (Р5, T-R6). */
 export function reactionLines(module: ReactionModuleId, s: ReactionSummary): string[] {
-  const lines: string[] = [];
+  const lines = [errorLine(module, s)];
   if (s.medianRt !== null) lines.push(`Медиана: ${String(whole(s.medianRt))} мс`);
   if (s.meanRt !== null) lines.push(`Среднее: ${String(whole(s.meanRt))} мс`);
   if (s.sdRt !== null) lines.push(`Разброс (SD): ${String(whole(s.sdRt))} мс`);
@@ -213,7 +233,8 @@ export function reactionLines(module: ReactionModuleId, s: ReactionSummary): str
     lines.push(`Точных попаданий: ${String(s.counts.hit)} из ${String(s.n)}`);
     lines.push(`Опережений: ${String(s.counts.early)}, запаздываний: ${String(s.counts.timing_late)}`);
   }
-  for (const [label, count] of COUNT_LINES[module]) lines.push(`${label}: ${String(count(s.counts))}`);
+  // A miss is no answer inside the window (spec §5), so late answers count too.
+  lines.push(`Пропуски: ${String(s.counts.miss + s.counts.late)}`);
   return lines;
 }
 

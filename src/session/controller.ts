@@ -107,6 +107,7 @@ interface SegmentRun {
 /** A finished block of this session, for calibration, the g = 2 rule and fatigue. */
 interface SessionBlock {
   module: ModuleId;
+  /** The staircase score s (reaction blocks: with the error penalty, F1). */
   score: number;
   flags: BlockFlag[];
   /** RTs of `press` hits (FatigueBlock.hitRts). */
@@ -117,7 +118,10 @@ interface SessionBlock {
 interface FinishedBlock {
   module: ModuleId;
   L: number;
+  /** s: the level step, fatigue, the g = 2 rule and `blocks.score` (reaction blocks: with the error penalty, F1). */
   score: number;
+  /** «Успешно» of the summary when it is not s: the share of successes of a reaction block (Р4). Default: score. */
+  viewScore?: number;
   /** Staircase inputs; null for number series (no level). */
   level: { cvRt: number | null; cvMax: number | null; timingUnreliable: boolean } | null;
   hitRts: number[];
@@ -336,7 +340,8 @@ export class SessionController {
       await this.completeBlock({
         module,
         L,
-        score: summary.score,
+        score: summary.penalizedScore,
+        viewScore: summary.score,
         level: { cvRt: summary.cvRt, cvMax: reactionModules[module].cvMax(L), timingUnreliable: summary.timingUnreliable },
         hitRts,
         summaryJson: JSON.stringify({
@@ -725,7 +730,7 @@ export class SessionController {
       lBefore: b.L,
       lAfter,
       changes: describeChanges(b.module, b.L, lAfter, b.task),
-      score: b.score,
+      score: b.viewScore ?? b.score,
       lines,
       flags,
       showLevel: this.counted && b.level !== null,

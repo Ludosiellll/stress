@@ -11,7 +11,7 @@ const VIEW: BlockSummaryView = {
   lAfter: 11,
   changes: [{ label: 'Окно ответа', from: '387 мс', to: '358 мс' }],
   score: 0.85,
-  lines: ['Медиана: 312 мс', 'Разброс (SD): 41 мс', 'Фальстарты: 1', 'Пропуски: 0'],
+  lines: ['Ошибки: фальстарты — 1. Штраф −2 из 20, балл 0,75.', 'Медиана: 312 мс', 'Разброс (SD): 41 мс', 'Пропуски: 2'],
   flags: ['calibration', 'fatigued', 'timing_unreliable'],
   showLevel: true,
 };
@@ -23,7 +23,9 @@ describe('BlockSummary', () => {
     expect(screen.getByText('Уровень: 10,0 → 11,0')).toBeTruthy();
     expect(screen.getByText('Окно ответа: 387 → 358 мс')).toBeTruthy();
     expect(screen.getByText('Успешно: 85 %')).toBeTruthy();
-    for (const line of VIEW.lines) expect(screen.getByText(line)).toBeTruthy();
+    // The error line with the penalised score opens the metrics; «Успешно» stays the share of successes (F1).
+    const metrics = within(screen.getByRole('list', { name: 'Показатели' })).getAllByRole('listitem');
+    expect(metrics.map((li) => li.textContent)).toEqual(VIEW.lines);
     expect(screen.getByText('Калибровка')).toBeTruthy();
     expect(screen.getByText('Блок помечен: усталость')).toBeTruthy();
     expect(screen.getByText('Замер ненадёжен: пропуски кадров — уровень не менялся')).toBeTruthy();

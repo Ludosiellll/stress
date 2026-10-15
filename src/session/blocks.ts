@@ -412,9 +412,10 @@ function condMetrics(conditions: ConditionStats, { slow, fast }: CondPair): [fas
 }
 
 /**
- * pzmr/szmr medianRt and meanRt, gonogo score × 100 (percent, Ruling R18), rdo meanAbsErrorMs, Gorbov metrics only when
- * all three runs were completed, number series correct within the total limit; the condition medians and their
- * difference of pomeh, stroop and taskswitch, the memory span. Missing parts stay null.
+ * pzmr/szmr medianRt and meanRt, gonogo score × 100 (percent, Ruling R18; the share of successes, never the penalised s,
+ * so it stays comparable with 0.2.0, F1), rdo meanAbsErrorMs, Gorbov metrics only when all three runs were completed,
+ * number series correct within the total limit; the condition medians and their difference of pomeh, stroop and
+ * taskswitch, the memory span. Missing parts stay null.
  * Reaction blocks stored with timingUnreliable (after their replay) list their module in `unreliable`.
  */
 export function diagnosticResults(parts: readonly DiagnosticPart[]): DiagnosticResults {

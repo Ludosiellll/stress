@@ -1,9 +1,13 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
+import { penalizedScore } from '../engine/reaction/summary';
 import type { Outcome, ReactionSummary } from '../engine/reaction/types';
+import { REACTION_MODULE_IDS } from '../engine/types';
 import {
   AUDIO_NOT_PLAYED,
   conditionLines,
+  ERROR_KINDS,
+  errorLine,
   MEMORY_SPAN_INSTRUCTION,
   memoryLines,
   plural,
@@ -26,15 +30,19 @@ const NO_COUNTS: Record<Outcome, number> = {
   timing_late: 0,
 };
 
+/** A summary with these counts; its penalised score follows from them (penalizedScore). */
 function summary(over: Partial<ReactionSummary> = {}, counts: Partial<Record<Outcome, number>> = {}): ReactionSummary {
+  const all = { ...NO_COUNTS, ...counts };
+  const n = over.n ?? 20;
   return {
-    n: 20,
+    n,
     score: 0.85,
+    penalizedScore: penalizedScore(all, n),
     meanRt: 320,
     medianRt: 312.4,
     sdRt: 40.6,
     cvRt: 0.13,
-    counts: { ...NO_COUNTS, ...counts },
+    counts: all,
     meanAbsErrorMs: null,
     meanSignedErrorMs: null,
     timingUnreliable: false,
@@ -42,45 +50,88 @@ function summary(over: Partial<ReactionSummary> = {}, counts: Partial<Record<Out
   };
 }
 
+describe('errorLine (F1)', () => {
+  it('names the error kinds of the module, the penalty and the penalised score', () => {
+    expect(errorLine('szmr', summary({}, { hit: 17, wrong: 2, false_start: 1 }))).toBe(
+      'Ошибки: неверная клавиша — 2, фальстарты — 1. Штраф −4 из 20, балл 0,65.',
+    );
+    expect(errorLine('gonogo', summary({}, { hit: 16, correct_reject: 3, commission: 1 }))).toBe(
+      'Ошибки: нажатия на no-go — 1, фальстарты — 0. Штраф −2 из 20, балл 0,85.',
+    );
+    expect(errorLine('pzmr', summary({ n: 15 }, { hit: 14, false_start: 1 }))).toBe('Ошибки: фальстарты — 1. Штраф −2 из 15, балл 0,80.');
+  });
+
+  it('«Ошибок нет.» when every error kind of the module is 0: a miss or an РДО early answer is no error', () => {
+    expect(errorLine('pzmr', summary({ n: 15 }, { hit: 14, miss: 1 }))).toBe('Ошибок нет.');
+    expect(errorLine('rdo', summary({ n: 10 }, { hit: 9, early: 1 }))).toBe('Ошибок нет.');
+  });
+
+  it('the score is the stored penalised one, two decimals with a comma', () => {
+    expect(errorLine('pomeh', summary({}, { hit: 16, wrong: 1, false_start: 2, miss: 1 }))).toBe(
+      'Ошибки: неверная клавиша — 1, фальстарты — 2. Штраф −5 из 20, балл 0,55.',
+    );
+    expect(errorLine('rdo', summary({ n: 15 }, { hit: 2, false_start: 13 }))).toBe('Ошибки: фальстарты — 13. Штраф −26 из 15, балл 0,00.');
+  });
+
+  it('error kinds in line order: wrong keys or no-go presses first, false starts last; every reaction module has false starts', () => {
+    expect(ERROR_KINDS).toEqual({
+      pzmr: ['false_start'],
+      szmr: ['wrong', 'false_start'],
+      gonogo: ['commission', 'false_start'],
+      rdo: ['false_start'],
+      stroop: ['wrong', 'false_start'],
+      taskswitch: ['wrong', 'false_start'],
+      pomeh: ['wrong', 'false_start'],
+    });
+    expect(Object.keys(ERROR_KINDS).sort()).toEqual([...REACTION_MODULE_IDS].sort());
+  });
+});
+
 describe('reactionLines', () => {
-  it('pzmr: median, mean, SD, CV, false starts, misses (late answers count as misses)', () => {
-    expect(reactionLines('pzmr', summary({}, { false_start: 1, miss: 1, late: 1 }))).toEqual([
+  it('reactionLines puts the errors first and keeps Пропуски last', () => {
+    const lines = reactionLines('szmr', summary({}, { hit: 17, wrong: 2, false_start: 1 }));
+    expect(lines[0]).toBe('Ошибки: неверная клавиша — 2, фальстарты — 1. Штраф −4 из 20, балл 0,65.');
+    expect(lines.at(-1)).toBe('Пропуски: 0');
+    expect(lines.filter((l) => /^(Фальстарты|Ошибки выбора|Нажатия на no-go):/.test(l))).toEqual([]);
+    expect(lines.filter((l) => l.startsWith('Ошибки:'))).toEqual([lines[0]]);
+  });
+
+  it('pzmr: errors, median, mean, SD, CV, misses (late answers count as misses)', () => {
+    expect(reactionLines('pzmr', summary({}, { hit: 17, false_start: 1, miss: 1, late: 1 }))).toEqual([
+      'Ошибки: фальстарты — 1. Штраф −2 из 20, балл 0,75.',
       'Медиана: 312 мс',
       'Среднее: 320 мс',
       'Разброс (SD): 41 мс',
       'Стабильность (CV): 0,13',
-      'Фальстарты: 1',
       'Пропуски: 2',
     ]);
   });
 
-  it('szmr adds choice errors', () => {
-    expect(reactionLines('szmr', summary({}, { wrong: 2 }))).toEqual([
+  it('szmr: wrong keys go into the error line', () => {
+    expect(reactionLines('szmr', summary({}, { hit: 18, wrong: 2 }))).toEqual([
+      'Ошибки: неверная клавиша — 2, фальстарты — 0. Штраф −2 из 20, балл 0,80.',
       'Медиана: 312 мс',
       'Среднее: 320 мс',
       'Разброс (SD): 41 мс',
       'Стабильность (CV): 0,13',
-      'Фальстарты: 0',
       'Пропуски: 0',
-      'Ошибки выбора: 2',
     ]);
   });
 
-  it('gonogo adds presses on no-go', () => {
-    expect(reactionLines('gonogo', summary({ meanRt: 333.5, cvRt: 0.146 }, { commission: 1 }))).toEqual([
+  it('gonogo: presses on no-go go into the error line', () => {
+    expect(reactionLines('gonogo', summary({ meanRt: 333.5, cvRt: 0.146 }, { hit: 15, correct_reject: 4, commission: 1 }))).toEqual([
+      'Ошибки: нажатия на no-go — 1, фальстарты — 0. Штраф −2 из 20, балл 0,85.',
       'Медиана: 312 мс',
       'Среднее: 334 мс',
       'Разброс (SD): 41 мс',
       'Стабильность (CV): 0,15',
-      'Фальстарты: 0',
       'Пропуски: 0',
-      'Нажатия на no-go: 1',
     ]);
   });
 
   it('no hits: no RT lines', () => {
-    expect(reactionLines('pzmr', summary({ medianRt: null, meanRt: null, sdRt: null, cvRt: null }, { miss: 15 }))).toEqual([
-      'Фальстарты: 0',
+    expect(reactionLines('pzmr', summary({ n: 15, medianRt: null, meanRt: null, sdRt: null, cvRt: null }, { miss: 15 }))).toEqual([
+      'Ошибок нет.',
       'Пропуски: 15',
     ]);
   });
@@ -92,17 +143,18 @@ describe('reactionLines', () => {
         'rdo',
         summary({ n: 10, medianRt: null, meanRt: null, sdRt: null, cvRt: null, meanSignedErrorMs: signed, meanAbsErrorMs: abs }, counts),
       );
-    const tail = ['Точных попаданий: 6 из 10', 'Опережений: 3, запаздываний: 1', 'Фальстарты: 0', 'Пропуски: 0'];
-    expect(rdo(5, 25.4)).toEqual(['Средняя ошибка по модулю: 25 мс', 'Смещение: +5 мс (запаздываешь)', ...tail]);
-    expect(rdo(-30.4, 31)).toEqual(['Средняя ошибка по модулю: 31 мс', 'Смещение: −30 мс (торопишься)', ...tail]);
-    expect(rdo(-0.4, 12)).toEqual(['Средняя ошибка по модулю: 12 мс', 'Смещение: 0 мс', ...tail]);
-    expect(rdo(null, null)).toEqual(tail);
+    const tail = ['Точных попаданий: 6 из 10', 'Опережений: 3, запаздываний: 1', 'Пропуски: 0'];
+    expect(rdo(5, 25.4)).toEqual(['Ошибок нет.', 'Средняя ошибка по модулю: 25 мс', 'Смещение: +5 мс (запаздываешь)', ...tail]);
+    expect(rdo(-30.4, 31)).toEqual(['Ошибок нет.', 'Средняя ошибка по модулю: 31 мс', 'Смещение: −30 мс (торопишься)', ...tail]);
+    expect(rdo(-0.4, 12)).toEqual(['Ошибок нет.', 'Средняя ошибка по модулю: 12 мс', 'Смещение: 0 мс', ...tail]);
+    expect(rdo(null, null)).toEqual(['Ошибок нет.', ...tail]);
   });
 });
 
 describe('Струп', () => {
   it('reactionLines: errors are wrong colours', () => {
-    expect(reactionLines('stroop', summary({}, { wrong: 3, miss: 1 })).slice(-3)).toEqual(['Фальстарты: 0', 'Пропуски: 1', 'Ошибки: 3']);
+    const lines = reactionLines('stroop', summary({}, { hit: 16, wrong: 3, miss: 1 }));
+    expect([lines[0], lines.at(-1)]).toEqual(['Ошибки: неверная клавиша — 3, фальстарты — 0. Штраф −3 из 20, балл 0,65.', 'Пропуски: 1']);
   });
 
   const stats = (congruent: number | null, incongruent: number | null) => ({
@@ -147,11 +199,8 @@ describe('Струп', () => {
 
 describe('Переключение правил', () => {
   it('reactionLines: errors are answers by the wrong rule', () => {
-    expect(reactionLines('taskswitch', summary({}, { wrong: 2, false_start: 1 })).slice(-3)).toEqual([
-      'Фальстарты: 1',
-      'Пропуски: 0',
-      'Ошибки: 2',
-    ]);
+    const lines = reactionLines('taskswitch', summary({}, { hit: 17, wrong: 2, false_start: 1 }));
+    expect([lines[0], lines.at(-1)]).toEqual(['Ошибки: неверная клавиша — 2, фальстарты — 1. Штраф −4 из 20, балл 0,65.', 'Пропуски: 0']);
   });
 
   it('conditionLines: repeat and switch medians and the switch cost', () => {
@@ -165,12 +214,9 @@ describe('Переключение правил', () => {
 });
 
 describe('Помехоустойчивость', () => {
-  it('reactionLines: false starts, misses, choice errors', () => {
-    expect(reactionLines('pomeh', summary({}, { wrong: 1, false_start: 2, miss: 1 })).slice(-3)).toEqual([
-      'Фальстарты: 2',
-      'Пропуски: 1',
-      'Ошибки выбора: 1',
-    ]);
+  it('reactionLines: choice errors and false starts first, misses last', () => {
+    const lines = reactionLines('pomeh', summary({}, { hit: 16, wrong: 1, false_start: 2, miss: 1 }));
+    expect([lines[0], lines.at(-1)]).toEqual(['Ошибки: неверная клавиша — 1, фальстарты — 2. Штраф −5 из 20, балл 0,55.', 'Пропуски: 1']);
   });
 
   it('conditionLines: quiet and noisy medians and their difference', () => {

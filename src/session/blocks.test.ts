@@ -44,9 +44,11 @@ import { logicItemRows } from './rowsBuild';
 import { MEMORY_SPAN_INSTRUCTION, OVERLOAD_PREFIX, OVERLOAD_SOUND_PREFIX, type StepOf } from './steps';
 
 const counts = {} as Record<Outcome, number>;
+/** penalizedScore differs from score: the diagnostic reads the share of successes, never the penalised s (F1). */
 const summary = (over: Partial<ReactionSummary>): ReactionSummary => ({
   n: 10,
   score: 0.9,
+  penalizedScore: 0.7,
   meanRt: null,
   medianRt: null,
   sdRt: null,
@@ -616,7 +618,7 @@ describe('diagnosticResults', () => {
     const all = diagnosticResults([
       { module: 'pzmr', summary: summary({ medianRt: 301 }), conditions: {} },
       { module: 'szmr', summary: summary({ medianRt: 402 }), conditions: {} },
-      { module: 'gonogo', summary: summary({ score: 57 / 60 }), conditions: {} },
+      { module: 'gonogo', summary: summary({ score: 57 / 60, penalizedScore: 52 / 60 }), conditions: {} },
       { module: 'rdo', summary: summary({ meanAbsErrorMs: 23.5 }), conditions: {} },
       { module: 'gorbov', run: 0, seconds: 30 },
       { module: 'gorbov', run: 1, seconds: 35 },

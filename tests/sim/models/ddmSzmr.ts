@@ -1,0 +1,181 @@
+import { nextLevel, savedLevel, startLevel } from '../../../src/engine/adaptive';
+import { PENALTY, penalizedScore } from '../../../src/engine/reaction/summary';
+import type { Outcome } from '../../../src/engine/reaction/types';
+import { szmr } from '../../../src/modules/reaction/szmr';
+import { Rand, buildDdm, countLe, learn, nearestIdx, type DdmCell } from './learner';
+
+/**
+ * СЗМР over a 90-day course, played by a two-boundary diffusion learner (spec §8.2; ported from the fixes simulation
+ * bands.ts). The rules are the app's: the window and the load from szmr.params(L), the block score from
+ * penalizedScore, the level from nextLevel (levelDelta), startLevel and savedLevel. The stability rule is off here
+ * (cvRt and cvMax null).
+ */
+
+/** Drift rates and boundary separations of the diffusion table: start z = a/2, 2500 trajectories a cell, seed 31. */
+const VS = Array.from({ length: 17 }, (_, i) => 0.08 + 0.025 * i);
+const AS = [0.06, 0.08, 0.1, 0.12, 0.14];
+const Z_FRAC = 0.5;
+const DDM_SAMPLES = 2500;
+const DDM_SEED = 31;
+/** Practice: drift 0.30 → 0.42 and non-decision time 0.31 → 0.28 s, exponential in trials played with this scale. */
+const PRACTICE_SCALE = 3000;
+/** A lapse adds 300…700 ms to this share of answers. */
+const LAPSE = 0.01;
+/** The course: the module every 3 days from day 0 to day 90, 7 blocks a session. */
+const DAY_STEP = 3;
+const LAST_DAY = 90;
+const BLOCKS_PER_SESSION = 7;
+/** The first blocks of the module ever are calibration blocks (g = 2), as in the controller. */
+const CALIBRATION_BLOCKS = 3;
+
+/** How the learner picks its boundary: the one with the best expected penalised score, or a fixed one from AS. */
+export type BoundaryPolicy = 'opt' | { a: number };
+
+export interface SzmrCourseBlock {
+  day: number;
+  /** The penalised block score the level moved by. */
+  s: number;
+  /** Wrong keys inside the window, per trial. */
+  errorRate: number;
+  /** The level the block was played at. */
+  L: number;
+  /** L_saved at the start of the session. */
+  lSaved: number;
+}
+
+export interface SzmrCourse {
+  blocks: SzmrCourseBlock[];
+  /** L_saved after the session of each course day. */
+  savedByDay: Map<number, number>;
+}
+
+let table: DdmCell[][] | null = null;
+/** Built once (about 0.2 M trajectories) on first use. */
+const ddm = (): DdmCell[][] => (table ??= buildDdm(VS, AS, Z_FRAC, DDM_SAMPLES, DDM_SEED));
+
+interface Load {
+  windowMs: number;
+  /** Drift multiplier of the load. */
+  drift: number;
+  /** Seconds added to the non-decision time. */
+  ter: number;
+}
+
+/**
+ * szmr.params(L) as the learner feels it: Hick's slowing for the alternatives (3 colours on 2 keys count as 2.6),
+ * × 0.93 for the distracting shape, × 0.8 for the inversion, × 0.96 for sound and × 0.95 for visual noise (when the
+ * parameters have those fields), and 10 ms more non-decision time for the shape, 10 ms for sound, 15 ms for noise.
+ */
+function loadOf(L: number): Load {
+  const p = szmr.params(L);
+  const fields: Readonly<Record<string, unknown>> = { ...p };
+  const has = (key: string): boolean => fields[key] !== undefined && fields[key] !== null && fields[key] !== false;
+  const nAlt = p.nColors === 3 && p.nKeys === 2 ? 2.6 : p.nColors;
+  const audio = has('audio');
+  const noise = has('noise');
+  return {
+    windowMs: p.windowMs,
+    drift:
+      (1 - 0.17 * Math.log2(nAlt / 2)) *
+      (p.shapeDistractor ? 0.93 : 1) *
+      (p.inversion ? 0.8 : 1) *
+      (audio ? 0.96 : 1) *
+      (noise ? 0.95 : 1),
+    ter: (p.shapeDistractor ? 0.01 : 0) + (audio ? 0.01 : 0) + (noise ? 0.015 : 0),
+  };
+}
+
+/**
+ * The boundary of the cell row of the learner's drift. 'opt': the highest expected (right answers inside the window −
+ * PENALTY.wrong · wrong answers) / n, the first one on a tie; lapses and the ±25 ms spread are not foreseen.
+ */
+function pickCell(row: readonly DdmCell[], policy: BoundaryPolicy, terS: number, windowS: number): DdmCell {
+  if (policy !== 'opt') {
+    const fixed = row[AS.indexOf(policy.a)];
+    if (fixed === undefined) throw new RangeError(`runSzmrCourse: boundary ${String(policy.a)} is not one of ${AS.join(', ')}`);
+    return fixed;
+  }
+  let best = row[0] as DdmCell;
+  let bestValue = -Infinity;
+  for (const cell of row) {
+    const value = (countLe(cell.up, windowS - terS) - PENALTY.wrong * cell.lo.length) / cell.n;
+    if (value > bestValue) {
+      best = cell;
+      bestValue = value;
+    }
+  }
+  return best;
+}
+
+/** One block of n trials: a right answer inside the window is a hit, a wrong one an error, any answer after it late. */
+function playBlock(r: Rand, cell: DdmCell, terS: number, windowMs: number, n: number): Record<Outcome, number> {
+  const counts: Record<Outcome, number> = {
+    hit: 0,
+    wrong: 0,
+    miss: 0,
+    late: 0,
+    false_start: 0,
+    commission: 0,
+    correct_reject: 0,
+    early: 0,
+    timing_late: 0,
+  };
+  const pUp = cell.up.length / cell.n;
+  for (let i = 0; i < n; i++) {
+    const up = r.next() < pUp;
+    const times = up ? cell.up : cell.lo;
+    let rt = 1000 * (terS + (r.next() - 0.5) * 0.05 + (times[Math.floor(r.next() * times.length)] as number));
+    if (r.next() < LAPSE) rt += 300 + 400 * r.next();
+    if (rt > windowMs) counts.late++;
+    else if (up) counts.hit++;
+    else counts.wrong++;
+  }
+  return counts;
+}
+
+/**
+ * The course of one learner. `floors`: the personal window floor (spec §3.1.2) is not modelled yet and must be false;
+ * the window is szmr.params(L).windowMs.
+ */
+export function runSzmrCourse(seed: number, o: { floors: boolean; policy: BoundaryPolicy }): SzmrCourse {
+  if (o.floors) throw new RangeError('runSzmrCourse: the personal window floor is not modelled yet');
+  const r = new Rand(seed);
+  const cells = ddm();
+  const n = szmr.blockSize;
+  const blocks: SzmrCourseBlock[] = [];
+  const savedByDay = new Map<number, number>();
+  const ends: number[] = [];
+  let lSaved = 0;
+  let lastDay = 0;
+  let trials = 0;
+  let lifetime = 0;
+  for (let day = 0; day <= LAST_DAY; day += DAY_STEP) {
+    let L = startLevel(lSaved, day - lastDay);
+    lastDay = day;
+    let prev: number | null = null;
+    for (let k = 0; k < BLOCKS_PER_SESSION; k++) {
+      const load = loadOf(L);
+      const drift = learn(0.3, 0.42, trials, PRACTICE_SCALE) * load.drift;
+      const terS = learn(0.31, 0.28, trials, PRACTICE_SCALE) + load.ter;
+      const cell = pickCell(cells[nearestIdx(VS, drift)] as DdmCell[], o.policy, terS, load.windowMs / 1000);
+      const counts = playBlock(r, cell, terS, load.windowMs, n);
+      const s = penalizedScore(counts, n);
+      blocks.push({ day, s, errorRate: counts.wrong / n, L, lSaved });
+      L = nextLevel(L, {
+        score: s,
+        calibration: lifetime < CALIBRATION_BLOCKS,
+        prevScoreSameSession: prev,
+        cvRt: null,
+        cvMax: null,
+        timingUnreliable: false,
+      });
+      prev = s;
+      lifetime++;
+      trials += n;
+    }
+    ends.push(L);
+    lSaved = savedLevel(ends);
+    savedByDay.set(day, lSaved);
+  }
+  return { blocks, savedByDay };
+}

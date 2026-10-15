@@ -1,7 +1,8 @@
+import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { cv, sd } from '../stats';
 import { resolveBlock } from './resolve';
-import { isCleanHitRt, summarize } from './summary';
+import { PENALTY, isCleanHitRt, penalizedScore, penaltyPoints, summarize } from './summary';
 import type { Outcome, ReactionSummary, TrialResult, TrialSpec } from './types';
 
 function res(over: Partial<TrialResult> = {}): TrialResult {
@@ -54,6 +55,7 @@ const ZERO_COUNTS: Record<Outcome, number> = {
 const EMPTY: ReactionSummary = {
   n: 0,
   score: 0,
+  penalizedScore: 0,
   meanRt: null,
   medianRt: null,
   sdRt: null,
@@ -82,6 +84,8 @@ describe('summarize', () => {
     const s = summarize(TEN);
     expect(s.n).toBe(10);
     expect(s.score).toBe(0.5);
+    // 5 successes − 1 wrong − 2·(1 false start + 1 no-go press) = 0.
+    expect(s.penalizedScore).toBe(0);
     expect(s.meanRt).toBe(450);
     expect(s.medianRt).toBe(350);
     expect(s.sdRt).toBeCloseTo(310.9126, 3);
@@ -225,5 +229,58 @@ describe('summarize', () => {
 
   it('only practice trials → same as empty', () => {
     expect(summarize([res({ practice: true, frameDropped: true })])).toEqual(EMPTY);
+  });
+});
+
+describe('penalizedScore (F1)', () => {
+  const c = (o: Partial<Record<Outcome, number>>) => ({ ...ZERO_COUNTS, ...o });
+
+  it('penalised score: wrong costs 2, a false start or a no-go press 3, late and miss 1 (spec §2.1)', () => {
+    expect(penalizedScore(c({ hit: 20 }), 20)).toBe(1);
+    expect(penalizedScore(c({ hit: 17, wrong: 2, false_start: 1 }), 20)).toBeCloseTo(0.65, 12);
+    expect(penalizedScore(c({ hit: 16, correct_reject: 3, commission: 1 }), 20)).toBeCloseTo(0.85, 12);
+    expect(penalizedScore(c({ hit: 10, miss: 3, late: 2 }), 15)).toBeCloseTo(10 / 15, 12);
+    expect(penalizedScore(c({ hit: 8, early: 1, timing_late: 1 }), 10)).toBeCloseTo(0.8, 12);
+    expect(penalizedScore(c({ hit: 2, false_start: 13 }), 15)).toBe(0);
+    expect(penalizedScore(c({}), 0)).toBe(0);
+    expect(penaltyPoints(c({ wrong: 2, false_start: 1 }))).toBe(4);
+  });
+
+  it('the penalty is the cost above a non-success: wrong 1, false start 2, no-go press 2', () => {
+    expect(PENALTY).toEqual({ wrong: 1, false_start: 2, commission: 2 });
+    expect(penaltyPoints(c({ hit: 9, miss: 4, late: 3, early: 2, timing_late: 1, correct_reject: 5 }))).toBe(0);
+    expect(penaltyPoints(c({ wrong: 3, false_start: 2, commission: 1 }))).toBe(9);
+  });
+
+  it('for any results 0 ≤ penalizedScore ≤ score, equal without wrong keys, false starts and no-go presses', () => {
+    const OUTCOMES = Object.keys(ZERO_COUNTS) as Outcome[];
+    const result = fc
+      .record({ outcome: fc.constantFrom(...OUTCOMES), practice: fc.boolean() })
+      .map(({ outcome, practice }) => res({ outcome, success: outcome === 'hit' || outcome === 'correct_reject', practice }));
+    fc.assert(
+      fc.property(fc.array(result, { maxLength: 70 }), (results) => {
+        const s = summarize(results);
+        expect(s.penalizedScore).toBeGreaterThanOrEqual(0);
+        expect(s.penalizedScore).toBeLessThanOrEqual(s.score);
+        expect(s.penalizedScore).toBe(penalizedScore(s.counts, s.n));
+        if (s.counts.wrong + s.counts.false_start + s.counts.commission === 0) expect(s.penalizedScore).toBe(s.score);
+      }),
+      { numRuns: 1000 },
+    );
+  });
+
+  it('summarize counts the penalty over the non-practice trials only', () => {
+    const practice = [
+      res({ outcome: 'false_start', success: false, rtMs: 40, practice: true }),
+      res({ outcome: 'wrong', success: false, key: 'KeyJ', practice: true }),
+    ];
+    const block = [
+      ...Array.from({ length: 8 }, () => res()),
+      res({ outcome: 'wrong', success: false, key: 'KeyJ' }),
+      miss(),
+    ];
+    const s = summarize([...practice, ...block]);
+    expect(s).toMatchObject({ n: 10, score: 0.8 });
+    expect(s.penalizedScore).toBeCloseTo(0.7, 12);
   });
 });
