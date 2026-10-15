@@ -1,5 +1,5 @@
 import { existsSync, statSync } from 'node:fs';
-import { test as base, expect, type Browser, type Page } from '@playwright/test';
+import { test as base, expect, type Browser, type Locator, type Page } from '@playwright/test';
 import { openApp } from './bot';
 
 /** Collects the page's console errors and uncaught errors into `errors`. */
@@ -58,4 +58,13 @@ export async function shot(page: Page, name: string, fullPage = false): Promise<
   await page.screenshot({ path, fullPage });
   expect(existsSync(path), path).toBe(true);
   expect(statSync(path).size, path).toBeGreaterThan(1000);
+}
+
+/** The number of lines the element's text is laid out on (distinct tops of its text boxes). */
+export function lineCount(element: Locator): Promise<number> {
+  return element.evaluate((el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    return new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size;
+  });
 }

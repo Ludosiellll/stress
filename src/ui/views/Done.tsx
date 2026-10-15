@@ -120,7 +120,7 @@ function ResultsTable({ d, seriesTotal, comparison }: { d: DiagnosticResults; se
             {previous !== null && (
               <>
                 <td className="num">{cellText(previous.metrics, id, seriesTotal)}</td>
-                <td>{changeText(id, d, previous.metrics)}</td>
+                <td className="nowrap">{changeText(id, d, previous.metrics)}</td>
               </>
             )}
             <td>{diagnosticNorm(d, id) ?? NONE}</td>

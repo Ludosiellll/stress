@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { cancelPendingPresses, openApp, pageDate, playSession, type Screen } from './bot';
-import { E2E_URL, expect, shot, test } from './fixtures';
+import { E2E_URL, expect, lineCount, shot, test } from './fixtures';
 
 // Whole sessions at scale 0.02 still take tens of seconds each.
 test.describe.configure({ timeout: 240_000 });
@@ -107,7 +107,10 @@ test('diagnostic run writes results and home shows readiness', async ({ page }) 
   const rows = page.getByRole('table', { name: 'Результаты диагностики' }).locator('tbody tr');
   await expect(rows).toHaveCount(12);
   for (const row of await rows.all()) {
-    await expect(row.locator('td').nth(3)).toHaveText(/^(без изменений|[+−][\d,]+( мс| с| %)?, (лучше|хуже))$/);
+    const change = row.locator('td').nth(3);
+    await expect(change).toHaveText(/^(без изменений|[+−][\d,]+( мс| с| %)?, (лучше|хуже))$/);
+    // A change reads at a glance: never broken over two lines.
+    expect(await lineCount(change), await change.innerText()).toBe(1);
   }
   await expect(page.getByText(/^Индекс: \d+ \(прошлый — \d+\)$/)).toBeVisible();
   // The table from its header row: «На главную» has the focus, which scrolls the screen to the bottom.

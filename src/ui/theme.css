@@ -200,6 +200,11 @@ legend {
   padding: 10vh 24px 48px;
 }
 
+/* The diagnostic results take five columns with the comparison: wider than the other session screens. */
+.screen-center.done:has(.results) {
+  max-width: 960px;
+}
+
 .screen-center .hint {
   margin-top: 24px;
   color: var(--muted);
@@ -413,6 +418,11 @@ legend {
 .results .num {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+/* Short cells read at a glance: «без изменений», «ещё не тренировался» are never broken over two lines. */
+.results .nowrap {
+  white-space: nowrap;
 }
 
 .module-list {
