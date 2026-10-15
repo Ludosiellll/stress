@@ -69,21 +69,38 @@ export interface DiagnosticResults extends DiagnosticMetrics {
 const REACTION_IDS: readonly string[] = REACTION_MODULE_IDS;
 const isReactionId = (v: unknown): v is ReactionModuleId => typeof v === 'string' && REACTION_IDS.includes(v);
 
+type NumberMetric = Exclude<keyof DiagnosticMetrics, 'gorbov'>;
+const NUMBER_METRICS = Object.keys(EMPTY_METRICS).filter((k): k is NumberMetric => k !== 'gorbov');
+
+const finite = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+/** Горбов needs all three of V, P and Π as finite numbers; anything else reads as not measured. */
+function gorbovOf(v: unknown): DiagnosticMetrics['gorbov'] {
+  if (typeof v !== 'object' || v === null) return null;
+  const g = v as Readonly<Record<string, unknown>>;
+  const [V, P, Pi] = [finite(g['V']), finite(g['P']), finite(g['Pi'])];
+  return V === null || P === null || Pi === null ? null : { V, P, Pi };
+}
+
 /**
  * The stored results of a diagnostic, or null when the row does not hold a JSON object. A missing metric
  * reads as null (the W2 metrics of a 0.1.0 row, the mean RTs of a 0.2.0 one: missing, never 0); rows written before `unreliable` existed
- * read as reliable (I1); unknown entries are dropped. Structural: DiagnosticRow fits.
+ * read as reliable (I1). A damaged or imported row is read field by field (FW9): a metric that is not a finite number,
+ * or a Горбов result without numeric V, P and Π, reads as null; unknown entries are dropped. Structural: DiagnosticRow fits.
  */
 export function parseResults(row: { readonly resultsJson: string }): DiagnosticResults | null {
+  let value: unknown;
   try {
-    const value = JSON.parse(row.resultsJson) as unknown;
-    if (typeof value !== 'object' || value === null) return null;
-    const r = value as Partial<DiagnosticResults>;
-    const unreliable = Array.isArray(r.unreliable) ? (r.unreliable as unknown[]).filter(isReactionId) : [];
-    return { ...EMPTY_METRICS, ...r, unreliable };
+    value = JSON.parse(row.resultsJson);
   } catch {
     return null;
   }
+  if (typeof value !== 'object' || value === null) return null;
+  const r = value as Readonly<Record<string, unknown>>;
+  const metrics = { ...EMPTY_METRICS, gorbov: gorbovOf(r['gorbov']) };
+  for (const k of NUMBER_METRICS) metrics[k] = finite(r[k]);
+  const unreliable = Array.isArray(r['unreliable']) ? (r['unreliable'] as unknown[]).filter(isReactionId) : [];
+  return { ...metrics, unreliable };
 }
 
 /** Family order of the number-series diagnostic; mirrors the module's FAMILIES (engine must not import src/modules). */

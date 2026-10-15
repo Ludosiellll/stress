@@ -1,6 +1,6 @@
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import type { DiagnosticResults } from '../../engine/diagnostic';
+import { parseResults, type DiagnosticResults } from '../../engine/diagnostic';
 import { conditionLines, type BlockSummaryView, type DiagnosticComparison } from '../../session/steps';
 import Done from './Done';
 
@@ -133,6 +133,20 @@ describe('Done', () => {
     ]);
     // No mean RT (a diagnostic before 0.3.0 has none): no reference band.
     expect(rows[0]).toEqual(['ПЗМР — медиана времени реакции', '251 мс', '264 мс', '−13 мс, лучше', '—']);
+  });
+
+  it('a damaged previous diagnostic reads «нет данных» where it is damaged, never a broken screen (FW9)', () => {
+    const metrics = parseResults({ resultsJson: '{"gorbov":{"V":40},"pzmrMedianRt":"281","szmrMedianRt":398}' });
+    if (metrics === null) throw new Error('the damaged row is still an object');
+    render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} comparison={{ ...WITH_PREVIOUS, previous: { ...PAST, metrics } }} onHome={vi.fn()} />);
+    const rows = cells();
+    expect(rows[0]).toEqual(['ПЗМР — медиана времени реакции', '251 мс', 'нет данных', '—', 'по среднему 262 мс: средний']);
+    expect(rows[1]?.slice(1, 4)).toEqual(['402 мс', '398 мс', 'без изменений']);
+    expect(rows.slice(4, 7).map((r) => r.slice(2, 4))).toEqual([
+      ['нет данных', '—'],
+      ['нет данных', '—'],
+      ['нет данных', '—'],
+    ]);
   });
 
   it('a current value that is missing has no change either', () => {

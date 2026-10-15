@@ -107,8 +107,8 @@ describe('diagnosticCharts', () => {
     ]);
     expect(charts[0]?.series[0]?.points.map((p) => p.y)).toEqual([null, null, 300]);
     expect(charts[1]?.series[0]?.points.map((p) => p.y)).toEqual([420, null, null]);
-    expect(charts[4]?.series[0]?.points.map((p) => p.y)).toEqual([null, null, 40]);
-    expect(charts[4]?.series[1]?.points.map((p) => p.y)).toEqual([null, null, null]);
+    // A Горбов result needs V, P and Π (parseResults, FW9): a damaged one is a gap in all three lines.
+    for (const series of charts[4]?.series ?? []) expect(series.points.map((p) => p.y)).toEqual([null, null, null]);
   });
 
   it('marks the points of modules measured with dropped frames (I1)', () => {

@@ -129,4 +129,13 @@ describe('parseResults', () => {
     expect(parseResults({ resultsJson: 'not json' })).toBeNull();
     expect(parseResults({ resultsJson: '42' })).toBeNull();
   });
+
+  it('a damaged or imported row: every metric is a finite number or null, Горбов needs V, P and Π (FW9)', () => {
+    expect(parseResults({ resultsJson: '{"gorbov":{"V":40}}' })).toEqual(EMPTY);
+    expect(parseResults({ resultsJson: '{"gorbov":{"V":40,"P":"60","Pi":10}}' })?.gorbov).toBeNull();
+    expect(parseResults({ resultsJson: '{"gorbov":[40,60,10]}' })?.gorbov).toBeNull();
+    expect(parseResults({ resultsJson: '{"gorbov":{"V":40,"P":60,"Pi":-10,"extra":1}}' })?.gorbov).toEqual({ V: 40, P: 60, Pi: -10 });
+    expect(parseResults({ resultsJson: '{"pzmrMedianRt":"281","szmrMedianRt":true,"memorySpan":{},"rdoMeanAbsErrorMs":1e999}' })).toEqual(EMPTY);
+    expect(parseResults({ resultsJson: '{"pzmrMedianRt":281,"number":3}' })).toEqual({ ...EMPTY, pzmrMedianRt: 281 });
+  });
 });
