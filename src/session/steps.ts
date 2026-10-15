@@ -60,8 +60,33 @@ export type Step =
    * seriesTotal: number-series items of a diagnostic (for «14 из 20»); null otherwise or if that block was not stored.
    * indexDeferred: parts of this diagnostic are their own baseline and count in the readiness index from the next one
    * (W2-R31); false for training and free sessions.
+   * comparison: null for training and free sessions, and when the earlier diagnostics could not be read (О9).
    */
-  | { kind: 'done'; sessionId: string; diagnostic: DiagnosticResults | null; seriesTotal: number | null; indexDeferred: boolean };
+  | {
+      kind: 'done';
+      sessionId: string;
+      diagnostic: DiagnosticResults | null;
+      seriesTotal: number | null;
+      indexDeferred: boolean;
+      comparison: DiagnosticComparison | null;
+    };
+
+/** A stored diagnostic as parseResults read it. */
+export interface PastDiagnostic {
+  number: number;
+  at: string;
+  metrics: DiagnosticResults;
+}
+
+/** What «Сессия завершена» compares a diagnostic with (§3.3). */
+export interface DiagnosticComparison {
+  /** The diagnostic before this one in listDiagnostics order (by `at`, W2-R33); null: this is the first. */
+  previous: PastDiagnostic | null;
+  /** readinessOfLatest(earlier, this).overall. */
+  readiness: number | null;
+  /** readinessOfLatest(earlier without the last, the last).overall; null without a previous diagnostic. */
+  readinessPrevious: number | null;
+}
 
 /**
  * Which writes failed (Ruling R32): `block` — the block itself (skipping drops it as if it was never played);

@@ -582,7 +582,9 @@ describe('diagnosticResults', () => {
     ]);
     expect(all).toEqual({
       pzmrMedianRt: 301,
+      pzmrMeanRt: null,
       szmrMedianRt: 402,
+      szmrMeanRt: null,
       gonogoScore: (57 / 60) * 100,
       rdoMeanAbsErrorMs: 23.5,
       gorbov: gorbovMetrics(30, 35, 70),
@@ -611,5 +613,13 @@ describe('diagnosticResults', () => {
     expect(diagnosticResults([{ module: 'gorbov', run: 0, seconds: 30 }, { module: 'gorbov', run: 2, seconds: 70 }]).gorbov).toBeNull();
     expect(diagnosticResults([])).toEqual({ ...EMPTY_METRICS, unreliable: [] });
     expect(Object.values(EMPTY_METRICS).every((v) => v === null)).toBe(true);
+  });
+
+  it('diagnosticResults keeps the mean RTs of ПЗМР and СЗМР', () => {
+    const r = diagnosticResults([
+      { module: 'pzmr', summary: summary({ medianRt: 301, meanRt: 312.5 }), conditions: {} },
+      { module: 'szmr', summary: summary({ medianRt: 402, meanRt: 410 }), conditions: {} },
+    ]);
+    expect(r).toMatchObject({ pzmrMedianRt: 301, pzmrMeanRt: 312.5, szmrMedianRt: 402, szmrMeanRt: 410 });
   });
 });

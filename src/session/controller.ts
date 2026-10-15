@@ -4,7 +4,7 @@ import type { LogicItemRow, TrialRow, WellbeingRow } from '../data/rows';
 import { detectFatigue, nextLevel, startLevel } from '../engine/adaptive';
 import { daysBetween } from '../engine/dates';
 import { deriveModuleStates, isCleanBlock } from '../engine/derive';
-import { parseResults, type DiagnosticMetrics, type DiagnosticResults } from '../engine/diagnostic';
+import { parseResults, type DiagnosticResults } from '../engine/diagnostic';
 import type { Rating } from '../engine/elo';
 import { OVERLOAD_LEVEL_STEP, type ModuleState, type Segment, type SessionPlan } from '../engine/planner';
 import type { BlockTimeline } from '../engine/reaction/types';
@@ -46,6 +46,8 @@ import {
   stabilityLine,
   tableLines,
   UNRELIABLE_REPLAY_NOTICE,
+  type DiagnosticComparison,
+  type PastDiagnostic,
   type SaveErrorWhat,
   type SeriesAnswer,
   type Step,
@@ -143,6 +145,17 @@ interface SaveContext {
 const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /**
+ * The comparison of the done step: the previous diagnostic is the last earlier one by date (W2-R33), and its index is
+ * what readinessOfLatest gave it after the ones before it.
+ */
+function compareWithPrevious(earlier: readonly PastDiagnostic[], readiness: number | null): DiagnosticComparison {
+  const previous = earlier.at(-1) ?? null;
+  const readinessPrevious =
+    previous === null ? null : readinessOfLatest(earlier.slice(0, -1).map((e) => e.metrics), previous.metrics).overall;
+  return { previous, readiness, readinessPrevious };
+}
+
+/**
  * Runs one session plan step by step (instruction → blocks → summary → … → wellbeing → done) and stores
  * every block as soon as it ends. The UI renders `step` and calls back; it never touches levels or the repository.
  *
@@ -195,9 +208,12 @@ export class SessionController {
 
   /** What the stored diagnostic blocks add to DiagnosticResults. */
   private readonly diagParts: DiagnosticPart[] = [];
-  /** A diagnostic: the stored ones before it, in order (the readiness note of the done step, W2-R31). */
-  /** null: they could not be read; the done step then says nothing about deferred parts. */
-  private readonly earlierDiagnostics: DiagnosticMetrics[] | null;
+  /**
+   * A diagnostic: the stored ones before it, in listDiagnostics order (by `at`, W2-R33), for the readiness note
+   * (W2-R31) and the comparison of the done step. null: they could not be read; the done step then says nothing
+   * about deferred parts and compares with nothing.
+   */
+  private readonly earlierDiagnostics: PastDiagnostic[] | null;
   /**
    * Training and free sessions: the block history read at start, with every block of this session appended once it
    * is stored. null: a diagnostic, or the read failed (no history line then, О10).
@@ -209,7 +225,7 @@ export class SessionController {
     scale: number,
     states: Record<ModuleId, ModuleState>,
     ratings: Map<FamilyId, Rating>,
-    earlierDiagnostics: DiagnosticMetrics[] | null,
+    earlierDiagnostics: PastDiagnostic[] | null,
     history: BlockHistory | null,
   ) {
     this.repo = o.repo;
@@ -265,9 +281,12 @@ export class SessionController {
     }
   }
 
-  /** The stored diagnostics' metrics, for the done step's note on deferred parts only. */
-  private static async earlierDiagnostics(repo: Repository): Promise<DiagnosticMetrics[]> {
-    return (await repo.listDiagnostics()).flatMap((d) => parseResults(d) ?? []);
+  /** The stored diagnostics that parseResults reads, for the done step (deferred parts, comparison). */
+  private static async earlierDiagnostics(repo: Repository): Promise<PastDiagnostic[]> {
+    return (await repo.listDiagnostics()).flatMap((d) => {
+      const metrics = parseResults(d);
+      return metrics === null ? [] : [{ number: d.number, at: d.at, metrics }];
+    });
   }
 
   /** The whole block history, read once per training or free session (О11); state writes read only listBlockLevels. */
@@ -639,8 +658,14 @@ export class SessionController {
     let seriesTotal: number | null = null;
     for (const p of this.diagParts) if (p.module === 'numseries') seriesTotal = p.total;
     const earlier = this.earlierDiagnostics;
-    const indexDeferred = diagnostic !== null && earlier !== null && readinessOfLatest(earlier, diagnostic).deferred;
-    this.current = { kind: 'done', sessionId: this.sessionId, diagnostic, seriesTotal, indexDeferred };
+    let indexDeferred = false;
+    let comparison: DiagnosticComparison | null = null;
+    if (diagnostic !== null && earlier !== null) {
+      const latest = readinessOfLatest(earlier.map((e) => e.metrics), diagnostic);
+      indexDeferred = latest.deferred;
+      comparison = compareWithPrevious(earlier, latest.overall);
+    }
+    this.current = { kind: 'done', sessionId: this.sessionId, diagnostic, seriesTotal, indexDeferred, comparison };
   }
 
   // ---------- blocks ----------

@@ -315,7 +315,7 @@ describe('Session steps', () => {
       [{ kind: 'fatigue_prompt', module: 'szmr' }, () => screen.getByText(/Похоже на усталость/)],
       [{ kind: 'save_error', message: 'Не удалось сохранить результаты.', canAbandon: true, what: 'block' }, () => screen.getByText('Не удалось сохранить результаты.')],
       [{ kind: 'wellbeing' }, () => screen.getByRole('button', { name: 'Пропустить' })],
-      [{ kind: 'done', sessionId: 's', diagnostic: null, seriesTotal: null, indexDeferred: false }, () => screen.getByText('Сессия завершена')],
+      [{ kind: 'done', sessionId: 's', diagnostic: null, seriesTotal: null, indexDeferred: false, comparison: null }, () => screen.getByText('Сессия завершена')],
     ];
     for (const [step, find] of cases) {
       const r = await renderSession(fakeDriver(step));
@@ -339,7 +339,7 @@ describe('Session steps', () => {
       return Promise.resolve();
     });
     c.submitWellbeing.mockImplementation(() => {
-      c.step = { kind: 'done', sessionId: 's', diagnostic: null, seriesTotal: null, indexDeferred: false };
+      c.step = { kind: 'done', sessionId: 's', diagnostic: null, seriesTotal: null, indexDeferred: false, comparison: null };
       return Promise.resolve();
     });
     const { onExit, platform } = await renderSession(c);
@@ -455,6 +455,7 @@ describe('Session steps', () => {
     const diagnostic: DiagnosticResults = {
       ...EMPTY_METRICS,
       pzmrMedianRt: 251.4,
+      pzmrMeanRt: 262.4,
       szmrMedianRt: 402,
       gonogoScore: 93.3,
       rdoMeanAbsErrorMs: 18.6,
@@ -462,32 +463,37 @@ describe('Session steps', () => {
       numseriesCorrect: 14,
       unreliable: [],
     };
-    await renderSession(fakeDriver({ kind: 'done', sessionId: 's', diagnostic, seriesTotal: 20, indexDeferred: true }), { plan: { ...PLAN, kind: 'diagnostic' } });
+    const comparison = { previous: null, readiness: 61.6, readinessPrevious: null };
+    await renderSession(fakeDriver({ kind: 'done', sessionId: 's', diagnostic, seriesTotal: 20, indexDeferred: true, comparison }), {
+      plan: { ...PLAN, kind: 'diagnostic' },
+    });
     expect(screen.getByText('Новые показатели войдут в индекс со следующей диагностики.')).toBeTruthy();
+    expect(screen.getByText('Индекс: 62')).toBeTruthy();
+    expect(screen.getByText('Первая диагностика — сравнивать пока не с чем')).toBeTruthy();
     const table = screen.getByRole('table', { name: 'Результаты диагностики' });
     const rows = within(table)
       .getAllByRole('row')
       .slice(1)
       .map((r) => within(r).getAllByRole('cell').map((td) => td.textContent));
     expect(rows).toEqual([
-      ['ПЗМР — медиана времени реакции', '251 мс'],
-      ['Сложная реакция (СЗМР) — медиана времени реакции', '402 мс'],
-      ['Go/No-Go — верные ответы', '93 %'],
-      ['Реакция на движущийся объект — средняя ошибка', '19 мс'],
-      ['Горбов — V, среднее время 1-й и 2-й таблиц', '41,3 с'],
-      ['Горбов — P, время 3-й таблицы', '70,5 с'],
-      ['Горбов — Π, переключение внимания', '−12,0 с'],
-      ['Числовые ряды — решено верно', '14 из 20'],
-      ['Помехоустойчивость — разница с помехами и без', 'нет данных'],
-      ['Струп — интерференция', 'нет данных'],
-      ['Переключение правил — цена переключения', 'нет данных'],
-      ['Память — объём', 'нет данных'],
+      ['ПЗМР — медиана времени реакции', '251 мс', 'по среднему 262 мс: средний'],
+      ['Сложная реакция (СЗМР) — медиана времени реакции', '402 мс', '—'],
+      ['Go/No-Go — верные ответы', '93 %', '—'],
+      ['Реакция на движущийся объект — средняя ошибка', '19 мс', '—'],
+      ['Горбов — V, среднее время 1-й и 2-й таблиц', '41,3 с', 'средний'],
+      ['Горбов — P, время 3-й таблицы', '70,5 с', 'высокий'],
+      ['Горбов — Π, переключение внимания', '−12,0 с', '—'],
+      ['Числовые ряды — решено верно', '14 из 20', '—'],
+      ['Помехоустойчивость — разница с помехами и без', 'нет данных', '—'],
+      ['Струп — интерференция', 'нет данных', '—'],
+      ['Переключение правил — цена переключения', 'нет данных', '—'],
+      ['Память — объём', 'нет данных', '—'],
     ]);
   });
 
   it('marks missing diagnostic metrics', async () => {
     const diagnostic: DiagnosticResults = { ...EMPTY_METRICS, unreliable: [] };
-    await renderSession(fakeDriver({ kind: 'done', sessionId: 's', diagnostic, seriesTotal: null, indexDeferred: false }));
+    await renderSession(fakeDriver({ kind: 'done', sessionId: 's', diagnostic, seriesTotal: null, indexDeferred: false, comparison: null }));
     expect(screen.getAllByText('нет данных')).toHaveLength(12);
     expect(screen.queryByText(/войдут в индекс/)).toBeNull();
   });

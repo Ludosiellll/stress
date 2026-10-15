@@ -409,7 +409,7 @@ function condMetrics(conditions: ConditionStats, { slow, fast }: CondPair): [fas
 }
 
 /**
- * pzmr/szmr medianRt, gonogo score × 100 (percent, Ruling R18), rdo meanAbsErrorMs, Gorbov metrics only when
+ * pzmr/szmr medianRt and meanRt, gonogo score × 100 (percent, Ruling R18), rdo meanAbsErrorMs, Gorbov metrics only when
  * all three runs were completed, number series correct within the total limit; the condition medians and their
  * difference of pomeh, stroop and taskswitch, the memory span. Missing parts stay null.
  * Reaction blocks stored with timingUnreliable (after their replay) list their module in `unreliable`.
@@ -422,9 +422,11 @@ export function diagnosticResults(parts: readonly DiagnosticPart[]): DiagnosticR
     switch (p.module) {
       case 'pzmr':
         r.pzmrMedianRt = p.summary.medianRt;
+        r.pzmrMeanRt = p.summary.meanRt;
         break;
       case 'szmr':
         r.szmrMedianRt = p.summary.medianRt;
+        r.szmrMeanRt = p.summary.meanRt;
         break;
       case 'gonogo':
         r.gonogoScore = p.summary.score * 100;

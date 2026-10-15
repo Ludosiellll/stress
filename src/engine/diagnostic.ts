@@ -4,11 +4,16 @@ import type { Segment, SessionPlan } from './planner';
 
 /**
  * The measured values of one control diagnostic; null = metric not available. The W2 metrics (pomeh … memorySpan)
- * are null in rows stored before 0.2.0, and a condition median is null below MIN_COND_RTS RTs.
+ * are null in rows stored before 0.2.0, the mean RTs in rows stored before 0.3.0, and a condition median is null
+ * below MIN_COND_RTS RTs.
  */
 export interface DiagnosticMetrics {
   pzmrMedianRt: number | null;
+  /** Mean RT of ПЗМР: the published norms are of the mean (the screens still show the median). */
+  pzmrMeanRt: number | null;
   szmrMedianRt: number | null;
+  /** Mean RT of СЗМР, as pzmrMeanRt. */
+  szmrMeanRt: number | null;
   /** Percent of successful trials, 0–100 (the controller fills it as summary.score · 100). */
   gonogoScore: number | null;
   rdoMeanAbsErrorMs: number | null;
@@ -33,7 +38,9 @@ export interface DiagnosticMetrics {
 /** Every metric missing: what a diagnostic without any block, or a missing key of a stored row, reads as. */
 export const EMPTY_METRICS: Readonly<DiagnosticMetrics> = Object.freeze({
   pzmrMedianRt: null,
+  pzmrMeanRt: null,
   szmrMedianRt: null,
+  szmrMeanRt: null,
   gonogoScore: null,
   rdoMeanAbsErrorMs: null,
   gorbov: null,
@@ -64,7 +71,7 @@ const isReactionId = (v: unknown): v is ReactionModuleId => typeof v === 'string
 
 /**
  * The stored results of a diagnostic, or null when the row does not hold a JSON object. A missing metric
- * reads as null (the W2 metrics of a 0.1.0 row: missing, never 0); rows written before `unreliable` existed
+ * reads as null (the W2 metrics of a 0.1.0 row, the mean RTs of a 0.2.0 one: missing, never 0); rows written before `unreliable` existed
  * read as reliable (I1); unknown entries are dropped. Structural: DiagnosticRow fits.
  */
 export function parseResults(row: { readonly resultsJson: string }): DiagnosticResults | null {

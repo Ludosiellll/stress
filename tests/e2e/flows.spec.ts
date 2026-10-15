@@ -27,6 +27,7 @@ async function runDiagnostic(page: Page): Promise<void> {
   await expect(results.locator('tbody tr')).toHaveCount(12);
   // Every indicator has a value: the diagnostic covered all ten modules, each condition with enough RTs.
   await expect(results).not.toContainText('нет данных');
+  await expect(page.getByText(/^Индекс: \d+/)).toBeVisible();
   expect(titles.length).toBeGreaterThanOrEqual(10);
   for (const module of ['Помехоустойчивость', 'Струп', 'Переключение правил', 'Память']) {
     expect(titles, `a ${module} block was played`).toContain(module);
@@ -95,9 +96,13 @@ test('diagnostic run writes results and home shows readiness', async ({ page }) 
   await expect(page.getByText('Пройди диагностику, чтобы увидеть индекс')).toBeVisible();
   // First diagnostic = the baseline; the second is scored against it.
   await runDiagnostic(page);
+  await expect(page.getByText('Первая диагностика — сравнивать пока не с чем')).toBeVisible();
   await page.getByRole('button', { name: 'На главную' }).click();
   await expect(home(page)).toBeVisible();
   await runDiagnostic(page);
+  // The second one is compared with the first.
+  await expect(page.getByRole('columnheader', { name: /^Прошлая \(№1, \d\d\.\d\d\.\d{4}\)$/ })).toBeVisible();
+  await expect(page.getByText(/^Индекс: \d+ \(прошлый — \d+\)$/)).toBeVisible();
   await page.getByRole('button', { name: 'На главную' }).click();
 
   const readiness = page.locator('.readiness');

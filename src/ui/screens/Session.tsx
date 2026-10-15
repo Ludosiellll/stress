@@ -409,7 +409,14 @@ function SessionFlow({
       );
     case 'done':
       return (
-        <Done diagnostic={step.diagnostic} seriesTotal={step.seriesTotal} summaries={summaries} indexDeferred={step.indexDeferred} onHome={exit} />
+        <Done
+          diagnostic={step.diagnostic}
+          seriesTotal={step.seriesTotal}
+          summaries={summaries}
+          indexDeferred={step.indexDeferred}
+          comparison={step.comparison}
+          onHome={exit}
+        />
       );
   }
 }

@@ -59,7 +59,9 @@ export function mergedBaseline(results: readonly DiagnosticMetrics[]): Diagnosti
   };
   return {
     pzmrMedianRt: first('pzmrMedianRt'),
+    pzmrMeanRt: first('pzmrMeanRt'),
     szmrMedianRt: first('szmrMedianRt'),
+    szmrMeanRt: first('szmrMeanRt'),
     gonogoScore: first('gonogoScore'),
     rdoMeanAbsErrorMs: first('rdoMeanAbsErrorMs'),
     gorbov: first('gorbov'),

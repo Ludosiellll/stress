@@ -267,7 +267,9 @@ describe('readiness', () => {
     const diff = fc.option(fc.double({ min: -500, max: 500, noNaN: true }), { nil: null });
     const res = fc.record({
       pzmrMedianRt: num,
+      pzmrMeanRt: num,
       szmrMedianRt: num,
+      szmrMeanRt: num,
       gonogoScore: num,
       rdoMeanAbsErrorMs: num,
       gorbov: g,
@@ -341,6 +343,16 @@ describe('mergedBaseline (M2)', () => {
       // 0 is a value (a span of 0), not a missing one.
       memorySpan: 0,
     });
+  });
+
+  it('mergedBaseline takes the mean RTs from the first diagnostic that has them', () => {
+    // A 0.2.0 diagnostic has no mean RTs: the first 0.3.0 one gives them.
+    const merged = mergedBaseline([
+      { ...EMPTY, pzmrMedianRt: 320 },
+      { ...EMPTY, pzmrMedianRt: 300, pzmrMeanRt: 312.5 },
+      { ...EMPTY, pzmrMedianRt: 280, pzmrMeanRt: 290, szmrMeanRt: 410 },
+    ]);
+    expect(merged).toEqual({ ...EMPTY_METRICS, pzmrMedianRt: 320, pzmrMeanRt: 312.5, szmrMeanRt: 410 });
   });
 });
 

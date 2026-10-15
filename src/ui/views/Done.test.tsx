@@ -1,12 +1,14 @@
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { DiagnosticResults } from '../../engine/diagnostic';
-import { conditionLines, type BlockSummaryView } from '../../session/steps';
+import { conditionLines, type BlockSummaryView, type DiagnosticComparison } from '../../session/steps';
 import Done from './Done';
 
 const RESULTS: DiagnosticResults = {
   pzmrMedianRt: 251.4,
+  pzmrMeanRt: 262.4,
   szmrMedianRt: 402,
+  szmrMeanRt: 401.6,
   gonogoScore: 93.3,
   rdoMeanAbsErrorMs: 18.6,
   gorbov: { V: 41.25, P: 70.5, Pi: -12 },
@@ -24,8 +26,41 @@ const RESULTS: DiagnosticResults = {
   unreliable: [],
 };
 
+const PREVIOUS: DiagnosticResults = {
+  ...RESULTS,
+  pzmrMedianRt: 263.6,
+  pzmrMeanRt: null,
+  szmrMedianRt: 398,
+  szmrMeanRt: null,
+  gonogoScore: 90,
+  rdoMeanAbsErrorMs: 25,
+  gorbov: { V: 45, P: 70, Pi: -10 },
+  numseriesCorrect: 12,
+  stroopCongruentRt: 500,
+  stroopIncongruentRt: 600,
+  stroopInterferenceMs: 100,
+  switchRepeatRt: null,
+  switchSwitchRt: null,
+  switchCostMs: null,
+};
+
+const PAST = { number: 3, at: '2026-10-12T09:00:00', metrics: PREVIOUS };
+
+const WITH_PREVIOUS: DiagnosticComparison = {
+  previous: PAST,
+  readiness: 72.4,
+  readinessPrevious: 65.2,
+};
+
 function view(over: Partial<BlockSummaryView>): BlockSummaryView {
   return { module: 'pzmr', title: 'ПЗМР', lBefore: 0, lAfter: 0, changes: [], score: 1, lines: [], flags: [], showLevel: true, ...over };
+}
+
+function headers(): string[] {
+  const table = screen.getByRole('table', { name: 'Результаты диагностики' });
+  return within(table)
+    .getAllByRole('columnheader')
+    .map((th) => th.textContent);
 }
 
 function cells(): string[][] {
@@ -40,19 +75,99 @@ describe('Done', () => {
   it('lists the twelve diagnostic results, the W2 ones after the number series', () => {
     render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} onHome={vi.fn()} />);
     expect(cells()).toEqual([
-      ['ПЗМР — медиана времени реакции', '251 мс'],
-      ['Сложная реакция (СЗМР) — медиана времени реакции', '402 мс'],
-      ['Go/No-Go — верные ответы', '93 %'],
-      ['Реакция на движущийся объект — средняя ошибка', '19 мс'],
-      ['Горбов — V, среднее время 1-й и 2-й таблиц', '41,3 с'],
-      ['Горбов — P, время 3-й таблицы', '70,5 с'],
-      ['Горбов — Π, переключение внимания', '−12,0 с'],
-      ['Числовые ряды — решено верно', '14 из 20'],
-      ['Помехоустойчивость — разница с помехами и без', '+35 мс'],
-      ['Струп — интерференция', '+90 мс'],
-      ['Переключение правил — цена переключения', '−12 мс'],
-      ['Память — объём', '7'],
+      ['ПЗМР — медиана времени реакции', '251 мс', 'по среднему 262 мс: средний'],
+      ['Сложная реакция (СЗМР) — медиана времени реакции', '402 мс', 'по среднему 402 мс: ниже среднего'],
+      ['Go/No-Go — верные ответы', '93 %', '—'],
+      ['Реакция на движущийся объект — средняя ошибка', '19 мс', '—'],
+      ['Горбов — V, среднее время 1-й и 2-й таблиц', '41,3 с', 'средний'],
+      ['Горбов — P, время 3-й таблицы', '70,5 с', 'высокий'],
+      ['Горбов — Π, переключение внимания', '−12,0 с', '—'],
+      ['Числовые ряды — решено верно', '14 из 20', '—'],
+      ['Помехоустойчивость — разница с помехами и без', '+35 мс', '—'],
+      ['Струп — интерференция', '+90 мс', '—'],
+      ['Переключение правил — цена переключения', '−12 мс', '—'],
+      ['Память — объём', '7', 'средний'],
     ]);
+  });
+
+  it('with a previous diagnostic: Прошлая, Изменение, Ориентир', () => {
+    render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} comparison={WITH_PREVIOUS} onHome={vi.fn()} />);
+    expect(headers()).toEqual(['Показатель', 'Результат', 'Прошлая (№3, 12.10.2026)', 'Изменение', 'Ориентир']);
+    expect(cells()).toEqual([
+      ['ПЗМР — медиана времени реакции', '251 мс', '264 мс', '−13 мс, лучше', 'по среднему 262 мс: средний'],
+      ['Сложная реакция (СЗМР) — медиана времени реакции', '402 мс', '398 мс', 'без изменений', 'по среднему 402 мс: ниже среднего'],
+      ['Go/No-Go — верные ответы', '93 %', '90 %', '+3 %, лучше', '—'],
+      ['Реакция на движущийся объект — средняя ошибка', '19 мс', '25 мс', '−6 мс, лучше', '—'],
+      ['Горбов — V, среднее время 1-й и 2-й таблиц', '41,3 с', '45,0 с', '−3,7 с, лучше', 'средний'],
+      ['Горбов — P, время 3-й таблицы', '70,5 с', '70,0 с', 'без изменений', 'высокий'],
+      ['Горбов — Π, переключение внимания', '−12,0 с', '−10,0 с', '−2,0 с, лучше', '—'],
+      ['Числовые ряды — решено верно', '14 из 20', '12 из 20', '+2, лучше', '—'],
+      ['Помехоустойчивость — разница с помехами и без', '+35 мс', '+35 мс', 'без изменений', '—'],
+      ['Струп — интерференция', '+90 мс', '+100 мс', '−10 мс, лучше', '—'],
+      ['Переключение правил — цена переключения', '−12 мс', 'нет данных', '—', '—'],
+      ['Память — объём', '7', '7', 'без изменений', 'средний'],
+    ]);
+    expect(screen.getByText('Индекс: 72 (прошлый — 65)')).toBeTruthy();
+    expect(screen.queryByText(/Первая диагностика/)).toBeNull();
+  });
+
+  it('the first diagnostic says there is nothing to compare with', () => {
+    render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} comparison={{ previous: null, readiness: 60, readinessPrevious: null }} onHome={vi.fn()} />);
+    expect(screen.getByText('Первая диагностика — сравнивать пока не с чем')).toBeTruthy();
+    expect(screen.getByText('Индекс: 60')).toBeTruthy();
+    expect(headers()).toEqual(['Показатель', 'Результат', 'Ориентир']);
+    expect(cells()[0]).toEqual(['ПЗМР — медиана времени реакции', '251 мс', 'по среднему 262 мс: средний']);
+  });
+
+  it('a previous value that is missing reads «нет данных» and has no change', () => {
+    render(
+      <Done diagnostic={{ ...RESULTS, pzmrMeanRt: null }} seriesTotal={20} summaries={[]} comparison={WITH_PREVIOUS} onHome={vi.fn()} />,
+    );
+    const rows = cells();
+    expect(rows.find(([name]) => name?.startsWith('Переключение правил') === true)).toEqual([
+      'Переключение правил — цена переключения',
+      '−12 мс',
+      'нет данных',
+      '—',
+      '—',
+    ]);
+    // No mean RT (a diagnostic before 0.3.0 has none): no reference band.
+    expect(rows[0]).toEqual(['ПЗМР — медиана времени реакции', '251 мс', '264 мс', '−13 мс, лучше', '—']);
+  });
+
+  it('a current value that is missing has no change either', () => {
+    render(<Done diagnostic={{ ...RESULTS, memorySpan: null }} seriesTotal={20} summaries={[]} comparison={WITH_PREVIOUS} onHome={vi.fn()} />);
+    expect(cells().at(-1)).toEqual(['Память — объём', 'нет данных', '7', '—', '—']);
+  });
+
+  it('the previous column marks the values of its own unreliable measurements (I1)', () => {
+    const previous = { ...PAST, metrics: { ...PREVIOUS, unreliable: ['pzmr' as const] } };
+    render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} comparison={{ ...WITH_PREVIOUS, previous }} onHome={vi.fn()} />);
+    expect(cells()[0]?.slice(1, 3)).toEqual(['251 мс', '264 мс, замер ненадёжен']);
+  });
+
+  it('no index line without a readiness; the previous one is left out when missing', () => {
+    const { rerender } = render(
+      <Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} comparison={{ ...WITH_PREVIOUS, readiness: null }} onHome={vi.fn()} />,
+    );
+    expect(screen.queryByText(/Индекс:/)).toBeNull();
+    rerender(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} comparison={{ ...WITH_PREVIOUS, readinessPrevious: null }} onHome={vi.fn()} />);
+    expect(screen.getByText('Индекс: 72')).toBeTruthy();
+  });
+
+  it('without a comparison: result and reference only, no index line', () => {
+    render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} comparison={null} onHome={vi.fn()} />);
+    expect(headers()).toEqual(['Показатель', 'Результат', 'Ориентир']);
+    expect(screen.queryByText(/Индекс:/)).toBeNull();
+    expect(screen.queryByText(/Первая диагностика/)).toBeNull();
+  });
+
+  it('only the number columns are right-aligned, not the text ones (A-R12)', () => {
+    render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} comparison={WITH_PREVIOUS} onHome={vi.fn()} />);
+    const table = screen.getByRole('table', { name: 'Результаты диагностики' });
+    const first = within(table).getAllByRole('row')[1] as HTMLElement;
+    expect(within(first).getAllByRole('cell').map((td) => td.classList.contains('num'))).toEqual([false, true, true, false, false]);
+    expect(within(table).getAllByRole('columnheader').map((th) => th.classList.contains('num'))).toEqual([false, true, true, false, false]);
   });
 
   it('a difference reads as in the block summary: from the rounded medians (B9)', () => {
@@ -95,19 +210,19 @@ describe('Done', () => {
   it('marks the W2 differences measured with dropped frames; a zero difference reads «0 мс»', () => {
     render(<Done diagnostic={{ ...RESULTS, stroopCongruentRt: 600, stroopIncongruentRt: 600, stroopInterferenceMs: 0, unreliable: ['pomeh', 'stroop', 'taskswitch'] }} seriesTotal={20} summaries={[]} onHome={vi.fn()} />);
     expect(cells().slice(8)).toEqual([
-      ['Помехоустойчивость — разница с помехами и без', '+35 мс, замер ненадёжен'],
-      ['Струп — интерференция', '0 мс, замер ненадёжен'],
-      ['Переключение правил — цена переключения', '−12 мс, замер ненадёжен'],
-      ['Память — объём', '7'],
+      ['Помехоустойчивость — разница с помехами и без', '+35 мс, замер ненадёжен', '—'],
+      ['Струп — интерференция', '0 мс, замер ненадёжен', '—'],
+      ['Переключение правил — цена переключения', '−12 мс, замер ненадёжен', '—'],
+      ['Память — объём', '7', 'средний'],
     ]);
   });
 
   it('marks the metrics of modules measured with dropped frames and says the index uses them (I1)', () => {
     render(<Done diagnostic={{ ...RESULTS, unreliable: ['pzmr', 'rdo'] }} seriesTotal={20} summaries={[]} onHome={vi.fn()} />);
     const rows = cells();
-    expect(rows[0]).toEqual(['ПЗМР — медиана времени реакции', '251 мс, замер ненадёжен']);
+    expect(rows[0]).toEqual(['ПЗМР — медиана времени реакции', '251 мс, замер ненадёжен', 'по среднему 262 мс: средний']);
     expect(rows[1]?.[1]).toBe('402 мс');
-    expect(rows[3]).toEqual(['Реакция на движущийся объект — средняя ошибка', '19 мс, замер ненадёжен']);
+    expect(rows[3]).toEqual(['Реакция на движущийся объект — средняя ошибка', '19 мс, замер ненадёжен', '—']);
     expect(screen.getByText(/Замер ненадёжен: в блоке были пропуски кадров и после повтора/)).toBeTruthy();
   });
 

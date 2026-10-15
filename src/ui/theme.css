@@ -409,7 +409,8 @@ legend {
   text-align: left;
 }
 
-.results td:last-child {
+/* Number columns only: text columns («Изменение», «Ориентир») stay left-aligned (A-R12). */
+.results .num {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }

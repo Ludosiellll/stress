@@ -96,6 +96,8 @@ describe('parseResults', () => {
     };
     expect(parseResults({ resultsJson: JSON.stringify(w1) })).toEqual({
       ...w1,
+      pzmrMeanRt: null,
+      szmrMeanRt: null,
       pomehQuietRt: null,
       pomehNoisyRt: null,
       pomehDeltaMs: null,
@@ -107,6 +109,16 @@ describe('parseResults', () => {
       switchCostMs: null,
       memorySpan: null,
     });
+  });
+
+  it('old previous rows read their missing metrics as null', () => {
+    // A 0.2.0 row: every metric but the mean RTs added in 0.3.0.
+    const w2 = Object.fromEntries(Object.entries({ ...EMPTY, pzmrMedianRt: 300, szmrMedianRt: 450, memorySpan: 7 }).filter(([k]) => !k.endsWith('MeanRt')));
+    expect(Object.keys(w2)).not.toContain('pzmrMeanRt');
+    const r = parseResults({ resultsJson: JSON.stringify(w2) });
+    expect(r).toEqual({ ...EMPTY, pzmrMedianRt: 300, szmrMedianRt: 450, memorySpan: 7 });
+    expect(r?.pzmrMeanRt).toBeNull();
+    expect(r?.szmrMeanRt).toBeNull();
   });
 
   it('keeps only reaction module ids in `unreliable`', () => {

@@ -6,9 +6,17 @@ import { block, item, session } from '../data/repository.contract';
 import type { BlockRow, WellbeingRow } from '../data/rows';
 import { FINISHER_AUDIO } from '../engine/audio/stressors';
 import { deriveModuleStates, deriveRatings, defaultModuleState } from '../engine/derive';
-import { EMPTY_METRICS, diagnosticSegmentSeed, diagnosticSeriesSchedule, planDiagnostic, type DiagnosticResults } from '../engine/diagnostic';
+import {
+  EMPTY_METRICS,
+  diagnosticSegmentSeed,
+  diagnosticSeriesSchedule,
+  parseResults,
+  planDiagnostic,
+  type DiagnosticResults,
+} from '../engine/diagnostic';
 import { currentPhase, type PhaseInfo } from '../engine/phases';
 import { planFree, planTraining, type ModuleState, type Segment, type SessionPlan } from '../engine/planner';
+import { readinessOfLatest } from '../engine/readiness';
 import { createRng, deriveSeed } from '../engine/rng';
 import { MODULE_IDS, type LayoutId, type ModuleId } from '../engine/types';
 import { describeChanges } from '../modules/describe';
@@ -235,7 +243,14 @@ describe('SessionController — flow', () => {
       'numseries',
       'numseries',
     ]);
-    expect(expectStep(h.c, 'done')).toEqual({ kind: 'done', sessionId: h.c.sessionId, diagnostic: null, seriesTotal: null, indexDeferred: false });
+    expect(expectStep(h.c, 'done')).toEqual({
+      kind: 'done',
+      sessionId: h.c.sessionId,
+      diagnostic: null,
+      seriesTotal: null,
+      indexDeferred: false,
+      comparison: null,
+    });
   });
 
   it('the session row stores the plan phase', async () => {
@@ -1696,7 +1711,9 @@ describe('SessionController — diagnostics', () => {
     const expected: DiagnosticResults = {
       ...EMPTY_METRICS,
       pzmrMedianRt: 300,
+      pzmrMeanRt: 300,
       szmrMedianRt: 300,
+      szmrMeanRt: 300,
       gonogoScore: 100,
       rdoMeanAbsErrorMs: 0,
       gorbov: gorbovMetrics(7.2, 7.5, 14.7),
@@ -1756,6 +1773,49 @@ describe('SessionController — diagnostics', () => {
     const done = expectStep(h.c, 'done');
     expect(done.diagnostic).not.toBeNull();
     expect(done.indexDeferred).toBe(false);
+    expect(done.comparison).toBeNull();
+  });
+
+  it('the done step compares with the previous diagnostic by date (W2-R33); both indexes come from readinessOfLatest', async () => {
+    const repo = new MemoryRepository();
+    const m2: DiagnosticResults = { ...EMPTY_METRICS, pzmrMedianRt: 320, szmrMedianRt: 450, gonogoScore: 85, numseriesCorrect: 12, unreliable: [] };
+    const m1: DiagnosticResults = {
+      ...EMPTY_METRICS,
+      pzmrMedianRt: 300,
+      pzmrMeanRt: 310,
+      szmrMedianRt: 430,
+      gonogoScore: 90,
+      numseriesCorrect: 14,
+      unreliable: ['szmr'],
+    };
+    // Number 2 is the older one: the previous diagnostic is the latest by date, not by number.
+    await repo.createSession(session('s2', '2026-10-01T10:00:00.000Z', { kind: 'diagnostic' }));
+    await repo.createSession(session('s1', '2026-10-05T10:00:00.000Z', { kind: 'diagnostic' }));
+    const row2 = { id: 'd2', sessionId: 's2', number: 2, at: '2026-10-01T10:30:00.000Z', resultsJson: JSON.stringify(m2) };
+    const row1 = { id: 'd1', sessionId: 's1', number: 1, at: '2026-10-05T10:30:00.000Z', resultsJson: JSON.stringify(m1) };
+    await repo.addDiagnostic(row2);
+    await repo.addDiagnostic(row1);
+    const h = await begin(planDiagnostic(3), { repo, scale: 0.02 });
+    await drive(h);
+    const done = expectStep(h.c, 'done');
+    const diagnostic = done.diagnostic as DiagnosticResults;
+    expect(done.comparison).toEqual({
+      previous: { number: 1, at: '2026-10-05T10:30:00.000Z', metrics: parseResults(row1) },
+      readiness: readinessOfLatest([m2, m1], diagnostic).overall,
+      readinessPrevious: readinessOfLatest([m2], m1).overall,
+    });
+    expect(done.comparison?.readiness).toEqual(expect.any(Number));
+    expect(done.comparison?.readinessPrevious).toEqual(expect.any(Number));
+    expect(done.comparison?.previous?.metrics.unreliable).toEqual(['szmr']);
+  });
+
+  it('the very first diagnostic has nothing to compare with; its index is readinessOfLatest of it alone', async () => {
+    const h = await begin(planDiagnostic(1), { scale: 0.02 });
+    await drive(h);
+    const done = expectStep(h.c, 'done');
+    const d = done.diagnostic as DiagnosticResults;
+    expect(done.comparison).toEqual({ previous: null, readiness: readinessOfLatest([], d).overall, readinessPrevious: null });
+    expect(done.comparison?.readiness).toEqual(expect.any(Number));
   });
 
   it('gorbov metrics need all three runs completed; series count only inside the total limit', async () => {
@@ -1850,7 +1910,9 @@ describe('SessionController — diagnostics', () => {
     const done = expectStep(h.c, 'done');
     expect(done.diagnostic).toEqual({
       pzmrMedianRt: 300,
+      pzmrMeanRt: 300,
       szmrMedianRt: 300,
+      szmrMeanRt: 300,
       gonogoScore: 100,
       rdoMeanAbsErrorMs: 0,
       gorbov: gorbovMetrics(7.2, 7.5, 14.7),
