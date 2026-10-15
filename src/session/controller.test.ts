@@ -933,6 +933,17 @@ describe('SessionController — overload', () => {
       audio: { layers: ['hum', 'beeps', 'babble'], gain: 0.8 },
       gate: 'all',
     });
+
+    // L 20 catches a block that keeps only its own sound; L 36 catches one that replaces it with the finisher's:
+    // pomeh's own sound there has all four layers at 0.95, so only a merge keeps the metronome and the gain.
+    const high = new MemoryRepository();
+    await high.saveModuleState(stateWith('pomeh', { lSaved: 33, lastTrainedAt: YESTERDAY, lifetimeBlocks: 10 }));
+    const h36 = await begin(training(overloadSegment('pomeh', 'finisher', 1)), { repo: high });
+    h36.c.ackInstruction();
+    const top = expectStep(h36.c, 'reaction_block');
+    expect(top.L).toBe(36);
+    expect(pomeh.params(36).audio).toEqual({ layers: ['hum', 'beeps', 'metronome', 'babble'], gain: 0.95 });
+    expect(top.layers).toMatchObject({ audio: { layers: ['hum', 'beeps', 'metronome', 'babble'], gain: 0.95 }, gate: 'all' });
   });
 
   it('overload blocks are left out of fatigue and the g = 2 rule', async () => {
