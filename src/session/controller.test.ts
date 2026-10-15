@@ -274,7 +274,7 @@ describe('SessionController — flow', () => {
     const { view } = await playReaction(h);
     // The start drop takes the segment to 15; a perfect block crosses 16, where the no-go becomes the square.
     expect([view.lBefore < 16, view.lAfter >= 16]).toEqual([true, true]);
-    expect(view.changes).toContainEqual({ label: 'No-go', from: 'красный круг', to: 'зелёный квадрат' });
+    expect(view.changes).toContainEqual({ label: 'Нагрузка', from: 'no-go 15 %, интервал 0,3–1 с', to: 'no-go — зелёный квадрат, интервал 0,3–1 с' });
   });
 
   it('walks a full training plan to done', async () => {
@@ -509,15 +509,15 @@ describe('SessionController — levels and persistence', () => {
       title: 'ПЗМР',
       lBefore: 0,
       lAfter: 2,
-      changes: [{ label: 'Окно ответа', from: '1000 мс', to: '808 мс' }],
+      changes: [{ label: 'Окно ответа', from: '1000 мс', to: '727 мс' }],
       score: 1,
       lines: ['Ошибок нет.', 'Медиана: 300 мс', 'Среднее: 300 мс', 'Разброс (SD): 0 мс', 'Стабильность (CV): 0,00', 'Пропуски: 0'],
       flags: ['calibration'],
       showLevel: true,
       levelNote: null,
       assessment: {
-        step: 'Ступень 1 из 5+ — начальная (уровень 2; формат теста — 14)',
-        goal: 'До ступени 2 «на подходе к формату теста»: уровень 7 (+5). Там: окно ответа: 808 → 497 мс',
+        step: 'Ступень 1 из 5+ — начальная (уровень 2; формат теста — 8)',
+        goal: 'До ступени 2 «на подходе к формату теста»: уровень 4 (+2). Там: окно ответа: 727 → 542 мс',
         norms: [
           'Норма (ориентир), среднее: 300 мс — низкий; ниже среднего — до 277 мс. Мальцев 2026, юноши 18–21; норма для аппаратной кнопки + 30 мс на клавиатуру',
           'Норма (ориентир), разброс (SD): 0 мс — высокий. Мальцев 2026, юноши 18–21, аппаратная кнопка',
@@ -664,7 +664,7 @@ describe('SessionController — levels and persistence', () => {
     const h = await begin(planFree('pomeh', 4), { repo });
     h.c.ackInstruction();
     const block = expectStep(h.c, 'reaction_block');
-    expect(block).toMatchObject({ L: 18, layers: { audio: { layers: ['hum'], gain: 0.5 }, gate: 'noisy' } });
+    expect(block).toMatchObject({ L: 18, layers: { audio: { layers: ['hum', 'beeps'], gain: 0.6 }, gate: 'noisy' } });
     await h.c.submitReaction({ ...playTimeline(block.specs, perfectPlayer), audioPlayed: false });
     const { view } = expectStep(h.c, 'summary');
     expect(view.lines.at(-1)).toBe(AUDIO_NOT_PLAYED);
@@ -1540,25 +1540,25 @@ describe('SessionController — overload', () => {
     h.c.ackInstruction();
     const pomehBlock = expectStep(h.c, 'reaction_block');
     expect(pomehBlock.L).toBe(20);
-    // pomeh's own sound at L 20 is the hum alone at 0.55, so the block shows whether the finisher was merged in:
-    // the union of the layers and the larger gain; the noise stays.
-    expect(pomeh.params(20).audio).toEqual({ layers: ['hum'], gain: 0.55 });
+    // pomeh's own sound at L 20 is hum, beeps and metronome at 0.75, the finisher's hum, beeps and babble at 0.8: only
+    // a merge has all four layers at 0.8 (keeping its own sound loses the babble, taking the finisher's the metronome).
+    // The noise stays.
+    expect(pomeh.params(20).audio).toEqual({ layers: ['hum', 'beeps', 'metronome'], gain: 0.75 });
     expect(pomehBlock.layers).toMatchObject({
       noise: pomeh.params(20).noise,
-      audio: { layers: ['hum', 'beeps', 'babble'], gain: 0.8 },
+      audio: { layers: ['hum', 'beeps', 'metronome', 'babble'], gain: 0.8 },
       gate: 'all',
     });
 
-    // L 20 catches a block that keeps only its own sound; L 36 catches one that replaces it with the finisher's:
-    // pomeh's own sound there has all four layers at 0.95, so only a merge keeps the metronome and the gain.
+    // At L 36 pomeh's own sound has all four layers at 1, so only a merge keeps the metronome and the gain.
     const high = new MemoryRepository();
     await high.saveModuleState(stateWith('pomeh', { lSaved: 33, lastTrainedAt: YESTERDAY, lifetimeBlocks: 10 }));
     const h36 = await begin(training(overloadSegment('pomeh', 'finisher', 1)), { repo: high });
     h36.c.ackInstruction();
     const top = expectStep(h36.c, 'reaction_block');
     expect(top.L).toBe(36);
-    expect(pomeh.params(36).audio).toEqual({ layers: ['hum', 'beeps', 'metronome', 'babble'], gain: 0.95 });
-    expect(top.layers).toMatchObject({ audio: { layers: ['hum', 'beeps', 'metronome', 'babble'], gain: 0.95 }, gate: 'all' });
+    expect(pomeh.params(36).audio).toEqual({ layers: ['hum', 'beeps', 'metronome', 'babble'], gain: 1 });
+    expect(top.layers).toMatchObject({ audio: { layers: ['hum', 'beeps', 'metronome', 'babble'], gain: 1 }, gate: 'all' });
   });
 
   it('a pomeh overload block names its conditions by the figures and announces the sound once (M2)', async () => {
@@ -1568,13 +1568,14 @@ describe('SessionController — overload', () => {
     const { text } = expectStep(h.c, 'instruction');
     expect(text).toBe(OVERLOAD_SOUND_PREFIX + pomeh.instruction('keyboard', pomeh.params(20), true));
     expect(text).not.toContain('В части блока');
-    // The window at L 20 is 216 ms.
+    // The window at L 20 is 179 ms.
+    expect(pomeh.params(20).windowMs).toBe(179);
     const slowerOnNoisy: Respond = (spec, idx) => {
       const r = perfectPlayer(spec, idx);
-      return r === null ? null : { ...r, rtMs: spec.cond === 'noisy' ? 185 : 150 };
+      return r === null ? null : { ...r, rtMs: spec.cond === 'noisy' ? 170 : 135 };
     };
     const { view } = await playReaction(h, slowerOnNoisy);
-    expect(view.lines.slice(-3)).toEqual(['Без отвлекающих фигур: 150 мс', 'С отвлекающими фигурами: 185 мс', 'Разница: +35 мс']);
+    expect(view.lines.slice(-3)).toEqual(['Без отвлекающих фигур: 135 мс', 'С отвлекающими фигурами: 170 мс', 'Разница: +35 мс']);
   });
 
   it('overload blocks are left out of fatigue and the g = 2 rule', async () => {

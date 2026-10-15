@@ -223,16 +223,19 @@ describe('assessBlock', () => {
   });
 
   it('no ceiling: step 6 of ПЗМР', () => {
-    const a = assessBlock(row({ module: 'pzmr', lBefore: 29, lAfter: 30, summaryJson: '{"meanRt":240,"sdRt":30}' }), ctx);
-    expect(a.step).toBe('Ступень 6 — далеко сверх нормы (уровень 30; формат теста — 14)');
-    expect(a.goal).toBe('До ступени 7 «далеко сверх нормы»: уровень 34 (+4). Там: окно ответа: 168 → 161 мс');
+    const a = assessBlock(row({ module: 'pzmr', lBefore: 23, lAfter: 24, summaryJson: '{"meanRt":240,"sdRt":30}' }), ctx);
+    expect(a.step).toBe('Ступень 6 — далеко сверх нормы (уровень 24; формат теста — 8)');
+    expect(a.goal).toBe(
+      'До ступени 7 «далеко сверх нормы»: уровень 28 (+4). Там: окно ответа: 158 → 154 мс; ' +
+        'нагрузка: интервал 0,3–3 с, помехи рядом, мерцание, звук, 30 сигналов → интервал 0,3–3 с, помехи рядом, мерцание, звук, 45 сигналов',
+    );
   });
 
-  it('step 5 starts at Lnorm + 10 and drops «из 5+»: ПЗМР at 23,9 and 24', () => {
+  it('step 5 starts at Lnorm + 10 and drops «из 5+»: ПЗМР at 17,9 and 18', () => {
     const pzmr = (lAfter: number): BlockRow => row({ module: 'pzmr', lBefore: lAfter, lAfter, summaryJson: '{"meanRt":240}' });
-    expect(assessBlock(pzmr(23.9), ctx).step).toBe('Ступень 4 из 5+ — сверх нормы (уровень 23,9; формат теста — 14)');
-    expect(assessBlock(pzmr(24), ctx).step).toBe('Ступень 5 — далеко сверх нормы (уровень 24; формат теста — 14)');
-    expect(assessBlock(pzmr(24), ctx).goal).toMatch(/^До ступени 6 «далеко сверх нормы»: уровень 29 \(\+5\)\. Там: /);
+    expect(assessBlock(pzmr(17.9), ctx).step).toBe('Ступень 4 из 5+ — сверх нормы (уровень 17,9; формат теста — 8)');
+    expect(assessBlock(pzmr(18), ctx).step).toBe('Ступень 5 — далеко сверх нормы (уровень 18; формат теста — 8)');
+    expect(assessBlock(pzmr(18), ctx).goal).toMatch(/^До ступени 6 «далеко сверх нормы»: уровень 23 \(\+5\)\. Там: /);
   });
 
   it('number series: the rating as shown decides the step at the edge (A-R7)', () => {
@@ -439,10 +442,10 @@ describe('assessModules', () => {
     expect(rowOf(rows, 'pzmr')).toEqual({
       module: 'pzmr',
       title: 'ПЗМР',
-      step: '1 — начальная (ур. 0; формат теста — 14)',
+      step: '1 — начальная (ур. 0; формат теста — 8)',
       lastBest: '262 мс / —',
       norm: 'средний',
-      goal: 'ур. 7 (+7)',
+      goal: 'ур. 4 (+4)',
     });
   });
 
@@ -467,10 +470,10 @@ describe('assessModules', () => {
     expect(rowOf(rows, 'pzmr')).toEqual({
       module: 'pzmr',
       title: 'ПЗМР',
-      step: '1 — начальная (ур. 0; формат теста — 14)',
+      step: '1 — начальная (ур. 0; формат теста — 8)',
       lastBest: '240 мс / 230 мс',
       norm: '—',
-      goal: 'ур. 7 (+7)',
+      goal: 'ур. 4 (+4)',
     });
   });
 
@@ -482,10 +485,10 @@ describe('assessModules', () => {
     expect(rowOf(rows, 'pzmr')).toEqual({
       module: 'pzmr',
       title: 'ПЗМР',
-      step: '1 — начальная (ур. 0; формат теста — 14)',
+      step: '1 — начальная (ур. 0; формат теста — 8)',
       lastBest: '230 мс / 230 мс',
       norm: 'выше среднего',
-      goal: 'ур. 7 (+7)',
+      goal: 'ур. 4 (+4)',
     });
   });
 });

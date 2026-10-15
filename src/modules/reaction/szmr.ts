@@ -1,6 +1,7 @@
+import type { AudioStressorParams } from '../../engine/audio/stressors';
 import { keyLabel } from '../../engine/layouts';
+import type { VisualNoiseParams } from '../../engine/noise';
 import { L_NORM } from '../../engine/planner';
-import type { Rng } from '../../engine/rng';
 import type { ColorId, ShapeId, TrialSpec } from '../../engine/reaction/types';
 import type { InputKey } from '../../engine/types';
 import {
@@ -9,33 +10,74 @@ import {
   ISI_MAX,
   ISI_MIN,
   SHAPES,
+  bandFields,
+  bandSound,
   blockLength,
+  everyTrial,
   fallbackNote,
+  farNoise,
+  framedRuns,
   keysFor,
+  ladder,
+  loadBandOf,
+  longBlockTrials,
   ms,
-  yesNo,
+  stressorNotes,
   type ReactionModule,
 } from './common';
 
 export interface SzmrParams {
+  /** The load band played (F3) and its label. */
+  band: number;
+  bandLabel: string;
   windowMs: number;
+  trials: number;
   nColors: number;
   nKeys: number;
   /** Random shape that has to be ignored. */
   shapeDistractor: boolean;
   /** Color → key mapping flips on alternating segments (marked with a white frame). */
   inversion: boolean;
+  /** Figures around the centre on every trial; null: none. */
+  noise: VisualNoiseParams | null;
+  /** Sound on every trial; null: none. */
+  audio: AudioStressorParams | null;
 }
 
 const BLOCK_SIZE = 20;
 
-/** [nColors, nKeys] for a level. */
-function band(L: number): [number, number] {
-  if (L >= 32) return [6, 6];
-  if (L >= 24) return [5, 5];
-  if (L >= 16) return [4, 4];
-  if (L >= 8) return [3, 2];
+const NOISY = '6 цветов на 6 клавиш, форма, инверсия, звук, помехи';
+
+/** The СЗМР ladder (spec §3.1.3): bands 0–1 are the test format, 2 colours on 2 keys (isTwoChoice). */
+const BANDS = ladder([
+  ['2 цвета на 2 клавиши', 1],
+  ['2 цвета на 2 клавиши', 1],
+  ['3 цвета на 2 клавиши', 1.1],
+  ['4 цвета на 4 клавиши', 1.1],
+  ['4 цвета на 4 клавиши, отвлекающая форма', 1.05],
+  ['5 цветов на 5 клавиш, отвлекающая форма', 1.1],
+  ['6 цветов на 6 клавиш, отвлекающая форма', 1.1],
+  ['6 цветов на 6 клавиш, форма, инверсия', 1.1],
+  ['6 цветов на 6 клавиш, форма, инверсия, звук', 1.05],
+  [NOISY, 1.05],
+  [`${NOISY}, 30 сигналов`, 1],
+  [`${NOISY}, 45 сигналов`, 1],
+  [`${NOISY}, 60 сигналов`, 1],
+]);
+
+/** [nColors, nKeys] of a band. */
+function colorsAndKeys(b: number): [number, number] {
+  if (b >= 6) return [6, 6];
+  if (b === 5) return [5, 5];
+  if (b >= 3) return [4, 4];
+  if (b === 2) return [3, 2];
   return [2, 2];
+}
+
+/** Far noise from band 9: no figure takes an active colour, so with six colours they are grey (Р13). */
+function noiseAt(b: number, nColors: number): VisualNoiseParams | null {
+  if (b < 9) return null;
+  return farNoise(COLORS.slice(0, nColors).flatMap((color) => SHAPES.map((shape) => ({ shape, color }))));
 }
 
 /**
@@ -44,18 +86,6 @@ function band(L: number): [number, number] {
  */
 function normalKeyIndex(c: number, nKeys: number): number {
   return c % nKeys;
-}
-
-/** Per-trial inversion flags: segments of rng.int(8, 15) trials, alternating, starting normal. */
-function inversionFlags(n: number, rng: Rng): boolean[] {
-  const flags: boolean[] = [];
-  let inverted = false;
-  while (flags.length < n) {
-    const len = rng.int(8, 15);
-    for (let i = 0; i < len && flags.length < n; i++) flags.push(inverted);
-    inverted = !inverted;
-  }
-  return flags;
 }
 
 /**
@@ -81,25 +111,32 @@ export const szmr: ReactionModule<SzmrParams> = {
   title: 'Сложная реакция (СЗМР)',
   lNorm: L_NORM.szmr,
   blockSize: BLOCK_SIZE,
+  bands: BANDS,
 
-  params(L) {
-    const [nColors, nKeys] = band(L);
+  params(L, loadBand) {
+    const b = loadBandOf(BANDS, L, loadBand);
+    const [nColors, nKeys] = colorsAndKeys(b);
     return {
-      windowMs: Math.round(150 + 1350 * 0.92 ** L),
+      ...bandFields(BANDS, b, Math.round(150 + 1350 * 0.84 ** L)),
+      trials: longBlockTrials(b, 10, BLOCK_SIZE),
       nColors,
       nKeys,
-      shapeDistractor: L >= 20,
-      inversion: L >= 32,
+      shapeDistractor: b >= 4,
+      inversion: b >= 7,
+      noise: noiseAt(b, nColors),
+      audio: b >= 8 ? bandSound() : null,
     };
   },
+
+  trials: (p) => p.trials,
 
   cvMax: 0.22,
 
   generateBlock(p, rng, layout, size) {
-    const n = blockLength(size, BLOCK_SIZE);
+    const n = blockLength(size, p.trials);
     const keys = keysFor(layout, p.nKeys);
     const colors = COLORS.slice(0, p.nColors);
-    const inverted = p.inversion ? inversionFlags(n, rng) : Array<boolean>(n).fill(false);
+    const inverted = p.inversion ? framedRuns(n, rng) : Array<boolean>(n).fill(false);
     return inverted.map((inv): TrialSpec => {
       const isiMs = rng.int(ISI_MIN, ISI_MAX);
       const c = rng.int(0, colors.length - 1);
@@ -118,20 +155,20 @@ export const szmr: ReactionModule<SzmrParams> = {
 
   keyCount: (p) => p.nKeys,
 
-  instruction(layout, p) {
+  stressors: everyTrial,
+
+  instruction(layout, p, overload = false) {
     return (
       colorKeyRule(keysFor(layout, p.nKeys), p.nColors) +
       (p.shapeDistractor ? ' Форму фигуры не учитывай.' : '') +
       (p.inversion ? ' Белая рамка — правило перевёрнуто.' : '') +
+      stressorNotes(p, overload) +
       fallbackNote(layout, p.nKeys)
     );
   },
 
   describeParams: (p) => [
     { label: 'Окно ответа', value: ms(p.windowMs) },
-    { label: 'Цветов', value: String(p.nColors) },
-    { label: 'Клавиш', value: String(p.nKeys) },
-    { label: 'Отвлекающая форма', value: yesNo(p.shapeDistractor) },
-    { label: 'Инверсия правил', value: yesNo(p.inversion) },
+    { label: 'Нагрузка', value: p.bandLabel },
   ],
 };

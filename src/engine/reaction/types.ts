@@ -1,7 +1,10 @@
 import type { InputKey } from '../types';
 
-/** Every stimulus colour, in the order the СЗМР colour → key mapping uses. */
-export const COLOR_IDS = ['red', 'green', 'yellow', 'blue', 'white', 'purple'] as const;
+/**
+ * Every colour, in the order the СЗМР colour → key mapping uses. The last, grey, is never a stimulus: the noise takes
+ * it only when every other colour is a target (Р13).
+ */
+export const COLOR_IDS = ['red', 'green', 'yellow', 'blue', 'white', 'purple', 'gray'] as const;
 export type ColorId = (typeof COLOR_IDS)[number];
 export const SHAPE_IDS = ['circle', 'square', 'triangle', 'diamond', 'hexagon', 'star'] as const;
 export type ShapeId = (typeof SHAPE_IDS)[number];
@@ -23,10 +26,16 @@ export type Stimulus =
   /** `mark`: a white dot in the centre, 20 % of the figure's diameter (the Go/No-Go no-go most like the go, F8). */
   | { kind: 'shape'; shape: ShapeId; color: ColorId; frame?: ColorId; mark?: true }
   | { kind: 'rdo'; startDeg: number; targetDeg: number; periodMs: number }
-  /** A colour word (`word`) printed in another or the same colour (`ink`); the answer goes by the ink. */
-  | { kind: 'word'; word: StroopColor; ink: StroopColor }
-  /** A figure under the word of its rule; the answer goes by the feature the rule names. */
-  | { kind: 'switch'; rule: SwitchRule; color: 'red' | 'blue'; shape: 'circle' | 'square'; size: 'large' | 'small' };
+  /**
+   * A colour word (`word`) printed in another or the same colour (`ink`); the answer goes by the ink, or by the word
+   * inside a white ring (`frame`, the reverse rule, F3).
+   */
+  | { kind: 'word'; word: StroopColor; ink: StroopColor; frame?: 'white' }
+  /**
+   * A figure under the word of its rule; the answer goes by the feature the rule names. `hideRule`: the word is not
+   * shown (a run of one rule after its first trial, F3).
+   */
+  | { kind: 'switch'; rule: SwitchRule; color: 'red' | 'blue'; shape: 'circle' | 'square'; size: 'large' | 'small'; hideRule?: true };
 
 /** Trial condition of modules that compare two kinds of trials (conditionStats, condCost). */
 export type TrialCond = 'congruent' | 'incongruent' | 'quiet' | 'noisy' | 'repeat' | 'switch';

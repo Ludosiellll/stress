@@ -33,7 +33,7 @@ import { describeChanges, describeParamChanges, type ParamChange } from '../modu
 import { generateBlockItems, generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
 import { stressorsOf, type BlockStressors, type ReactionModule } from '../modules/reaction/common';
 import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
-import { gonogo, isSwappedSegment } from '../modules/reaction/gonogo';
+import { gonogo, isSwappedSegment, swapColours } from '../modules/reaction/gonogo';
 import { reactionModules } from '../modules/registry';
 import {
   generateGorbovTable,
@@ -168,7 +168,7 @@ export function planBlock(segment: Segment, segmentL: number, blockIndex: number
       params,
       keys,
       layout: effectiveLayout,
-      size: reactionBlockSize(mod, params, segment.trialCount ?? mod.blockSize, ctx.scale),
+      size: reactionBlockSize(mod, params, segment.trialCount ?? mod.trials(params), ctx.scale),
       practice: scaledPractice(segment.practiceTrials ?? 0, ctx.scale),
       overload,
     };
@@ -212,7 +212,10 @@ export function levelChanges(module: ModuleId, lBefore: number, lAfter: number, 
 
 /** Training and free parameters at L; a Go/No-Go segment may play with the colours swapped (F8). */
 function trainingParams(module: ReactionModuleId, L: number, ctx: PlanContext): unknown {
-  if (module === 'gonogo') return { ...gonogo.params(L), swapped: isSwappedSegment(ctx.planSeed, ctx.segmentIndex) };
+  if (module === 'gonogo') {
+    const p = gonogo.params(L);
+    return isSwappedSegment(ctx.planSeed, ctx.segmentIndex) ? swapColours(p) : p;
+  }
   return reactionModules[module].params(L);
 }
 
@@ -334,7 +337,7 @@ export function buildBlock(
 
 /** An overload block adds the finisher sound to the module's own on every trial; the noise keeps its trials (W2-R10). */
 function overloadStressors(s: BlockStressors): BlockStressors {
-  return { noise: s.noise, audio: mergeAudio(s.audio, FINISHER_AUDIO), gate: 'all' };
+  return { noise: s.noise, audio: mergeAudio(s.audio, FINISHER_AUDIO), gate: 'all', noiseGate: s.noiseGate };
 }
 
 export interface ScoredReaction {

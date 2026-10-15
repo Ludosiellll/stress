@@ -14,6 +14,7 @@ import { readinessOfLatest } from '../engine/readiness';
 import { isReactionModule, type BlockFlag, type FamilyId, type LayoutId, type ModuleId } from '../engine/types';
 import type { MemoryTrial } from '../modules/memory/generate';
 import { memorySpan, scoreMemoryTrial, type MemoryAnswer } from '../modules/memory/score';
+import { bandIndex } from '../modules/reaction/common';
 import { moduleTitles, reactionModules } from '../modules/registry';
 import type { TableTaskId } from '../modules/tables/gorbov';
 import { scoreTableRun, type TableRun } from '../modules/tables/score';
@@ -901,7 +902,7 @@ export class SessionController {
   private dayFormOf(startedAt: string, L: number, hitRts: readonly number[]): string | null {
     if (this.past === null) return null;
     const day = localDayIso(startedAt);
-    const band = Math.floor(L / 4);
+    const band = bandIndex(reactionModules.pzmr, L);
     const form = dayForm([...warmupDays(this.past), { day, band, rts: hitRts.map(tenthMs) }], day, band);
     return form === null ? null : dayFormLine(form);
   }

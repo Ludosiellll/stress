@@ -11,19 +11,19 @@ const levelPair = fc
 describe('pzmr.params', () => {
   it.each([
     [0, 1000],
-    [8, 456],
-    [16, 260],
-    [24, 190],
-    [32, 164],
-  ])('L=%i → windowMs %i', (L, windowMs) => {
+    [8, 331],
+    [16, 188],
+    [24, 158],
+    [32, 152],
+  ])('L=%i → windowMs %i: round(150 + 850·0.824^L) (F3)', (L, windowMs) => {
     expect(pzmr.params(L).windowMs).toBe(windowMs);
   });
 
-  it('ISI range widens at L ≥ 25', () => {
+  it('the ISI range widens to 0.3–3 s from band 2 (L 8)', () => {
     expect(pzmr.params(0)).toMatchObject({ isiMin: 500, isiMax: 2500 });
-    expect(pzmr.params(24)).toMatchObject({ isiMin: 500, isiMax: 2500 });
-    expect(pzmr.params(25)).toMatchObject({ isiMin: 300, isiMax: 3500 });
-    expect(pzmr.params(32)).toMatchObject({ isiMin: 300, isiMax: 3500 });
+    expect(pzmr.params(7.99)).toMatchObject({ isiMin: 500, isiMax: 2500 });
+    expect(pzmr.params(8)).toMatchObject({ isiMin: 300, isiMax: 3000 });
+    expect(pzmr.params(32)).toMatchObject({ isiMin: 300, isiMax: 3000 });
   });
 
   it('windowMs never grows, stays finite and ≥ 150', () => {
@@ -32,7 +32,7 @@ describe('pzmr.params', () => {
         const pa = pzmr.params(a);
         const pb = pzmr.params(b);
         expect(pb.windowMs).toBeLessThanOrEqual(pa.windowMs);
-        for (const v of Object.values(pb)) expect(Number.isFinite(v)).toBe(true);
+        for (const v of [pb.windowMs, pb.isiMin, pb.isiMax, pb.trials, pb.band]) expect(Number.isFinite(v)).toBe(true);
         expect(pb.windowMs).toBeGreaterThanOrEqual(150);
       }),
       { numRuns: 1000 },
@@ -47,16 +47,17 @@ describe('pzmr.cvMax', () => {
 });
 
 describe('pzmr.generateBlock', () => {
-  it('default length is blockSize 15, size overrides', () => {
+  it('default length is the trials of the band (15 in the test format), size overrides', () => {
     expect(pzmr.blockSize).toBe(15);
     expect(pzmr.generateBlock(pzmr.params(0), createRng(1), 'keyboard')).toHaveLength(15);
+    expect(pzmr.generateBlock(pzmr.params(28), createRng(1), 'keyboard')).toHaveLength(45);
     expect(pzmr.generateBlock(pzmr.params(0), createRng(1), 'keyboard', 50)).toHaveLength(50);
   });
 
   it('red circle, single key, ISI within range', () => {
     for (const [L, min, max] of [
       [0, 500, 2500],
-      [30, 300, 3500],
+      [30, 300, 3000],
     ] as const) {
       const p = pzmr.params(L);
       const block = pzmr.generateBlock(p, createRng(7), 'pult', 300);
@@ -101,7 +102,24 @@ describe('pzmr texts', () => {
     expect(pzmr.instruction('mouse', pzmr.params(0))).toContain('нажми ЛКМ.');
   });
 
-  it('describeParams', () => {
-    expect(pzmr.describeParams(pzmr.params(0))).toEqual([{ label: 'Окно ответа', value: '1000 мс' }]);
+  it('noise and sound get their notes; an overload block leaves out the sound one (M2)', () => {
+    const base = 'Когда появится красный круг, как можно быстрее нажми Пробел. Не нажимай заранее: это фальстарт.';
+    const figures = ' Вокруг будут появляться другие фигуры, на них не реагируй.';
+    const sound = ' В блоке будут звуковые помехи, надень наушники.';
+    expect(pzmr.instruction('keyboard', pzmr.params(12))).toBe(base + figures);
+    expect(pzmr.instruction('keyboard', pzmr.params(16))).toBe(base + figures + sound);
+    expect(pzmr.instruction('keyboard', pzmr.params(20))).toBe(base + figures + ' Вместе с фигурами будет мерцать фон.' + sound);
+    expect(pzmr.instruction('keyboard', pzmr.params(20), true)).toBe(base + figures + ' Вместе с фигурами будет мерцать фон.');
+  });
+
+  it('describeParams: the window and the load (Р14)', () => {
+    expect(pzmr.describeParams(pzmr.params(0))).toEqual([
+      { label: 'Окно ответа', value: '1000 мс' },
+      { label: 'Нагрузка', value: 'красный круг' },
+    ]);
+    expect(pzmr.describeParams(pzmr.params(12))).toEqual([
+      { label: 'Окно ответа', value: '233 мс' },
+      { label: 'Нагрузка', value: 'интервал 0,3–3 с, помехи' },
+    ]);
   });
 });

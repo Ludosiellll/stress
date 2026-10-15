@@ -46,21 +46,22 @@ function runs(xs: boolean[]): { value: boolean; length: number }[] {
 describe('szmr.params', () => {
   it.each([
     [0, 1500, 2, 2, false, false],
-    [8, 843, 3, 2, false, false],
-    [16, 506, 4, 4, false, false],
-    [24, 332, 5, 5, true, false],
-    [32, 244, 6, 6, true, true],
-  ])('L=%i → window %i, %i colors / %i keys, shape %s, inversion %s', (L, windowMs, nColors, nKeys, sd, inv) => {
-    expect(szmr.params(L)).toEqual({ windowMs, nColors, nKeys, shapeDistractor: sd, inversion: inv });
+    [8, 485, 3, 2, false, false],
+    [16, 233, 4, 4, true, false],
+    [24, 171, 6, 6, true, false],
+    [32, 155, 6, 6, true, true],
+  ])('L=%i → window %i, %i colors / %i keys, shape %s, inversion %s (F3)', (L, windowMs, nColors, nKeys, sd, inv) => {
+    expect(szmr.params(L)).toMatchObject({ windowMs, nColors, nKeys, shapeDistractor: sd, inversion: inv });
   });
 
   it('band edges', () => {
     expect(szmr.params(7.99)).toMatchObject({ nColors: 2, nKeys: 2 });
-    expect(szmr.params(15.99)).toMatchObject({ nColors: 3, nKeys: 2 });
-    expect(szmr.params(19.99).shapeDistractor).toBe(false);
-    expect(szmr.params(20).shapeDistractor).toBe(true);
-    expect(szmr.params(23.99)).toMatchObject({ nColors: 4, nKeys: 4 });
-    expect(szmr.params(31.99)).toMatchObject({ nColors: 5, nKeys: 5, inversion: false });
+    expect(szmr.params(11.99)).toMatchObject({ nColors: 3, nKeys: 2 });
+    expect(szmr.params(12)).toMatchObject({ nColors: 4, nKeys: 4 });
+    expect(szmr.params(15.99).shapeDistractor).toBe(false);
+    expect(szmr.params(16).shapeDistractor).toBe(true);
+    expect(szmr.params(19.99)).toMatchObject({ nColors: 4, nKeys: 4 });
+    expect(szmr.params(27.99)).toMatchObject({ nColors: 6, nKeys: 6, inversion: false });
     expect(szmr.params(1000)).toMatchObject({ windowMs: 150, nColors: 6, nKeys: 6, inversion: true });
   });
 
@@ -183,32 +184,32 @@ describe('szmr texts', () => {
       'Нажимай клавишу по цвету: красный и жёлтый — F, зелёный — J. Отвечай как можно быстрее.',
     ],
     [
-      '8 ≤ L < 16, pult',
-      15,
+      '8 ≤ L < 12, pult',
+      11,
       'pult',
       'Нажимай клавишу по цвету: красный и жёлтый — ←, зелёный — →. Отвечай как можно быстрее.',
     ],
     [
-      '16 ≤ L < 20',
-      16,
+      '12 ≤ L < 16',
+      12,
       'keyboard',
       ONE_KEY_EACH + 'красный — D, зелёный — F, жёлтый — J, синий — K.' + FAST,
     ],
     [
-      '20 ≤ L < 24: shape distractor',
-      20,
+      '16 ≤ L < 20: shape distractor',
+      16,
       'keyboard',
       ONE_KEY_EACH + 'красный — D, зелёный — F, жёлтый — J, синий — K.' + FAST + SHAPE,
     ],
     [
-      '24 ≤ L < 32',
-      31,
+      '20 ≤ L < 24',
+      23,
       'keyboard',
       ONE_KEY_EACH + 'красный — S, зелёный — D, жёлтый — F, синий — J, белый — K.' + FAST + SHAPE,
     ],
     [
-      'L ≥ 32: inversion',
-      32,
+      '28 ≤ L < 32: inversion',
+      28,
       'keyboard',
       ONE_KEY_EACH +
         'красный — S, зелёный — D, жёлтый — F, синий — J, белый — K, фиолетовый — L.' +
@@ -217,14 +218,15 @@ describe('szmr texts', () => {
         FRAME,
     ],
     [
-      'L ≥ 32, pult',
+      'L ≥ 36: sound and figures, pult',
       40,
       'pult',
       ONE_KEY_EACH +
         'красный — 1, зелёный — 2, жёлтый — 3, синий — 4, белый — 5, фиолетовый — 6.' +
         FAST +
         SHAPE +
-        FRAME,
+        FRAME +
+        ' Вокруг будут появляться другие фигуры, на них не реагируй. В блоке будут звуковые помехи, надень наушники.',
     ],
   ] as const)('instruction, %s', (_, L, layout, text) => {
     expect(szmr.instruction(layout, szmr.params(L))).toBe(text);
@@ -237,7 +239,7 @@ describe('szmr texts', () => {
     expect(szmr.instruction('mouse', szmr.params(8))).toBe(
       'Нажимай клавишу по цвету: красный и жёлтый — ЛКМ, зелёный — ПКМ. Отвечай как можно быстрее.',
     );
-    expect(szmr.instruction('mouse', szmr.params(16))).toBe(
+    expect(szmr.instruction('mouse', szmr.params(12))).toBe(
       ONE_KEY_EACH +
         'красный — D, зелёный — F, жёлтый — J, синий — K.' +
         FAST +
@@ -245,20 +247,21 @@ describe('szmr texts', () => {
     );
   });
 
-  it('describeParams', () => {
+  it('an overload block leaves out the sound note (M2)', () => {
+    expect(szmr.instruction('keyboard', szmr.params(32), true)).toBe(szmr.instruction('keyboard', szmr.params(28)));
+    expect(szmr.instruction('keyboard', szmr.params(32))).toBe(
+      szmr.instruction('keyboard', szmr.params(28)) + ' В блоке будут звуковые помехи, надень наушники.',
+    );
+  });
+
+  it('describeParams: the window and the load (Р14)', () => {
     expect(szmr.describeParams(szmr.params(0))).toEqual([
       { label: 'Окно ответа', value: '1500 мс' },
-      { label: 'Цветов', value: '2' },
-      { label: 'Клавиш', value: '2' },
-      { label: 'Отвлекающая форма', value: 'нет' },
-      { label: 'Инверсия правил', value: 'нет' },
+      { label: 'Нагрузка', value: '2 цвета на 2 клавиши' },
     ]);
-    expect(szmr.describeParams(szmr.params(32))).toEqual([
-      { label: 'Окно ответа', value: '244 мс' },
-      { label: 'Цветов', value: '6' },
-      { label: 'Клавиш', value: '6' },
-      { label: 'Отвлекающая форма', value: 'да' },
-      { label: 'Инверсия правил', value: 'да' },
+    expect(szmr.describeParams(szmr.params(28))).toEqual([
+      { label: 'Окно ответа', value: '160 мс' },
+      { label: 'Нагрузка', value: '6 цветов на 6 клавиш, форма, инверсия' },
     ]);
   });
 });

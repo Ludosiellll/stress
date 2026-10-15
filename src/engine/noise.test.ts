@@ -143,6 +143,24 @@ describe('noiseFrame', () => {
     expect([...far].sort()).toEqual(farShapes.flatMap((s) => farColors.map((c) => `${s}:${c}`)).sort());
   });
 
+  it('grey only when no other colour is left (Р13, T-R1): the pairs of the six stimulus colours come first', () => {
+    const six = COLOR_IDS.filter((c) => c !== 'gray');
+    expect(six).toHaveLength(6);
+    const drawn = (p: VisualNoiseParams): Set<string> => {
+      const seen = new Set<string>();
+      for (let seed = 0; seed < 300; seed++) for (const d of noiseFrame({ ...p, distractors: 14 }, seed, 0, BOX)) seen.add(`${d.shape}:${d.color}`);
+      return seen;
+    };
+    // One target colour left out: no grey.
+    const fiveTargets = six.slice(0, 5).map((color) => ({ shape: 'circle' as const, color }));
+    expect([...drawn({ ...BASE, farOnly: true, forbidden: fiveTargets })].some((k) => k.endsWith(':gray'))).toBe(false);
+    // Every stimulus colour is a target: grey figures, still no circle while far only.
+    const allTargets = SHAPE_IDS.flatMap((shape) => six.map((color) => ({ shape, color })));
+    const farShapes: ShapeId[] = ['square', 'triangle', 'diamond', 'hexagon', 'star'];
+    expect([...drawn({ ...BASE, farOnly: true, forbidden: allTargets })].sort()).toEqual(farShapes.map((s) => `${s}:gray`).sort());
+    expect([...drawn({ ...BASE, farOnly: false, forbidden: allTargets })].sort()).toEqual(SHAPE_IDS.map((s) => `${s}:gray`).sort());
+  });
+
   it('with no room outside the zone a figure goes on the edge of the zone', () => {
     // A box smaller than the zone: every one of the 20 tries lands inside it.
     for (const d of noiseFrame({ ...BASE, distractors: 6 }, 3, 0, { halfW: 0.1, halfH: 0.1 })) {
@@ -153,6 +171,7 @@ describe('noiseFrame', () => {
   it('no figures without distractors; throws when no pair is allowed', () => {
     expect(noiseFrame({ ...BASE, distractors: 0 }, 1, 0, BOX)).toEqual([]);
     expect(() => noiseFrame({ ...BASE, forbidden: PAIRS }, 1, 0, BOX)).toThrow(RangeError);
+    // Every colour a target, grey too.
     const allColors = COLOR_IDS.map((color) => ({ shape: 'square' as const, color }));
     expect(() => noiseFrame({ ...BASE, farOnly: true, forbidden: allColors }, 1, 0, BOX)).toThrow(RangeError);
   });

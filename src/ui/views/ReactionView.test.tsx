@@ -140,11 +140,15 @@ const HUM: AudioStressorParams = { layers: ['hum'], gain: 0.5 };
 const LAYERS_SEED = 123_456;
 
 /** Trials with these conditions, ISI 100, window 200, nobody presses. */
-function stressedStep(conds: readonly TrialCond[], gate: BlockStressors['gate'] = 'noisy'): StepOf<'reaction_block'> {
+function stressedStep(
+  conds: readonly TrialCond[],
+  gate: BlockStressors['gate'] = 'noisy',
+  noiseGate: BlockStressors['noiseGate'] = 'noisy',
+): StepOf<'reaction_block'> {
   return step({
     module: 'pomeh',
     specs: conds.map((cond) => ({ ...TRIAL, windowMs: 200, cond })),
-    layers: { noise: NOISE, audio: HUM, gate, seed: LAYERS_SEED },
+    layers: { noise: NOISE, audio: HUM, gate, noiseGate, seed: LAYERS_SEED },
   });
 }
 
@@ -366,6 +370,27 @@ describe('ReactionView', () => {
     await playUnanswered(conds.length);
     expect(handle.setActive.mock.calls.map(([on]) => on)).toEqual([true, true, true]);
     expect(noise.mock.calls.map(([on]) => on)).toEqual([false, true, false]);
+  });
+
+  it('noiseGate all (noise outside Помехоустойчивость, F3) shows the noise on every trial; noisy keeps to noisy trials', async () => {
+    mockCanvas();
+    const { audio } = fakeAudio();
+    const conds: TrialCond[] = ['quiet', 'noisy', 'quiet'];
+    renderView(stressedStep(conds, 'all', 'all'), audio);
+    const noise = noiseSwitch();
+    await nextTask();
+    await playUnanswered(conds.length);
+    expect(noise.mock.calls.map(([on]) => on)).toEqual([true, true, true]);
+  });
+
+  it('a block whose trials have no condition and noiseGate all shows the noise throughout', async () => {
+    mockCanvas();
+    const { audio } = fakeAudio();
+    renderView(step({ module: 'pzmr', specs: [TRIAL, TRIAL].map((t) => ({ ...t, windowMs: 200 })), layers: { noise: NOISE, audio: null, gate: 'all', noiseGate: 'all', seed: LAYERS_SEED } }), audio);
+    const noise = noiseSwitch();
+    await nextTask();
+    await playUnanswered(2);
+    expect(noise.mock.calls.map(([on]) => on)).toEqual([true, true]);
   });
 
   it.each([

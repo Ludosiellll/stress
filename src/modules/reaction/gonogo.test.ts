@@ -2,7 +2,7 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import type { Stimulus, TrialSpec } from '../../engine/reaction/types';
 import { createRng, deriveSeed } from '../../engine/rng';
-import { gonogo, isSwappedSegment, SWAP_SHARE, type GoNoGoParams } from './gonogo';
+import { gonogo, isSwappedSegment, swapColours, SWAP_SHARE, type GoNoGoParams } from './gonogo';
 
 const levelPair = fc
   .tuple(fc.double({ min: 0, max: 1000, noNaN: true }), fc.double({ min: 0, max: 1000, noNaN: true }))
@@ -38,9 +38,9 @@ describe('gonogo.params', () => {
     [19.99, 300, 1000, 0.15, 'red_square'],
     [20, 300, 1000, 0.15, 'red_marked'],
     [100, 300, 1000, 0.15, 'red_marked'],
-  ] as const)('parameters by level (spec §2.5): L %f → ISI %i–%i ms, no-go %f, %s', (L, isiMin, isiMax, noGoRatio, noGoStimulus) => {
-    expect(gonogo.params(L)).toEqual({
-      windowMs: Math.round(150 + 850 * 0.9 ** L),
+  ] as const)('parameters by level (spec §2.5, bands 0–5 of F3): L %f → ISI %i–%i ms, no-go %f, %s', (L, isiMin, isiMax, noGoRatio, noGoStimulus) => {
+    expect(gonogo.params(L)).toMatchObject({
+      windowMs: Math.round(150 + 850 * 0.845 ** L),
       noGoRatio,
       noGoStimulus,
       isiMin,
@@ -49,8 +49,14 @@ describe('gonogo.params', () => {
     });
   });
 
-  it('the window is round(150 + 850·0.9^L), as in 0.2.0', () => {
-    expect([0, 10, 16, 20].map((L) => gonogo.params(L).windowMs)).toEqual([1000, 446, 308, 253]);
+  it('the window is round(150 + 850·0.845^L) (F3)', () => {
+    expect([0, 10, 16, 20].map((L) => gonogo.params(L).windowMs)).toEqual([1000, 308, 207, 179]);
+  });
+
+  it('swapColours swaps the colours and the no-go the band label names', () => {
+    expect(swapColours(gonogo.params(16))).toEqual({ ...gonogo.params(16), swapped: true, bandLabel: 'no-go — зелёный квадрат, интервал 0,3–1 с' });
+    // The other labels name no colour.
+    for (const L of [0, 8, 12, 20, 24, 28, 40, 60]) expect(swapColours(gonogo.params(L))).toEqual({ ...gonogo.params(L), swapped: true });
   });
 
   it('monotone: the window and the pace only shorten, the no-go only gets more similar, its share stays 15–20 %', () => {
@@ -207,26 +213,21 @@ describe('gonogo texts', () => {
     }
   });
 
-  it('describeParams', () => {
+  it('sound and figures get their notes; an overload block leaves out the sound one (M2)', () => {
+    const rule = 'На красный круг нажимай Пробел. На красный круг с белой точкой не нажимай ничего.';
+    expect(gonogo.instruction('keyboard', gonogo.params(24))).toBe(rule + ' В блоке будут звуковые помехи, надень наушники.');
+    expect(gonogo.instruction('keyboard', gonogo.params(28), true)).toBe(rule + ' Вокруг будут появляться другие фигуры, на них не реагируй.');
+  });
+
+  it('describeParams: the window and the load, which holds the interval, the no-go share and the no-go (Р14)', () => {
     expect(gonogo.describeParams(gonogo.params(0))).toEqual([
       { label: 'Окно ответа', value: '1000 мс' },
-      { label: 'Интервал между сигналами', value: '0,5–2,5 с' },
-      { label: 'Доля no-go', value: '20 %' },
-      { label: 'No-go', value: 'зелёный круг' },
-    ]);
-    expect(gonogo.describeParams(gonogo.params(8)).slice(1, 3)).toEqual([
-      { label: 'Интервал между сигналами', value: '0,4–1,8 с' },
-      { label: 'Доля no-go', value: '15 %' },
+      { label: 'Нагрузка', value: 'no-go 20 %, интервал 0,5–2,5 с' },
     ]);
     expect(gonogo.describeParams(gonogo.params(16))).toEqual([
-      { label: 'Окно ответа', value: '308 мс' },
-      { label: 'Интервал между сигналами', value: '0,3–1,0 с' },
-      { label: 'Доля no-go', value: '15 %' },
-      { label: 'No-go', value: 'красный квадрат' },
+      { label: 'Окно ответа', value: '207 мс' },
+      { label: 'Нагрузка', value: 'no-go — красный квадрат, интервал 0,3–1 с' },
     ]);
-    const noGo = (L: number, swapped: boolean): string | undefined =>
-      gonogo.describeParams({ ...gonogo.params(L), swapped }).find((e) => e.label === 'No-go')?.value;
-    expect([noGo(0, false), noGo(16, false), noGo(20, false)]).toEqual(['зелёный круг', 'красный квадрат', 'красный круг с белой точкой']);
-    expect([noGo(0, true), noGo(16, true), noGo(20, true)]).toEqual(['красный круг', 'зелёный квадрат', 'зелёный круг с белой точкой']);
+    expect(gonogo.describeParams(swapColours(gonogo.params(16)))[1]).toEqual({ label: 'Нагрузка', value: 'no-go — зелёный квадрат, интервал 0,3–1 с' });
   });
 });

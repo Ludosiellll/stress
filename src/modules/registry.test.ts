@@ -24,7 +24,7 @@ describe('registry', () => {
 
   it('lNorm re-exports L_NORM (R1)', () => {
     expect(lNorm).toBe(L_NORM);
-    expect(lNorm).toEqual({ pzmr: 14, szmr: 12, gonogo: 10, rdo: 10, gorbov: 12, schulte: 6, stroop: 10, taskswitch: 10, pomeh: 14, memory: 9, numseries: 0 });
+    expect(lNorm).toEqual({ pzmr: 8, szmr: 8, gonogo: 8, rdo: 10, gorbov: 12, schulte: 6, stroop: 12, taskswitch: 8, pomeh: 8, memory: 9, numseries: 0 });
   });
 
   it('MODULE_IDS lists every module once and every module has a title and L_norm', () => {

@@ -2,6 +2,7 @@ import { TARGET, stabilityHold } from '../../../src/engine/adaptive';
 import { stabilityOf } from '../../../src/engine/reaction/stability';
 import { summarize } from '../../../src/engine/reaction/summary';
 import type { Outcome, TrialCond, TrialResult, TrialSpec } from '../../../src/engine/reaction/types';
+import type { BandModuleId } from '../../../src/engine/types';
 import { reactionModules } from '../../../src/modules/registry';
 import { Rand } from './learner';
 
@@ -37,8 +38,6 @@ export interface ExGaussLearner {
   n: number;
 }
 
-export const BAND_MODULE_IDS = ['pzmr', 'szmr', 'gonogo', 'pomeh', 'stroop', 'taskswitch'] as const;
-export type BandModuleId = (typeof BAND_MODULE_IDS)[number];
 export type LearnerKind = 'steady' | 'unsteady';
 
 const BASE = { fs: 0.005, wrong: 0, commission: 0, condShare: 0, condShift: 0, condTau: 1, noGo: 0, n: 20 };

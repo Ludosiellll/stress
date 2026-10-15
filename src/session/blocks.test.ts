@@ -15,7 +15,7 @@ import { generateMemoryTrials, SPAN_PROTOCOL_PARAMS, spanProtocolTrials } from '
 import { memoryModeForBlock, memoryParams } from '../modules/memory/params';
 import { FAMILIES } from '../modules/numseries/families';
 import { generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
-import { NO_STRESSORS } from '../modules/reaction/common';
+import { NO_STRESSORS, bandIndex } from '../modules/reaction/common';
 import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
 import { gonogo, isSwappedSegment } from '../modules/reaction/gonogo';
 import { pomeh } from '../modules/reaction/pomeh';
@@ -141,20 +141,45 @@ describe('scale', () => {
     }
   });
 
-  it('the e2e floor holds at every level 0–40, and scale 1 keeps the planned sizes', () => {
+  it('the e2e floor holds at every level 0–60, and scale 1 keeps the planned sizes', () => {
     const need = MIN_COND_RTS + E2E_COND_MARGIN;
     for (const module of CONDITION_MODULES) {
       const mod = reactionModules[module];
       const diagSeg = planDiagnostic(1).segments.find((s) => s.module === module) as Segment;
-      for (let L = 0; L <= 40; L++) {
+      for (let L = 0; L <= 60; L++) {
         for (const seg of [diagSeg, freeSegment(module)]) {
           const diagnostic = seg.purpose === 'diagnostic';
           const e2e = reactionPlan(seg, L, { layout: 'keyboard', scale: 0.02, diagnostic, ...PLAIN });
           expect(mod.minCondTrials?.(e2e.params, e2e.size), `${module} L ${String(L)}`).toBeGreaterThanOrEqual(need);
-          expect(planBlock(seg, L, 0, { layout: 'keyboard', scale: 1, diagnostic, ...PLAIN })).toMatchObject({ size: seg.trialCount ?? mod.blockSize });
+          const real = reactionPlan(seg, L, { layout: 'keyboard', scale: 1, diagnostic, ...PLAIN });
+          expect(real.size, `${module} L ${String(L)}`).toBe(seg.trialCount ?? mod.trials(real.params));
         }
       }
     }
+  });
+
+  it('a real block never starves a condition: MIN_COND_RTS trials each at every level, on its band and the next (T-R18)', () => {
+    for (const module of CONDITION_MODULES) {
+      const mod = reactionModules[module];
+      for (let L = 0; L <= 80; L += 0.5) {
+        const band = bandIndex(mod, L);
+        for (const loadBand of [band, band + 1]) {
+          const p = mod.params(L, loadBand);
+          const fewest = mod.minCondTrials?.(p, mod.trials(p)) ?? 0;
+          expect(fewest, `${module} L ${String(L)}, band ${String(loadBand)}`).toBeGreaterThanOrEqual(MIN_COND_RTS);
+        }
+      }
+    }
+    // The tightest: Струп with the reverse rule, 20 trials, at most 12 of them framed.
+    expect(reactionModules.stroop.minCondTrials?.(reactionModules.stroop.params(16), 20)).toBe(MIN_COND_RTS);
+  });
+
+  it('the block size is the trials of its band: 30, 45 and 60 in the long bands', () => {
+    const ctx = { layout: 'keyboard', scale: 1, diagnostic: false, ...PLAIN } as const;
+    expect([0, 24, 28, 32, 60].map((L) => reactionPlan(freeSegment('pzmr'), L, ctx).size)).toEqual([15, 30, 45, 60, 60]);
+    expect([0, 40, 44, 48].map((L) => reactionPlan(freeSegment('szmr'), L, ctx).size)).toEqual([20, 30, 45, 60]);
+    expect(reactionPlan({ ...freeSegment('pzmr'), trialCount: 50 }, 32, ctx).size).toBe(50);
+    expect(reactionPlan(freeSegment('rdo'), 40, ctx).size).toBe(10);
   });
 
   it('the modules with trial conditions are exactly the ones that report their fewest trials per condition', () => {
@@ -357,13 +382,13 @@ describe('reaction blocks', () => {
 
   it('keys come from keyCount', () => {
     expect(planBlock(free('pzmr'), 30, 0, ctx)).toMatchObject({ kind: 'reaction', keys: ['Space'] });
-    // СЗМР as before: 3 colours on 2 keys at L 8, 4 keys at L 16.
+    // СЗМР: 3 colours on 2 keys at L 8, 4 keys at L 12 (F3).
     expect(planBlock(free('szmr'), 8, 0, ctx)).toMatchObject({ keys: ['KeyF', 'KeyJ'] });
-    expect(planBlock(free('szmr'), 16, 0, ctx)).toMatchObject({ keys: ['KeyD', 'KeyF', 'KeyJ', 'KeyK'] });
+    expect(planBlock(free('szmr'), 12, 0, ctx)).toMatchObject({ keys: ['KeyD', 'KeyF', 'KeyJ', 'KeyK'] });
     // Струп: one key per colour.
     expect(planBlock(free('stroop'), 0, 0, ctx)).toMatchObject({ keys: ['KeyF', 'KeyJ'], layout: 'keyboard', size: 20 });
-    expect(planBlock(free('stroop'), 8, 0, ctx)).toMatchObject({ keys: ['KeyD', 'KeyF', 'KeyJ'] });
-    expect(planBlock(free('stroop'), 8, 0, { ...ctx, layout: 'mouse' })).toMatchObject({
+    expect(planBlock(free('stroop'), 4, 0, ctx)).toMatchObject({ keys: ['KeyD', 'KeyF', 'KeyJ'] });
+    expect(planBlock(free('stroop'), 4, 0, { ...ctx, layout: 'mouse' })).toMatchObject({
       keys: ['KeyD', 'KeyF', 'KeyJ'],
       layout: 'keyboard',
     });
@@ -374,26 +399,32 @@ describe('reaction blocks', () => {
       buildBlock(planBlock(free(module), L, 0, { ...ctx, layout }), 1, layout, new Map()).step;
     expect(build('stroop', 0)).toMatchObject({ kind: 'reaction_block', legend: 'красный — F · зелёный — J' });
     expect(build('stroop', 0, 'pult')).toMatchObject({ legend: 'красный — ← · зелёный — →' });
-    expect(build('stroop', 12)).toMatchObject({ legend: null });
+    expect(build('stroop', 8)).toMatchObject({ legend: null });
     expect(build('szmr', 0)).toMatchObject({ legend: null });
   });
 
   it('reaction step carries the module stressors and a layers seed', () => {
     const build = (module: Segment['module'], L: number, seed: number) =>
       buildBlock(planBlock(free(module), L, 0, ctx), seed, 'keyboard', new Map()).step;
-    expect(build('pomeh', 18, 7)).toMatchObject({
+    expect(build('pomeh', 8, 7)).toMatchObject({
       kind: 'reaction_block',
       layers: {
-        noise: pomeh.params(18).noise,
+        noise: pomeh.params(8).noise,
         audio: { layers: ['hum'], gain: 0.5 },
         gate: 'noisy',
+        noiseGate: 'noisy',
         seed: deriveSeed(7, 'layers'),
       },
     });
-    expect(build('pomeh', 0, 7)).toMatchObject({ layers: { audio: null, gate: 'noisy' } });
-    expect(build('pzmr', 0, 7)).toMatchObject({ layers: { ...NO_STRESSORS, seed: deriveSeed(7, 'layers') } });
+    expect(build('pomeh', 0, 7)).toMatchObject({ layers: { audio: null, gate: 'noisy', noiseGate: 'noisy' } });
+    expect(build('rdo', 0, 7)).toMatchObject({ layers: { ...NO_STRESSORS, seed: deriveSeed(7, 'layers') } });
+    expect(build('pzmr', 0, 7)).toMatchObject({ layers: { noise: null, audio: null, seed: deriveSeed(7, 'layers') } });
+    // ПЗМР from band 3: the far figures on every trial (noiseGate all, F3).
+    expect(build('pzmr', 16, 7)).toMatchObject({
+      layers: { noise: pzmr.params(16).noise, audio: { layers: ['hum', 'beeps'], gain: 0.6 }, gate: 'all', noiseGate: 'all' },
+    });
     // The noise is visual only on noisy trials: the block has both kinds.
-    const step = build('pomeh', 18, 7);
+    const step = build('pomeh', 8, 7);
     if (step.kind !== 'reaction_block') throw new Error('expected a reaction block');
     expect(new Set(step.specs.map((t) => t.cond))).toEqual(new Set(['quiet', 'noisy']));
   });
@@ -457,8 +488,10 @@ describe('overload blocks', () => {
     });
     const pomehStep = build('pomeh', 18, 'finisher');
     expect(pomehStep).toMatchObject({
-      layers: { noise: pomeh.params(18).noise, audio: { layers: ['hum', 'beeps', 'babble'], gain: 0.8 }, gate: 'all' },
+      layers: { noise: pomeh.params(18).noise, audio: { layers: ['hum', 'beeps', 'babble'], gain: 0.8 }, gate: 'all', noiseGate: 'noisy' },
     });
+    // A band module's noise keeps its every-trial gate.
+    expect(build('pzmr', 12, 'finisher')).toMatchObject({ layers: { noise: pzmr.params(12).noise, audio: FINISHER_AUDIO, noiseGate: 'all' } });
     if (pomehStep.kind !== 'reaction_block') throw new Error('expected a reaction block');
     // Quiet trials stay visually quiet: the trial conditions do not change.
     const normal = build('pomeh', 18);
@@ -466,7 +499,7 @@ describe('overload blocks', () => {
     expect(pomehStep.specs).toEqual(normal.specs);
     expect(pomeh.params(36).audio?.layers).toEqual(['hum', 'beeps', 'metronome', 'babble']);
     expect(build('pomeh', 36, 'finisher')).toMatchObject({
-      layers: { audio: { layers: ['hum', 'beeps', 'metronome', 'babble'], gain: 0.95 }, gate: 'all' },
+      layers: { audio: { layers: ['hum', 'beeps', 'metronome', 'babble'], gain: 1 }, gate: 'all' },
     });
   });
 
@@ -493,8 +526,10 @@ describe('overload blocks', () => {
       for (const overload of ['finisher', 'mix'] as const) {
         const plan = planBlock(seg(module, overload), 5, 1, ctx);
         if (plan.kind !== 'reaction') throw new Error('a reaction plan');
+        // The module's own text without its sound note (M2): the prefix announces the sound.
         const normal = blockInstruction({ ...plan, overload: false }, 'keyboard');
-        expect(blockInstruction(plan, 'keyboard')).toEqual({ text: OVERLOAD_SOUND_PREFIX + normal.text, keysHint: normal.keysHint });
+        const own = reactionModules[module].instruction('keyboard', plan.params, true);
+        expect(blockInstruction(plan, 'keyboard')).toEqual({ text: OVERLOAD_SOUND_PREFIX + own, keysHint: normal.keysHint });
         const built = buildBlock(plan, 3, 'keyboard', new Map());
         expect(built.step.kind === 'reaction_block' && built.step.layers.audio).toBeTruthy();
       }

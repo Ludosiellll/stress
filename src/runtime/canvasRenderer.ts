@@ -13,6 +13,8 @@ export const COLORS: Readonly<Record<ColorId, string>> = {
   blue: '#1e88e5',
   white: '#f5f5f5',
   purple: '#8e24aa',
+  /** Noise only (Р13). */
+  gray: '#9a9a9a',
 };
 
 /** Stimulus diameter as a share of the canvas's shorter side. */
@@ -24,6 +26,11 @@ const STAR_INNER = 0.45;
 const MARK_SIZE = 0.2;
 /** Stroop word height as a share of the shorter side. */
 const WORD_SIZE = 0.12;
+/**
+ * The ring around a framed word (the reverse Stroop rule), as a share of the shorter side: it clears the longest word,
+ * «ЗЕЛЁНЫЙ», under 0.6 of the side wide at WORD_SIZE.
+ */
+const WORD_RING_RADIUS = 0.33;
 const WORD_FONT = "'Segoe UI', Arial, sans-serif";
 /** Task-switching figure diameters as a share of the shorter side. */
 const SWITCH_SIZE = { large: 0.18, small: 0.09 } as const;
@@ -139,6 +146,12 @@ function drawWord(
   ctx.textBaseline = 'middle';
   ctx.fillStyle = COLORS[s.ink];
   ctx.fillText(COLOR_WORDS[s.word], cx, cy);
+  if (s.frame === undefined) return;
+  ctx.beginPath();
+  ctx.arc(cx, cy, WORD_RING_RADIUS * side, 0, FULL_TURN);
+  ctx.strokeStyle = COLORS[s.frame];
+  ctx.lineWidth = FRAME_WIDTH_PX;
+  ctx.stroke();
 }
 
 /** The rule word above the centre (the cue, and with the figure). */
@@ -157,7 +170,7 @@ function drawSwitch(
   cy: number,
   side: number,
 ): void {
-  drawRule(ctx, s.rule, cx, cy, side);
+  if (s.hideRule !== true) drawRule(ctx, s.rule, cx, cy, side);
   shapePath(ctx, s.shape, cx, cy, (SWITCH_SIZE[s.size] * side) / 2);
   ctx.fillStyle = COLORS[s.color];
   ctx.fill();
@@ -316,7 +329,7 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement, o: CanvasRendere
       draw();
     },
     cue(s) {
-      if (s.kind !== 'switch') return;
+      if (s.kind !== 'switch' || s.hideRule === true) return;
       current = null;
       cueRule = s.rule;
       draw();

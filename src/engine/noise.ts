@@ -44,16 +44,26 @@ export function noiseSlots(p: VisualNoiseParams, elapsedMs: number): number[] {
   return Array.from({ length: p.distractors }, (_, j) => Math.floor((elapsedMs + (j * p.lifetimeMs) / p.distractors) / p.lifetimeMs));
 }
 
-/** The (shape, colour) pairs a distractor may take. */
+/** The colour the noise takes only when no stimulus colour is left (Р13). */
+const NOISE_ONLY_COLOR: ColorId = 'gray';
+const STIMULUS_COLORS: readonly ColorId[] = COLOR_IDS.filter((c) => c !== NOISE_ONLY_COLOR);
+
+/**
+ * The (shape, colour) pairs a distractor may take: those of the six stimulus colours, as in 0.2.0 (T-R1); grey ones
+ * only when every stimulus colour is ruled out (СЗМР with six target colours, Р13).
+ */
 function allowedPairs(p: VisualNoiseParams): { shape: ShapeId; color: ColorId }[] {
   const targetColors = new Set(p.forbidden.map((f) => f.color));
-  return SHAPE_IDS.flatMap((shape) =>
-    COLOR_IDS.flatMap((color) => {
-      if (p.forbidden.some((f) => f.shape === shape && f.color === color)) return [];
-      if (p.farOnly && (shape === 'circle' || targetColors.has(color))) return [];
-      return [{ shape, color }];
-    }),
-  );
+  const pairsOf = (colors: readonly ColorId[]): { shape: ShapeId; color: ColorId }[] =>
+    SHAPE_IDS.flatMap((shape) =>
+      colors.flatMap((color) => {
+        if (p.forbidden.some((f) => f.shape === shape && f.color === color)) return [];
+        if (p.farOnly && (shape === 'circle' || targetColors.has(color))) return [];
+        return [{ shape, color }];
+      }),
+    );
+  const pairs = pairsOf(STIMULUS_COLORS);
+  return pairs.length > 0 ? pairs : pairsOf([NOISE_ONLY_COLOR]);
 }
 
 /**

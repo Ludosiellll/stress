@@ -4,17 +4,20 @@ import type { ModuleId, SessionKind } from './types';
 
 export { daysBetween };
 
-/** Level at which a module counts as "at norm" (planner priority, R1). numseries has no level. */
+/**
+ * Level at which a module counts as "at norm" (planner priority, R1). numseries has no level. In the modules with load
+ * bands it is the first level of the first band harder than the test format (F3, spec §3.1.5).
+ */
 export const L_NORM: Record<ModuleId, number> = {
-  pzmr: 14,
-  szmr: 12,
-  gonogo: 10,
+  pzmr: 8,
+  szmr: 8,
+  gonogo: 8,
   rdo: 10,
   gorbov: 12,
   schulte: 6,
-  stroop: 10,
-  taskswitch: 10,
-  pomeh: 14,
+  stroop: 12,
+  taskswitch: 8,
+  pomeh: 8,
   memory: 9,
   numseries: 0,
 };

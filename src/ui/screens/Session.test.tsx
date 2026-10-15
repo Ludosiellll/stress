@@ -218,7 +218,7 @@ describe('Session start', () => {
     const c = fakeDriver(INSTRUCTION);
     c.ackInstruction.mockImplementation(() => {
       order.push('ack');
-      c.step = { ...REACTION, layers: { noise: null, audio: { layers: ['hum'], gain: 0.5 }, gate: 'all', seed: 1 } };
+      c.step = { ...REACTION, layers: { noise: null, audio: { layers: ['hum'], gain: 0.5 }, gate: 'all', noiseGate: 'noisy', seed: 1 } };
     });
     await renderSession(c, { repo, audio });
     expect(audio.unlock).not.toHaveBeenCalled();

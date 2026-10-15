@@ -34,17 +34,20 @@ describe('pomeh catalogue', () => {
     expect(pomeh.id).toBe('pomeh');
     expect(pomeh.title).toBe('Помехоустойчивость');
     expect(pomeh.blockSize).toBe(20);
-    expect(pomeh.lNorm).toBe(14);
+    expect(pomeh.lNorm).toBe(8);
     expect(pomeh.cvMax).toBe(0.225);
-    expect(pomeh.keyCount(pomeh.params(19))).toBe(1);
-    expect(pomeh.keyCount(pomeh.params(20))).toBe(2);
+    expect(pomeh.keyCount(pomeh.params(11.99))).toBe(1);
+    expect(pomeh.keyCount(pomeh.params(12))).toBe(2);
   });
 });
 
 describe('pomeh.params', () => {
   it('L = 0: window 1000, 3 figures for 1000 ms, no flicker, far only, no sound', () => {
     expect(pomeh.params(0)).toEqual({
+      band: 0,
+      bandLabel: 'простая реакция, помехи далеко',
       windowMs: 1000,
+      trials: 20,
       mode: 'simple',
       isiMin: 500,
       isiMax: 2500,
@@ -53,43 +56,30 @@ describe('pomeh.params', () => {
     });
   });
 
-  it('reference points L = 8, 12, 18, 20, 24, 36', () => {
+  it('reference points L = 8, 12, 18, 20, 24, 36: window round(150 + 850·0.845^L), figures smooth with L, the rest by band', () => {
     expect(pomeh.params(8)).toMatchObject({
-      windowMs: 456,
+      windowMs: 371,
       mode: 'simple',
-      noise: { distractors: 7, lifetimeMs: 610, flicker: true, farOnly: true },
-      audio: null,
-    });
-    expect(pomeh.params(12)).toMatchObject({ windowMs: 333, noise: { distractors: 9, lifetimeMs: 476, flicker: true, farOnly: false } });
-    expect(pomeh.params(18)).toMatchObject({
-      windowMs: 235,
-      mode: 'simple',
-      noise: { distractors: 12, lifetimeMs: 328, forbidden: [RED_CIRCLE] },
+      noise: { distractors: 7, lifetimeMs: 610, flicker: true, farOnly: false },
       audio: { layers: ['hum'], gain: 0.5 },
     });
-    expect(pomeh.params(20)).toMatchObject({
-      windowMs: 216,
-      mode: 'choice',
-      noise: { distractors: 13, lifetimeMs: 290, forbidden: [RED_CIRCLE, GREEN_CIRCLE] },
-    });
-    const p24 = pomeh.params(24);
-    expect(p24).toMatchObject({ windowMs: 190, noise: { distractors: 14, lifetimeMs: 227 }, audio: { layers: ['hum', 'beeps'] } });
-    expect(p24.audio?.gain).toBeCloseTo(0.65, 12);
-    expect(pomeh.params(30).audio?.layers).toEqual(['hum', 'beeps', 'metronome']);
-    const p36 = pomeh.params(36);
-    expect(p36).toMatchObject({
-      windowMs: 159,
+    expect(pomeh.params(12)).toMatchObject({ windowMs: 263, mode: 'choice', noise: { distractors: 9, lifetimeMs: 476, forbidden: [RED_CIRCLE, GREEN_CIRCLE] } });
+    expect(pomeh.params(18)).toMatchObject({ windowMs: 191, noise: { distractors: 12, lifetimeMs: 328 }, audio: { layers: ['hum', 'beeps'], gain: 0.6 } });
+    expect(pomeh.params(20)).toMatchObject({ windowMs: 179, noise: { distractors: 13, lifetimeMs: 290 }, audio: { layers: ['hum', 'beeps', 'metronome'], gain: 0.75 } });
+    expect(pomeh.params(24)).toMatchObject({ windowMs: 165, noise: { distractors: 14, lifetimeMs: 227 }, audio: { layers: ['hum', 'beeps', 'metronome', 'babble'], gain: 1 } });
+    expect(pomeh.params(36)).toMatchObject({
+      windowMs: 152,
       mode: 'choice',
       noise: { distractors: 14, lifetimeMs: 120, flicker: true, farOnly: false },
-      audio: { layers: ['hum', 'beeps', 'metronome', 'babble'] },
+      audio: { layers: ['hum', 'beeps', 'metronome', 'babble'], gain: 1 },
+      trials: 60,
     });
-    expect(p36.audio?.gain).toBeCloseTo(0.95, 12);
   });
 
-  it('band edges: sound from 18, choice from 20, gain capped at 1', () => {
-    expect(pomeh.params(17.99).audio).toBeNull();
-    expect(pomeh.params(19.99).mode).toBe('simple');
-    expect(pomeh.params(23.99).audio?.layers).toEqual(['hum']);
+  it('band edges: flicker, near figures and sound from band 2, choice from band 3, gain capped at 1', () => {
+    expect(pomeh.params(7.99)).toMatchObject({ audio: null, noise: { flicker: false, farOnly: true } });
+    expect(pomeh.params(11.99).mode).toBe('simple');
+    expect(pomeh.params(15.99).audio?.layers).toEqual(['hum']);
     expect(pomeh.params(1000).audio).toEqual({ layers: ['hum', 'beeps', 'metronome', 'babble'], gain: 1 });
   });
 
@@ -239,16 +229,17 @@ describe('pomeh.minCondTrials', () => {
 
 describe('stressors', () => {
   it('pomeh: its noise and sound, gated by the noisy trials', () => {
-    const p = pomeh.params(18);
-    expect(pomeh.stressors?.(p)).toEqual({ noise: p.noise, audio: { layers: ['hum'], gain: 0.5 }, gate: 'noisy' });
-    expect(stressorsOf(pomeh, p)).toEqual({ noise: p.noise, audio: { layers: ['hum'], gain: 0.5 }, gate: 'noisy' });
-    expect(stressorsOf(pomeh, pomeh.params(0))).toMatchObject({ audio: null, gate: 'noisy' });
+    const p = pomeh.params(8);
+    const gated = { noise: p.noise, audio: { layers: ['hum'], gain: 0.5 }, gate: 'noisy', noiseGate: 'noisy' };
+    expect(pomeh.stressors?.(p)).toEqual(gated);
+    expect(stressorsOf(pomeh, p)).toEqual(gated);
+    expect(stressorsOf(pomeh, pomeh.params(0))).toMatchObject({ audio: null, gate: 'noisy', noiseGate: 'noisy' });
   });
 
-  it.each(REACTION_MODULE_IDS.filter((id) => id !== 'pomeh'))('%s: no stressors', (id) => {
+  it.each(REACTION_MODULE_IDS.filter((id) => id !== 'pomeh'))('%s: no stressors in the test format', (id) => {
     const m = reactionModules[id];
-    expect(stressorsOf(m, m.params(40))).toBe(NO_STRESSORS);
-    expect(NO_STRESSORS).toEqual({ noise: null, audio: null, gate: 'all' });
+    expect(stressorsOf(m, m.params(0))).toMatchObject({ noise: null, audio: null });
+    expect(NO_STRESSORS).toEqual({ noise: null, audio: null, gate: 'all', noiseGate: 'noisy' });
   });
 });
 
@@ -261,11 +252,11 @@ describe('pomeh texts', () => {
   });
 
   it('flicker and sound add their notes', () => {
-    expect(pomeh.instruction('keyboard', pomeh.params(8))).toBe(
+    expect(pomeh.instruction('keyboard', pomeh.params(8), true)).toBe(
       'Когда в центре появится красный круг, нажми Пробел. Иногда вокруг будут появляться другие фигуры, на них не реагируй.' +
         ' Вместе с фигурами будет мерцать фон.',
     );
-    expect(pomeh.instruction('mouse', pomeh.params(18))).toBe(
+    expect(pomeh.instruction('mouse', pomeh.params(8))).toBe(
       'Когда в центре появится красный круг, нажми ЛКМ. Иногда вокруг будут появляться другие фигуры, на них не реагируй.' +
         ' Вместе с фигурами будет мерцать фон. В части блока будут звуковые помехи, надень наушники.',
     );
@@ -287,22 +278,18 @@ describe('pomeh texts', () => {
     expect(pomeh.instruction('pult', pomeh.params(20))).toContain('Красный круг в центре — ←, зелёный круг — →.');
   });
 
-  it('describeParams', () => {
+  it('describeParams: the window, the load and the figures that stay smooth with L (Р14)', () => {
     expect(pomeh.describeParams(pomeh.params(0))).toEqual([
       { label: 'Окно ответа', value: '1000 мс' },
-      { label: 'Режим', value: 'простая реакция' },
+      { label: 'Нагрузка', value: 'простая реакция, помехи далеко' },
       { label: 'Отвлекающих фигур', value: '3' },
       { label: 'Смена фигур', value: '1000 мс' },
-      { label: 'Мерцание фона', value: 'нет' },
-      { label: 'Звук', value: 'нет' },
     ]);
     expect(pomeh.describeParams(pomeh.params(36))).toEqual([
-      { label: 'Окно ответа', value: '159 мс' },
-      { label: 'Режим', value: 'выбор' },
+      { label: 'Окно ответа', value: '152 мс' },
+      { label: 'Нагрузка', value: 'выбор из двух, помехи рядом, мерцание, звук 4 слоя, 60 сигналов' },
       { label: 'Отвлекающих фигур', value: '14' },
       { label: 'Смена фигур', value: '120 мс' },
-      { label: 'Мерцание фона', value: 'да' },
-      { label: 'Звук', value: 'гул, сигналы, метроном, гомон' },
     ]);
   });
 });

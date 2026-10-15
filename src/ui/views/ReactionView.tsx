@@ -51,8 +51,9 @@ const loopOffsetS = (seed: number): number => (seed % (STRESSOR_LOOP_S * 1000)) 
  * without sound starts exactly as before. Everything is released, and the sound faded out, when the block ends or the
  * view unmounts. If the sound cannot be built or started, the block runs silently and reports `audioPlayed: false`.
  *
- * Stressors (`step.layers`): from the wait before trial i, the visual noise is on when trial i is `noisy` (W2-R10),
- * the sound when the gate is 'all' or trial i is `noisy`. A block with sound reports whether it played.
+ * Stressors (`step.layers`): from the wait before trial i, the visual noise is on when its gate (`noiseGate`) is 'all'
+ * or trial i is `noisy` (W2-R10), the sound when the gate is 'all' or trial i is `noisy`. A block with sound reports
+ * whether it played.
  */
 export default function ReactionView({ step, nominalFrameMs, onDone, onAbort, onError }: ReactionViewProps) {
   const { audio } = useApp();
@@ -90,7 +91,7 @@ export default function ReactionView({ step, nominalFrameMs, onDone, onAbort, on
       renderer,
       nominalFrameMs,
       onTrial: (i) => {
-        base.setNoiseActive(layers.noise !== null && noisy(i));
+        base.setNoiseActive(layers.noise !== null && (layers.noiseGate === 'all' || noisy(i)));
         sound?.setActive(layers.gate === 'all' || noisy(i));
       },
     });

@@ -27,6 +27,8 @@ export const rdo: ReactionModule<RdoParams> = {
     isiMax: 1500,
   }),
 
+  trials: () => BLOCK_SIZE,
+
   cvMax: null,
 
   generateBlock(p, rng, layout, size) {

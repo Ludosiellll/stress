@@ -12,9 +12,13 @@ export interface ParamChange {
   to: string;
 }
 
-const VALUE_UNIT = /^(.+) (\S+)$/;
+/** A number and its unit: «387 мс», «50 %», «1,5 с». */
+const VALUE_UNIT = /^(\d+(?:,\d+)?) (\S+)$/;
 
-/** «387 мс» → { amount: '387', unit: 'мс' }; null: no trailing unit («нет», «5×5»). */
+/**
+ * «387 мс» → { amount: '387', unit: 'мс' }; null: not a number with a unit («нет», «5×5», a band label such as
+ * «2 цвета на 2 клавиши», whose last word is no unit).
+ */
 function splitUnit(value: string): { amount: string; unit: string } | null {
   const m = VALUE_UNIT.exec(value);
   // Both groups are mandatory, so a match always has them.

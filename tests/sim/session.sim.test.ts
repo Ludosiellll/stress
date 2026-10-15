@@ -212,12 +212,20 @@ const COURSE_DAYS = 90;
 const TAPER_CHECK_DAYS = 10;
 
 /**
+ * The taper player: limited by its tries (L* ≈ 8.6), not by the window. Under the F3 window curve (0.824^L) the window
+ * binds the mixed player { ability: 18, medianRt: 220 } at L* ≈ 11, where its L_saved swings with the seed (SD ≈ 0.6
+ * per course: the mean drop of 5 seeds −0.40, of 20 seeds −0.18), so 5 seeds no longer measure the taper. The
+ * personal window floor (F3, Task 8) keeps the window from binding a practising player, which this player models.
+ */
+const TAPER_PLAYER: Player = { ability: 10, medianRt: 180 };
+
+/**
  * L_saved of ПЗМР at the start of each course day: daily sessions with a day off after every 6, the test on day 90,
  * so the last 9 days are the taper (shorter warm-up and slot).
  */
 async function runCourse(seed: number): Promise<number[]> {
   const repo = new MemoryRepository();
-  const respond = responder({ ability: 18, medianRt: 220 }, seed);
+  const respond = responder(TAPER_PLAYER, seed);
   const testDate = localDayIso(courseDay(COURSE_DAYS).toISOString());
   const lSaved: number[] = [];
   for (let day = 0; day <= COURSE_DAYS; day++) {
@@ -235,7 +243,7 @@ describe('session simulation (F5): the taper', () => {
     'the taper does not pull ПЗМР L_saved down (F5): test day ≥ 10 days before − 0.25',
     async () => {
       // 90 daily sessions (a day off after every 6), test date = day 90; plan = the day's warm-up + a ПЗМР reaction
-      // segment of 5 min (taperBudget in the taper); player { ability: 18, medianRt: 220 }; seeds 1–5.
+      // segment of 5 min (taperBudget in the taper); TAPER_PLAYER; seeds 1–5.
       const drops: number[] = [];
       for (const seed of SEEDS) {
         const lSaved = await runCourse(seed);

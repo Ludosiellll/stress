@@ -149,10 +149,10 @@ describe('loadProgressModel', () => {
     expect(model.assessment[0]).toEqual({
       module: 'pzmr',
       title: 'ПЗМР',
-      step: '1 — начальная (ур. 3,5; формат теста — 14)',
+      step: '1 — начальная (ур. 3,5; формат теста — 8)',
       lastBest: '262 мс / 262 мс',
       norm: 'средний',
-      goal: 'ур. 7 (+3,5)',
+      goal: 'ур. 4 (+0,5)',
     });
     // Number series: no block yet, so no rating line either.
     expect(model.assessment.at(-1)).toEqual({ module: 'numseries', title: 'Числовые ряды', step: '—', lastBest: 'ещё не тренировался', norm: '—', goal: '—' });

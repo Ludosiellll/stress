@@ -3,6 +3,8 @@ import { localDayIso } from '../engine/dates';
 import type { FormDay } from '../engine/dayForm';
 import { isCountedSession } from '../engine/derive';
 import type { SessionKind } from '../engine/types';
+import { bandIndex } from '../modules/reaction/common';
+import { pzmr } from '../modules/reaction/pzmr';
 import { parseObject } from './blockHistory';
 
 /**
@@ -49,7 +51,8 @@ function localDay(iso: string): string | null {
 
 /**
  * The warm-up blocks of training and free sessions for «Форма дня» (F5): one FormDay per block, by its local day and
- * band ⌊lBefore/4⌋, with its cleanHitRts. Blocks without readable RTs or a readable date are left out.
+ * the ПЗМР band of lBefore (⌊lBefore/4⌋ up to the ladder's last band, Р15), with its cleanHitRts. Blocks without
+ * readable RTs or a readable date are left out.
  */
 export function warmupDays(past: PastBlocks): FormDay[] {
   const days: FormDay[] = [];
@@ -58,7 +61,7 @@ export function warmupDays(past: PastBlocks): FormDay[] {
     if (!row.flags.includes('warmup') || kind === undefined || !isCountedSession(kind)) continue;
     const rts = readCleanHits(row.summaryJson);
     const day = localDay(row.startedAt);
-    if (rts !== null && day !== null) days.push({ day, band: Math.floor(row.lBefore / 4), rts });
+    if (rts !== null && day !== null) days.push({ day, band: bandIndex(pzmr, row.lBefore), rts });
   }
   return days;
 }

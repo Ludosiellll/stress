@@ -145,11 +145,19 @@ describe('localDayIso', () => {
   });
 });
 
+describe('L_NORM', () => {
+  it('the first level of the first band harder than the test format (F3, spec §3.1.5); memory keeps 9 until F13', () => {
+    expect(L_NORM).toEqual({ pzmr: 8, szmr: 8, gonogo: 8, rdo: 10, gorbov: 12, schulte: 6, stroop: 12, taskswitch: 8, pomeh: 8, memory: 9, numseries: 0 });
+  });
+});
+
 describe('modulePriority', () => {
   it('sums recency, weakness and plateau terms', () => {
-    const s = state('pzmr', { lSaved: 7, lastTrainedAt: '2026-10-11', plateau: true });
-    // 3/7 + (1 - 7/14) + 0.5
+    const s = state('gorbov', { lSaved: 6, lastTrainedAt: '2026-10-11', plateau: true });
+    // 3/7 + (1 - 6/12) + 0.5
     expect(modulePriority(s, '2026-10-14')).toBeCloseTo(3 / 7 + 0.5 + 0.5, 12);
+    // ПЗМР is at norm from L 8 (F3): 7 of 8 leaves 1/8 of the weakness term.
+    expect(modulePriority(state('pzmr', { lSaved: 7, lastTrainedAt: '2026-10-11' }), '2026-10-14')).toBeCloseTo(3 / 7 + 1 / 8, 12);
   });
 
   it('treats a never-trained module as 7 days since', () => {

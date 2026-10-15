@@ -50,7 +50,7 @@ describe('warmupDays', () => {
   const warm = (id: string, sessionId: string, startedAt: string, over: Partial<BlockRow> = {}): BlockRow =>
     block(id, sessionId, startedAt, { flags: ['warmup'], lBefore: 5, lAfter: 5, summaryJson: hits([290, 300]), ...over });
 
-  it('warm-up blocks of training and free sessions, by local day and ⌊lBefore/4⌋', () => {
+  it('warm-up blocks of training and free sessions, by local day and the ПЗМР band of lBefore (⌊lBefore/4⌋)', () => {
     const past = pastBlocks(
       [
         warm('a', 't', '2026-10-12T09:01:00'),
@@ -66,6 +66,18 @@ describe('warmupDays', () => {
       { day: '2026-10-13', band: 2, rts: [250] },
       { day: '2026-10-12', band: 0, rts: [290, 300] },
     ]);
+  });
+
+  it('the band stops at the last band of the ПЗМР ladder (Р15): 12 from L 48 on', () => {
+    const past = pastBlocks(
+      [
+        warm('a', 't', '2026-10-12T09:01:00', { lBefore: 47.5, lAfter: 47.5 }),
+        warm('b', 't', '2026-10-12T09:02:00', { lBefore: 48, lAfter: 48 }),
+        warm('c', 't', '2026-10-12T09:03:00', { lBefore: 63, lAfter: 63 }),
+      ],
+      sessions,
+    );
+    expect(warmupDays(past).map((d) => d.band)).toEqual([11, 12, 12]);
   });
 
   it('blocks without cleanHitRts or with a damaged summary or date are left out', () => {

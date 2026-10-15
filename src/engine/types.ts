@@ -27,6 +27,10 @@ export function isReactionModule(m: ModuleId): m is ReactionModuleId {
   return REACTION_SET.has(m);
 }
 
+/** The reaction modules whose level is a load band every 4 levels (F3); their ladders live in the modules. */
+export const BAND_MODULES = ['pzmr', 'szmr', 'gonogo', 'pomeh', 'stroop', 'taskswitch'] as const satisfies readonly ReactionModuleId[];
+export type BandModuleId = (typeof BAND_MODULES)[number];
+
 export type TableModuleId = 'gorbov' | 'schulte';
 export type LayoutId = 'keyboard' | 'mouse' | 'pult';
 export type InputKey = string;

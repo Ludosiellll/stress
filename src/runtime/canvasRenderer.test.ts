@@ -205,6 +205,24 @@ describe('createCanvasRenderer', () => {
     expect(named(calls, 'fill')).toEqual([]);
   });
 
+  it('a framed word (the reverse Stroop rule) gets a white ring around it', () => {
+    const { renderer, calls } = setup({ w: 800, h: 600 });
+    calls.length = 0;
+    renderer.show({ kind: 'word', word: 'green', ink: 'red', frame: 'white' });
+    expect(named(calls, 'fillText').map((c) => [c.args, c.fillStyle])).toEqual([[['ЗЕЛЁНЫЙ', 400, 300], COLORS.red]]);
+    const ring = named(calls, 'stroke');
+    expect(ring).toHaveLength(1);
+    expect([ring[0]?.strokeStyle, ring[0]?.lineWidth]).toEqual([COLORS.white, 12]);
+    const [cx, cy, r] = named(calls, 'arc').at(-1)?.args as [number, number, number];
+    expect([cx, cy]).toEqual([400, 300]);
+    // The inner edge clears the longest word: «ЗЕЛЁНЫЙ» at 72 px is under 0.6 of the shorter side wide.
+    expect(r - 6).toBeGreaterThan(Math.hypot(0.3 * 600, 36));
+    // An unframed word has no ring.
+    calls.length = 0;
+    renderer.show({ kind: 'word', word: 'green', ink: 'red' });
+    expect(named(calls, 'stroke')).toEqual([]);
+  });
+
   it('the word is bold, centred, 12% of the shorter side', () => {
     const { ctx, calls } = mockContext();
     const canvas = {
@@ -278,6 +296,18 @@ describe('createCanvasRenderer', () => {
       calls.length = 0;
       renderer.show({ kind: 'switch', rule: 'color', color: 'red', shape: 'square', size: 'small' });
       expect(named(calls, 'rect')[0]?.args).toEqual([373, 273, 54, 54]);
+    });
+
+    it('a figure whose rule is hidden (runs, F3) is drawn without the word, and its cue draws nothing', () => {
+      const { renderer, calls } = setup({ w: 800, h: 600 });
+      const hidden: Stimulus = { kind: 'switch', rule: 'shape', color: 'blue', shape: 'circle', size: 'large', hideRule: true };
+      calls.length = 0;
+      renderer.cue?.(hidden);
+      expect(calls).toEqual([]);
+      renderer.show(hidden);
+      expect(named(calls, 'fillText')).toEqual([]);
+      expect(named(calls, 'arc')[0]?.args).toEqual([400, 300, 54, 0, 2 * Math.PI]);
+      expect(named(calls, 'fill').map((c) => c.fillStyle)).toEqual([COLORS.blue]);
     });
 
     it('a cue for a stimulus without a rule draws nothing; a later show of it has no word', () => {
@@ -485,7 +515,27 @@ describe('createCanvasRenderer', () => {
       blue: '#1e88e5',
       white: '#f5f5f5',
       purple: '#8e24aa',
+      gray: '#9a9a9a',
     });
+  });
+
+  it('grey noise figures are drawn #9a9a9a (Р13)', () => {
+    const six: ColorId[] = ['red', 'green', 'yellow', 'blue', 'white', 'purple'];
+    const shapes: ShapeId[] = ['circle', 'square', 'triangle', 'diamond', 'hexagon', 'star'];
+    const params: VisualNoiseParams = {
+      distractors: 6,
+      lifetimeMs: 600,
+      flicker: false,
+      farOnly: true,
+      forbidden: shapes.flatMap((shape) => six.map((color) => ({ shape, color }))),
+    };
+    const { renderer, calls } = setup({ noise: { params, seed: 5 } });
+    renderer.setNoiseActive(true);
+    calls.length = 0;
+    renderer.hide();
+    const fills = named(calls, 'fill').map((c) => c.fillStyle);
+    expect(fills).toHaveLength(6);
+    expect(new Set(fills)).toEqual(new Set(['#9a9a9a']));
   });
 
   describe('rdo', () => {
@@ -577,8 +627,9 @@ describe('readability of the word stimuli (WCAG contrast, large text ≥ 3:1)', 
     for (const c of STROOP_COLORS) expect(contrast(COLORS[c], BACKGROUND), c).toBeGreaterThanOrEqual(3);
   });
 
-  it('Stroop words are never drawn on the flicker shade: the module has no visual noise at any level', () => {
-    for (let L = 0; L <= 60; L++) expect(stressorsOf(stroop, stroop.params(L)).noise, `L ${String(L)}`).toBeNull();
+  it('Stroop words are never drawn on the flicker shade: its noise (F3) never flickers', () => {
+    for (let L = 0; L <= 60; L++) expect(stressorsOf(stroop, stroop.params(L)).noise?.flicker ?? false, `L ${String(L)}`).toBe(false);
+    expect(stressorsOf(stroop, stroop.params(24)).noise).not.toBeNull();
   });
 
   it('the task-switching rule word (white) reads at ≥ 4.5:1 on the background', () => {
