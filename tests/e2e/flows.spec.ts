@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { cancelPendingPresses, openApp, pageDate, playSession, type Screen } from './bot';
-import { E2E_URL, expect, test } from './fixtures';
+import { E2E_URL, expect, shot, test } from './fixtures';
 
 // Whole sessions at scale 0.02 still take tens of seconds each.
 test.describe.configure({ timeout: 240_000 });
@@ -102,7 +102,17 @@ test('diagnostic run writes results and home shows readiness', async ({ page }) 
   await runDiagnostic(page);
   // The second one is compared with the first.
   await expect(page.getByRole('columnheader', { name: /^Прошлая \(№1, \d\d\.\d\d\.\d{4}\)$/ })).toBeVisible();
+  // Columns: Показатель, Результат, Прошлая, Изменение, Ориентир. Both diagnostics have every value, so every
+  // row has a change (Δ = 0 in the shown rounding reads «без изменений», A-R3).
+  const rows = page.getByRole('table', { name: 'Результаты диагностики' }).locator('tbody tr');
+  await expect(rows).toHaveCount(12);
+  for (const row of await rows.all()) {
+    await expect(row.locator('td').nth(3)).toHaveText(/^(без изменений|[+−][\d,]+( мс| с| %)?, (лучше|хуже))$/);
+  }
   await expect(page.getByText(/^Индекс: \d+ \(прошлый — \d+\)$/)).toBeVisible();
+  // The table from its header row: «На главную» has the focus, which scrolls the screen to the bottom.
+  await page.getByRole('table', { name: 'Результаты диагностики' }).evaluate((el) => { el.scrollIntoView({ block: 'start' }); });
+  await shot(page, 'done-diagnostic-compare');
   await page.getByRole('button', { name: 'На главную' }).click();
 
   const readiness = page.locator('.readiness');
@@ -115,20 +125,41 @@ test('diagnostic run writes results and home shows readiness', async ({ page }) 
   await expect(page.getByText('Пора пройти контрольную диагностику')).toHaveCount(0);
 });
 
-test('free training of rdo', async ({ page }) => {
+test('free training of rdo shows the assessment and compares with the previous session', async ({ page }) => {
+  // Two whole free sessions of РДО.
+  test.setTimeout(360_000);
   await openApp(page, E2E_URL);
-  await page.getByRole('button', { name: 'Свободная тренировка' }).click();
-  await page.getByRole('button', { name: 'Реакция на движущийся объект' }).click();
-  const titles: string[] = [];
-  const screens = await playSession(page, { onScreen: checkSummaries(page, titles) });
-  expect(screens).not.toContain('wellbeing');
-  expect(titles.length).toBeGreaterThan(0);
-  expect(new Set(titles)).toEqual(new Set(['Реакция на движущийся объект']));
-  const kinds = await page.evaluate(() => [...new Set(window.__bot?.stimuli.map((s) => `${s.module}:${s.kind}`))]);
-  expect(kinds).toEqual(['rdo:timed']);
-  await expect(page.getByRole('list', { name: 'Итог по модулям' })).toContainText('Реакция на движущийся объект: блоков');
-  await page.getByRole('button', { name: 'На главную' }).click();
-  await expect(home(page)).toBeVisible();
+  /** The «Оценка» lines of the first block summary of each session. */
+  const firstAssessments: string[][] = [];
+  for (let session = 0; session < 2; session++) {
+    await page.getByRole('button', { name: 'Свободная тренировка' }).click();
+    await page.getByRole('button', { name: 'Реакция на движущийся объект' }).click();
+    const titles: string[] = [];
+    const summaries = checkSummaries(page, titles);
+    const assessments: string[][] = [];
+    const screens = await playSession(page, {
+      onScreen: async (kind) => {
+        await summaries(kind);
+        if (kind === 'summary') assessments.push(await page.getByRole('list', { name: 'Оценка' }).getByRole('listitem').allInnerTexts());
+      },
+    });
+    expect(assessments.length, `session ${String(session + 1)}: block summaries`).toBeGreaterThan(0);
+    firstAssessments.push(assessments[0] ?? []);
+    expect(screens).not.toContain('wellbeing');
+    expect(titles.length).toBeGreaterThan(0);
+    expect(new Set(titles)).toEqual(new Set(['Реакция на движущийся объект']));
+    const kinds = await page.evaluate(() => [...new Set(window.__bot?.stimuli.map((s) => `${s.module}:${s.kind}`))]);
+    expect(kinds).toEqual(['rdo:timed']);
+    await expect(page.getByRole('list', { name: 'Итог по модулям' })).toContainText('Реакция на движущийся объект: блоков');
+    await page.getByRole('button', { name: 'На главную' }).click();
+    await expect(home(page)).toBeVisible();
+  }
+  const [firstSession = [], secondSession = []] = firstAssessments;
+  // The very first РДО block: step 1 at the start level, no history yet.
+  expect(firstSession[0]).toMatch(/^Ступень 1 из 5\+ — начальная \(уровень [\d,]+; формат теста — 10\)$/);
+  expect(firstSession.at(-1)).toBe('Первый такой блок — будет с чем сравнивать');
+  // The second session's first block is compared with the blocks of the first session.
+  expect(secondSession.at(-1)).toMatch(/^Раньше в этом блоке: прошлый раз \d+ мс \(ур\. [\d,]+\) · лучший \d+ мс/);
 });
 
 test('free training of Струп reaches a summary with 100 %', async ({ page }) => {

@@ -1,7 +1,7 @@
-import { existsSync, statSync } from 'node:fs';
 import type { JSHandle, Page } from '@playwright/test';
 import { chooseExportFile, exportedFile, openApp, pageDate, playSession, setPressDelay } from './bot';
-import { E2E_URL, expect, freshPage, test } from './fixtures';
+import { NORM_HINTS } from '../../src/engine/norms';
+import { E2E_URL, expect, freshPage, shot, test } from './fixtures';
 
 /**
  * Screenshots of every screen at 1280×800 into test-results/screens/<name>.png for the visual check
@@ -9,15 +9,6 @@ import { E2E_URL, expect, freshPage, test } from './fixtures';
  */
 
 test.describe.configure({ timeout: 240_000 });
-
-const DIR = 'test-results/screens';
-
-async function shot(page: Page, name: string, fullPage = false): Promise<void> {
-  const path = `${DIR}/${name}.png`;
-  await page.screenshot({ path, fullPage });
-  expect(existsSync(path), path).toBe(true);
-  expect(statSync(path).size, path).toBeGreaterThan(1000);
-}
 
 /** Waits for the next stimulus of `module`, shoots it, and checks it was still on screen afterwards. */
 async function shootStimulus(page: Page, module: string, name: string): Promise<void> {
@@ -47,6 +38,13 @@ async function untilInstruction(page: Page, title: string, text?: string): Promi
     await page.getByRole('button', { name: 'Начать (Enter)' }).click();
     await expect(page.locator('.instruction h2')).toHaveCount(0);
   }
+}
+
+/** Ends the session from the screen on display (Escape → «Завершить сессию») and waits for Home. */
+async function endSession(page: Page): Promise<void> {
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Завершить сессию' }).click();
+  await expect(page.getByRole('button', { name: 'Начать тренировку' })).toBeVisible();
 }
 
 /** Clicks «Начать (Enter)» on the instruction on screen. */
@@ -397,7 +395,27 @@ test('screens: a training session with pause, wellbeing and done; schulte', asyn
   await shot(page, 'pause');
   await page.getByRole('button', { name: 'Продолжить', exact: true }).click();
 
-  await playSession(page, { stopAt: 'wellbeing' });
+  // The first summary of the day is ПЗМР's, the longest one: six metric lines and the «Оценка» of a first block
+  // (step, goal, two norm lines, history). On a 720 px high window «Дальше» is reached by scrolling the session.
+  let summaryShot = false;
+  await playSession(page, {
+    stopAt: 'wellbeing',
+    onScreen: async (kind) => {
+      if (kind !== 'summary' || summaryShot) return;
+      summaryShot = true;
+      await expect(page.locator('.summary h2')).toHaveText('ПЗМР');
+      await shot(page, 'summary-training');
+      await page.setViewportSize({ width: 1280, height: 720 });
+      await shot(page, 'summary-training-720');
+      const next = page.getByRole('button', { name: 'Дальше' });
+      await next.scrollIntoViewIfNeeded();
+      await expect(next).toBeInViewport({ ratio: 1 });
+      await expect(page.getByText('Enter — дальше')).toBeInViewport({ ratio: 1 });
+      await shot(page, 'summary-training-720-scrolled');
+      await page.setViewportSize({ width: 1280, height: 800 });
+    },
+  });
+  expect(summaryShot).toBe(true);
   await shot(page, 'wellbeing');
   await playSession(page, { onScreen: async (kind) => { if (kind === 'done') await shot(page, 'done-training'); } });
   await expect(page.getByRole('heading', { name: 'Сессия завершена' })).toBeVisible();
@@ -410,8 +428,24 @@ test('screens: a training session with pause, wellbeing and done; schulte', asyn
   await page.getByRole('button', { name: 'Начать (Enter)' }).click();
   await expect(page.locator('.table-grid')).toHaveAttribute('data-task', 'schulte');
   await shot(page, 'table-schulte');
-  await playSession(page);
-  await expect(page.getByRole('heading', { name: 'Сессия завершена' })).toBeVisible();
+  // Each Шульте session ends after its first summary, so exactly one 5×5 block is stored per session (A-R4).
+  await playSession(page, { stopAt: 'summary' });
+  await endSession(page);
+
+  // The second session's block is compared with the first one and gets the paper norm.
+  await page.getByRole('button', { name: 'Свободная тренировка' }).click();
+  await page.getByRole('button', { name: 'Таблицы Шульте' }).click();
+  await playSession(page, { stopAt: 'summary' });
+  const assessment = page.getByRole('list', { name: 'Оценка' }).getByRole('listitem');
+  await expect(assessment.filter({ hasText: 'Раньше в этом блоке: прошлый раз' })).toHaveCount(1);
+  await expect(assessment.filter({ hasText: NORM_HINTS.schulte5 })).toHaveCount(1);
+  await shot(page, 'summary-assessment');
+  await endSession(page);
+
+  await page.getByRole('button', { name: 'Прогресс' }).click();
+  const schulte = page.getByRole('table', { name: 'Оценка по модулям' }).getByRole('row', { name: /^Таблицы Шульте — 5×5/ });
+  await expect(schulte.getByRole('cell').filter({ hasText: /^\d+,\d с \/ \d+,\d с$/ })).toHaveCount(1);
+  await shot(page, 'progress-assessment', true);
 });
 
 test('screens: the overload phase on Home; memory grid, card and grid answer', async ({ page }) => {

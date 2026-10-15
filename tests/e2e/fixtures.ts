@@ -1,3 +1,4 @@
+import { existsSync, statSync } from 'node:fs';
 import { test as base, expect, type Browser, type Page } from '@playwright/test';
 import { openApp } from './bot';
 
@@ -46,4 +47,15 @@ export async function freshPage(browser: Browser): Promise<{ page: Page; errors:
   watchErrors(page, errors);
   await openApp(page, E2E_URL);
   return { page, errors, close: () => context.close() };
+}
+
+/** Where screenshots go for the visual check (CI uploads them as the e2e-screens artifact). */
+const SCREENS_DIR = 'test-results/screens';
+
+/** Saves a screenshot to test-results/screens/<name>.png and checks the file was written. */
+export async function shot(page: Page, name: string, fullPage = false): Promise<void> {
+  const path = `${SCREENS_DIR}/${name}.png`;
+  await page.screenshot({ path, fullPage });
+  expect(existsSync(path), path).toBe(true);
+  expect(statSync(path).size, path).toBeGreaterThan(1000);
 }
