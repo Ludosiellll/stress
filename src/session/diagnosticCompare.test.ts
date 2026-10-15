@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { EMPTY_METRICS, planDiagnostic } from '../engine/diagnostic';
-import { szmr } from '../modules/reaction/szmr';
+import { EMPTY_METRICS } from '../engine/diagnostic';
+import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
 import { isTwoChoice } from './blockHistory';
 import { DIAGNOSTIC_ROW_IDS, diagnosticChange, diagnosticNorm, diagnosticValue, diagnosticValueText } from './diagnosticCompare';
 
@@ -59,8 +59,7 @@ describe('diagnosticCompare', () => {
   });
 
   it('the diagnostic plays СЗМР with 2 colours on 2 keys, as the 2-choice norm of its «Ориентир» needs', () => {
-    const segment = planDiagnostic(1).segments.find((s) => s.module === 'szmr');
-    expect(isTwoChoice(szmr.params(segment?.fixedL ?? Number.NaN))).toBe(true);
+    expect(isTwoChoice(DIAGNOSTIC_PARAMS.szmr)).toBe(true);
   });
 
   it('no difference in the shown rounding is no change, also from a previous 0 (A-R3)', () => {

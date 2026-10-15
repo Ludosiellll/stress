@@ -162,7 +162,7 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
     reaction('pzmr', 'ПЗМР, медиана, мс', 'мс', true, 'ПЗМР', 'pzmrMedianRt'),
     reaction('szmr', 'СЗМР, медиана, мс', 'мс', true, 'СЗМР', 'szmrMedianRt'),
     reaction('gonogo', 'Go/No-Go, точность, %', '%', false, 'Go/No-Go', 'gonogoScore', PERCENT),
-    reaction('rdo', 'РДО, средняя ошибка, мс', 'мс', true, 'РДО', 'rdoMeanAbsErrorMs'),
+    reaction('rdo', 'РДО, средняя ошибка по модулю, мс', 'мс', true, 'РДО', 'rdoMeanAbsErrorMs'),
     {
       id: 'gorbov',
       title: 'Таблица Горбова: V, P, Π, с',
