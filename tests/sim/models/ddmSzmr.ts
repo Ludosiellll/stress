@@ -1,14 +1,17 @@
 import { nextLevel, savedLevel, startLevel } from '../../../src/engine/adaptive';
-import { PENALTY, penalizedScore } from '../../../src/engine/reaction/summary';
+import { CALIBRATION_BLOCKS } from '../../../src/engine/phases';
+import { penalizedScore } from '../../../src/engine/reaction/summary';
 import type { Outcome } from '../../../src/engine/reaction/types';
+import { FLOOR_HITS, bandFloors } from '../../../src/engine/windowFloor';
 import { szmr } from '../../../src/modules/reaction/szmr';
 import { Rand, buildDdm, countLe, learn, nearestIdx, type DdmCell } from './learner';
 
 /**
  * СЗМР over a 90-day course, played by a two-boundary diffusion learner (spec §8.2; ported from the fixes simulation
- * bands.ts). The rules are the app's: the window and the load from szmr.params(L), the block score from
- * penalizedScore, the level from nextLevel (levelDelta; a session is one segment, so its first block may take g = 2),
- * startLevel and savedLevel. The stability rule is off here (cvMax null).
+ * bands.ts). The rules are the app's: the window and the load from szmr.params(L), with `floors` the personal window
+ * floor of the band (bandFloors over the clean hits of each band, F3), the block score from penalizedScore, the level
+ * from nextLevel (levelDelta; a session is one segment, so its first block may take g = 2), startLevel and savedLevel.
+ * The stability rule is off here (cvMax null).
  */
 
 /** Drift rates and boundary separations of the diffusion table: start z = a/2, 2500 trajectories a cell, seed 31. */
@@ -25,8 +28,6 @@ const LAPSE = 0.01;
 const DAY_STEP = 3;
 const LAST_DAY = 90;
 const BLOCKS_PER_SESSION = 7;
-/** The first blocks of the module ever are calibration blocks (g = 2), as in the controller. */
-const CALIBRATION_BLOCKS = 3;
 
 /** How the learner picks its boundary: the one with the best expected penalised score, or a fixed one from AS. */
 export type BoundaryPolicy = 'opt' | { a: number };
@@ -54,6 +55,8 @@ let table: DdmCell[][] | null = null;
 const ddm = (): DdmCell[][] => (table ??= buildDdm(VS, AS, Z_FRAC, DDM_SAMPLES, DDM_SEED));
 
 interface Load {
+  /** The load band and the nominal window of the level. */
+  band: number;
   windowMs: number;
   /** Drift multiplier of the load. */
   drift: number;
@@ -68,12 +71,11 @@ interface Load {
  */
 function loadOf(L: number): Load {
   const p = szmr.params(L);
-  const fields: Readonly<Record<string, unknown>> = { ...p };
-  const has = (key: string): boolean => fields[key] !== undefined && fields[key] !== null && fields[key] !== false;
   const nAlt = p.nColors === 3 && p.nKeys === 2 ? 2.6 : p.nColors;
-  const audio = has('audio');
-  const noise = has('noise');
+  const audio = p.audio !== null;
+  const noise = p.noise !== null;
   return {
+    band: p.band,
     windowMs: p.windowMs,
     drift:
       (1 - 0.17 * Math.log2(nAlt / 2)) *
@@ -85,9 +87,22 @@ function loadOf(L: number): Load {
   };
 }
 
+const ZERO_COUNTS: Readonly<Record<Outcome, number>> = {
+  hit: 0,
+  wrong: 0,
+  miss: 0,
+  late: 0,
+  false_start: 0,
+  commission: 0,
+  correct_reject: 0,
+  early: 0,
+  timing_late: 0,
+};
+
 /**
- * The boundary of the cell row of the learner's drift. 'opt': the highest expected (right answers inside the window −
- * PENALTY.wrong · wrong answers) / n, the first one on a tie; lapses and the ±25 ms spread are not foreseen.
+ * The boundary of the cell row of the learner's drift. 'opt': the highest expected penalizedScore of the cell's answers
+ * (right inside the window a hit, wrong inside it a wrong key, any answer after it late), the first one on a tie; lapses
+ * and the ±25 ms spread are not foreseen.
  */
 function pickCell(row: readonly DdmCell[], policy: BoundaryPolicy, terS: number, windowS: number): DdmCell {
   if (policy !== 'opt') {
@@ -98,7 +113,9 @@ function pickCell(row: readonly DdmCell[], policy: BoundaryPolicy, terS: number,
   let best = row[0] as DdmCell;
   let bestValue = -Infinity;
   for (const cell of row) {
-    const value = (countLe(cell.up, windowS - terS) - PENALTY.wrong * cell.lo.length) / cell.n;
+    const hit = countLe(cell.up, windowS - terS);
+    const wrong = countLe(cell.lo, windowS - terS);
+    const value = penalizedScore({ ...ZERO_COUNTS, hit, wrong, late: cell.n - hit - wrong }, cell.n);
     if (value > bestValue) {
       best = cell;
       bestValue = value;
@@ -107,19 +124,13 @@ function pickCell(row: readonly DdmCell[], policy: BoundaryPolicy, terS: number,
   return best;
 }
 
-/** One block of n trials: a right answer inside the window is a hit, a wrong one an error, any answer after it late. */
-function playBlock(r: Rand, cell: DdmCell, terS: number, windowMs: number, n: number): Record<Outcome, number> {
-  const counts: Record<Outcome, number> = {
-    hit: 0,
-    wrong: 0,
-    miss: 0,
-    late: 0,
-    false_start: 0,
-    commission: 0,
-    correct_reject: 0,
-    early: 0,
-    timing_late: 0,
-  };
+/**
+ * One block of n trials: a right answer inside the window is a hit (its RT a clean hit), a wrong one an error, any
+ * answer after it late.
+ */
+function playBlock(r: Rand, cell: DdmCell, terS: number, windowMs: number, n: number): { counts: Record<Outcome, number>; hits: number[] } {
+  const counts = { ...ZERO_COUNTS };
+  const hits: number[] = [];
   const pUp = cell.up.length / cell.n;
   for (let i = 0; i < n; i++) {
     const up = r.next() < pUp;
@@ -127,19 +138,22 @@ function playBlock(r: Rand, cell: DdmCell, terS: number, windowMs: number, n: nu
     let rt = 1000 * (terS + (r.next() - 0.5) * 0.05 + (times[Math.floor(r.next() * times.length)] as number));
     if (r.next() < LAPSE) rt += 300 + 400 * r.next();
     if (rt > windowMs) counts.late++;
-    else if (up) counts.hit++;
-    else counts.wrong++;
+    else if (up) {
+      counts.hit++;
+      hits.push(rt);
+    } else counts.wrong++;
   }
-  return counts;
+  return { counts, hits };
 }
 
 /**
- * The course of one learner. `floors`: the personal window floor (spec §3.1.2) is not modelled yet and must be false;
- * the window is szmr.params(L).windowMs.
+ * The course of one learner. `floors`: the window is max(szmr.params(L).windowMs, round(floor of its band)) (spec
+ * §3.1.2), the floors from the clean hits of every block so far; otherwise the nominal window.
  */
 export function runSzmrCourse(seed: number, o: { floors: boolean; policy: BoundaryPolicy }): SzmrCourse {
-  if (o.floors) throw new RangeError('runSzmrCourse: the personal window floor is not modelled yet');
   const r = new Rand(seed);
+  const hitsByBand = new Map<number, number[]>();
+  const bands = szmr.bands ?? [];
   const cells = ddm();
   const n = szmr.blockSize;
   const blocks: SzmrCourseBlock[] = [];
@@ -155,10 +169,13 @@ export function runSzmrCourse(seed: number, o: { floors: boolean; policy: Bounda
     let prev: number | null = null;
     for (let k = 0; k < BLOCKS_PER_SESSION; k++) {
       const load = loadOf(L);
+      const floor = o.floors ? bandFloors(hitsByBand, bands)(load.band) : null;
+      const windowMs = floor === null ? load.windowMs : Math.max(load.windowMs, Math.round(floor));
       const drift = learn(0.3, 0.42, trials, PRACTICE_SCALE) * load.drift;
       const terS = learn(0.31, 0.28, trials, PRACTICE_SCALE) + load.ter;
-      const cell = pickCell(cells[nearestIdx(VS, drift)] as DdmCell[], o.policy, terS, load.windowMs / 1000);
-      const counts = playBlock(r, cell, terS, load.windowMs, n);
+      const cell = pickCell(cells[nearestIdx(VS, drift)] as DdmCell[], o.policy, terS, windowMs / 1000);
+      const { counts, hits } = playBlock(r, cell, terS, windowMs, n);
+      hitsByBand.set(load.band, [...(hitsByBand.get(load.band) ?? []), ...hits].slice(-FLOOR_HITS));
       const s = penalizedScore(counts, n);
       blocks.push({ day, s, errorRate: counts.wrong / n, L, lSaved });
       L = nextLevel(L, {

@@ -111,9 +111,24 @@ export function loadBandOf(bands: readonly LoadBand[], L: number, loadBand?: num
   return Math.max(0, Math.min(loadBand ?? Math.floor(L / LEVELS_PER_BAND), bands.length - 1));
 }
 
+/** What the parameters of every band module carry: the load band played, its label and the window. */
+export interface BandFields {
+  band: number;
+  bandLabel: string;
+  windowMs: number;
+}
+
 /** The band fields of a band module's parameters: the band, its label and the nominal window of L. */
-export function bandFields(bands: readonly LoadBand[], band: number, windowMs: number): { band: number; bandLabel: string; windowMs: number } {
+export function bandFields(bands: readonly LoadBand[], band: number, windowMs: number): BandFields {
   return { band, bandLabel: (bands[band] as LoadBand).label, windowMs };
+}
+
+/**
+ * The parameters with the window a block plays (F3): the nominal window or round(floor), whichever is larger; the
+ * parameters themselves without a floor.
+ */
+export function withFloor<P extends BandFields>(p: P, floor: number | null): P {
+  return floor === null ? p : { ...p, windowMs: Math.max(p.windowMs, Math.round(floor)) };
 }
 
 /** Trials in a block of the bands that lengthen it: 30, 45 and 60 from band `from` on (spec §3.1.3). */

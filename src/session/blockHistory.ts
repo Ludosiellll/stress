@@ -1,7 +1,7 @@
 import { isCountedSession } from '../engine/derive';
 import type { NormId } from '../engine/norms';
 import { COND_PAIRS } from '../engine/reaction/conditions';
-import type { BlockFlag, ModuleId, SessionKind } from '../engine/types';
+import { isBandModule, type BlockFlag, type ModuleId, type SessionKind } from '../engine/types';
 import type { BlockRow } from '../data/rows';
 import { MEMORY_TRIALS } from '../modules/memory/params';
 import { szmr } from '../modules/reaction/szmr';
@@ -14,7 +14,7 @@ import { displayedCost, round1, whole } from './steps';
  * left out, never thrown on.
  */
 
-/** 'pzmr', 'pzmr:warmup', 'gorbov:alternate', 'schulte:6', 'memory:digits'. */
+/** 'pzmr', 'pzmr:b2', 'pzmr:warmup', 'gorbov:alternate', 'schulte:6', 'memory:digits'. */
 export type VariantKey = string;
 
 export interface KeyMetric {
@@ -140,11 +140,27 @@ function tableSeconds(summary: Json | null): number | null {
 
 /** The ПЗМР warm-up is a variant of its own (F5, Р29): its blocks never become «лучший» of the main variant. */
 const WARMUP_VARIANT: VariantKey = 'pzmr:warmup';
+const BAND_PREFIX = ':b';
+
+/** paramsJson.band of a band module's block, a whole number from 0 (F3); null: a block from before the bands, or damaged. */
+export function storedBand(paramsJson: string): number | null {
+  const band = num(parseObject(paramsJson), 'band');
+  return band !== null && Number.isInteger(band) && band >= 0 ? band : null;
+}
+
+/**
+ * A band module's variant (Р29): its warm-up's own, else the band the block played (`pzmr:b2`); a block without a band
+ * (before 0.3.0) keeps the bare module key (T-R7).
+ */
+function bandVariant(module: ModuleId, flags: readonly BlockFlag[], paramsJson: string): VariantKey {
+  if (flags.includes('warmup')) return WARMUP_VARIANT;
+  const band = storedBand(paramsJson);
+  return band === null ? module : `${module}${BAND_PREFIX}${String(band)}`;
+}
 
 function variantFrom(module: ModuleId, flags: readonly BlockFlag[], summary: Json | null, paramsJson: string): VariantKey | null {
+  if (isBandModule(module)) return bandVariant(module, flags, paramsJson);
   switch (module) {
-    case 'pzmr':
-      return flags.includes('warmup') ? WARMUP_VARIANT : module;
     case 'gorbov': {
       const task = gorbovTask(summary, paramsJson);
       return task === null ? null : `gorbov:${task}`;
@@ -391,8 +407,37 @@ export function schulteSize(variant: VariantKey): number | null {
   return Number.isInteger(size) && size >= 1 ? size : null;
 }
 
-/** The variant «Прогресс» shows: Шульте — the largest grid with entries (none: null); otherwise fixed. */
+/** When an entry was stored; an unreadable date is the earliest. */
+function storedAt(entry: HistoryEntry | undefined): number {
+  const at = entry === undefined ? NaN : Date.parse(entry.at);
+  return Number.isNaN(at) ? -Infinity : at;
+}
+
+/**
+ * A band module's main variant (Р29, T-R7): of the bare key (blocks from before the bands) and its band variants, the
+ * one whose last entry is the latest; the bare key without any. The warm-up's variant never is.
+ */
+function latestBandVariant(module: ModuleId, history: BlockHistory): VariantKey {
+  const prefix = `${module}${BAND_PREFIX}`;
+  let main: VariantKey = module;
+  let latest = -Infinity;
+  for (const [key, entries] of history) {
+    if (key !== module && !key.startsWith(prefix)) continue;
+    const at = storedAt(entries.at(-1));
+    if (at > latest) {
+      main = key;
+      latest = at;
+    }
+  }
+  return main;
+}
+
+/**
+ * The variant «Прогресс» shows: a band module's latest band (latestBandVariant); Шульте — the largest grid with
+ * entries (none: null); otherwise fixed.
+ */
 export function mainVariant(module: ModuleId, history: BlockHistory): VariantKey | null {
+  if (isBandModule(module)) return latestBandVariant(module, history);
   if (module !== 'schulte') return MAIN_VARIANTS[module] ?? module;
   let largest: number | null = null;
   for (const [key, entries] of history) {

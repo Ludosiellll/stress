@@ -213,6 +213,28 @@ describe('Progress edge cases', () => {
     expect(card.querySelectorAll('circle')).toHaveLength(2);
   });
 
+  it('«Оценка по модулям» shows a band module by the band of its latest block (Р29, T-R7)', async () => {
+    const repo = new MemoryRepository();
+    const t = (h: number): string => new Date(Date.now() - h * 60 * 60 * 1000).toISOString();
+    await repo.createSession(session('s1', t(30), { kind: 'training', endedAt: t(30) }));
+    await repo.createSession(session('s2', t(2), { kind: 'free', endedAt: t(2) }));
+    const szmrBlock = (id: string, sessionId: string, at: string, paramsJson: string, meanRt: number) =>
+      block(id, sessionId, at, { module: 'szmr', lBefore: 9, lAfter: 9.5, paramsJson, summaryJson: JSON.stringify({ meanRt, counts: { miss: 0, late: 0 } }) });
+    await repo.addBlock(szmrBlock('b0', 's1', t(30), '{"windowMs":500}', 380), [], []);
+    await repo.addBlock(szmrBlock('b1', 's1', t(29), '{"band":1}', 400), [], []);
+    await repo.addBlock(szmrBlock('b2', 's2', t(2), '{"band":2}', 455.4), [], []);
+    await rebuildCaches(repo);
+    await renderProgress(repo);
+    const table = screen.getByRole('table', { name: 'Оценка по модулям' });
+    const szmrRow = within(table).getAllByRole('row')[2] as HTMLElement;
+    // Only band 2: neither the 380 of the old rows nor the 400 of band 1 is its best.
+    expect(within(szmrRow).getAllByRole('cell').map((c) => c.textContent).slice(0, 3)).toEqual([
+      'Сложная реакция (СЗМР)',
+      '3 — формат теста (ур. 9,5; формат теста — 8)',
+      '455\u00a0мс / 455\u00a0мс',
+    ]);
+  });
+
   it('a failing block history read shows the error and the retry, never a broken screen', async () => {
     const repo = new MemoryRepository();
     vi.spyOn(repo, 'listBlocks').mockRejectedValueOnce(new Error('база занята'));

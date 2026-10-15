@@ -62,6 +62,37 @@ describe('variantOf', () => {
   });
 });
 
+describe('band variants (Р29, T-R7)', () => {
+  it('a band module\'s block is a variant of its band; a warm-up stays the warm-up; a row without a band keeps the bare key', () => {
+    expect(variantOf(row({ module: 'szmr', paramsJson: '{"band":2,"windowMs":431}' }))).toBe('szmr:b2');
+    expect(variantOf(row({ module: 'pzmr', paramsJson: '{"band":0}' }))).toBe('pzmr:b0');
+    expect(variantOf(row({ module: 'taskswitch', paramsJson: '{"band":12}' }))).toBe('taskswitch:b12');
+    // An overload block is the variant of the band it played the window of (it never enters the history).
+    expect(variantOf(row({ module: 'gonogo', flags: ['overload'], paramsJson: '{"band":3,"loadBand":4}' }))).toBe('gonogo:b3');
+    expect(variantOf(row({ module: 'pzmr', flags: ['warmup'], paramsJson: '{"band":1}' }))).toBe('pzmr:warmup');
+    expect(variantOf(row({ module: 'pzmr', paramsJson: '{"windowMs":300}' }))).toBe('pzmr');
+    // Damaged: unreadable parameters, a band that is no whole number from 0.
+    for (const paramsJson of ['not json', '{"band":"2"}', '{"band":2.5}', '{"band":-1}', '{"band":null}']) {
+      expect(variantOf(row({ module: 'stroop', paramsJson })), paramsJson).toBe('stroop');
+    }
+    // Modules without bands keep their variants.
+    expect(variantOf(row({ module: 'rdo', paramsJson: '{"band":2}' }))).toBe('rdo');
+    expect(variantOf(row({ module: 'schulte', paramsJson: '{"band":2,"size":6}' }))).toBe('schulte:6');
+  });
+
+  it('the history of a band module is kept by band', () => {
+    const sessions = [session('t', ago(9))];
+    const pz = (band: number | null, meanRt: number): BlockRow =>
+      row({ module: 'pzmr', paramsJson: band === null ? '{"windowMs":300}' : JSON.stringify({ band }), summaryJson: JSON.stringify({ meanRt }) });
+    const h = buildBlockHistory([pz(null, 300), pz(2, 280), pz(3, 290), pz(2, 270)], sessions);
+    expect([...h].map(([k, v]) => [k, v.map((x) => x.value)])).toEqual([
+      ['pzmr', [300]],
+      ['pzmr:b2', [280, 270]],
+      ['pzmr:b3', [290]],
+    ]);
+  });
+});
+
 describe('keyMetric', () => {
   it('reads the key metric rounded as shown', () => {
     expect(keyMetric({ module: 'pzmr', summaryJson: '{"meanRt":287.6}' })).toBe(288);
@@ -405,6 +436,30 @@ describe('mainVariant', () => {
     expect(schulteSize('schulte:abc')).toBeNull();
     expect(schulteSize('schulte:')).toBeNull();
     expect(schulteSize('gorbov:alternate')).toBeNull();
+  });
+
+  it('a band module: the band variant with the latest entry; the bare key without one (Р29, T-R7)', () => {
+    const at = (d: number): HistoryEntry => ({ ...entry, at: ago(d) });
+    const h: BlockHistory = new Map([
+      ['szmr', [at(20), at(10)]],
+      ['szmr:b1', [at(9), at(3)]],
+      ['szmr:b2', [at(6), at(4)]],
+      ['szmr:b3', []],
+      ['pzmr:warmup', [at(0)]],
+      ['pzmr:b0', [at(5)]],
+    ]);
+    expect(mainVariant('szmr', h)).toBe('szmr:b1');
+    // The warm-up never is the main variant.
+    expect(mainVariant('pzmr', h)).toBe('pzmr:b0');
+    // Only rows from before the bands: the bare key, also when there is nothing at all.
+    expect(mainVariant('szmr', new Map([['szmr', [at(2)]]]))).toBe('szmr');
+    expect(mainVariant('gonogo', h)).toBe('gonogo');
+    // A bare entry later than every band entry (a restored old file) wins too.
+    expect(mainVariant('szmr', new Map([['szmr:b1', [at(3)]], ['szmr', [at(1)]]]))).toBe('szmr');
+    // An unreadable date is the earliest.
+    expect(mainVariant('szmr', new Map([['szmr:b2', [{ ...entry, at: 'yesterday' }]], ['szmr:b1', [at(30)]]]))).toBe('szmr:b1');
+    // РДО has no bands.
+    expect(mainVariant('rdo', new Map([['rdo:b1', [at(1)]]]))).toBe('rdo');
   });
 
   it('Шульте: the largest grid with entries', () => {

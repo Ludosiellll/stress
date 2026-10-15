@@ -24,7 +24,10 @@ export const L_NORM: Record<ModuleId, number> = {
 
 export type SegmentPurpose = 'warmup' | 'reaction' | 'attention' | 'logic' | 'diagnostic' | 'free' | 'finisher';
 
-/** An overload block plays this many levels above the usual one (§6.3). */
+/**
+ * An overload block of РДО, the tables or memory plays this many levels above the usual one (§6.3); a band module's
+ * plays its own level with the next band's load (F3).
+ */
 export const OVERLOAD_LEVEL_STEP = 3;
 
 /** `budgetMs === 0` means fixed volume (Ruling R16): the controller uses trialCount / runs / items instead of time. */
@@ -33,9 +36,10 @@ export interface Segment {
   budgetMs: number;
   purpose: SegmentPurpose;
   /**
-   * finisher: starts at L_saved + OVERLOAD_LEVEL_STEP and every block is an overload block; mix (a module on a
-   * plateau, never in the taper): odd blocks are overload blocks at the segment level + OVERLOAD_LEVEL_STEP. Overload blocks never
-   * move L_saved, fatigue, the g = 2 rule or the module's level in the session.
+   * finisher: every block is an overload block; mix (a module on a plateau, never in the taper): the odd blocks are.
+   * A band module's overload block plays the segment level with the next band's load, its finisher starts at L_saved
+   * (F3); the others play OVERLOAD_LEVEL_STEP higher. Overload blocks never move L_saved, fatigue, the g = 2 rule or the
+   * module's level in the session.
    */
   overload?: 'finisher' | 'mix';
   fixedL?: number;

@@ -7,11 +7,12 @@ import { dayForm } from '../engine/dayForm';
 import { deriveModuleStates, isCleanBlock, isCountedSession, movesLevel } from '../engine/derive';
 import { parseResults, type DiagnosticResults } from '../engine/diagnostic';
 import type { Rating } from '../engine/elo';
+import { CALIBRATION_BLOCKS } from '../engine/phases';
 import { OVERLOAD_LEVEL_STEP, warmupLevel, type ModuleState, type Segment, type SessionPlan } from '../engine/planner';
 import { stabilityOf } from '../engine/reaction/stability';
 import type { BlockTimeline } from '../engine/reaction/types';
 import { readinessOfLatest } from '../engine/readiness';
-import { isReactionModule, type BlockFlag, type FamilyId, type LayoutId, type ModuleId } from '../engine/types';
+import { isBandModule, isReactionModule, type BlockFlag, type FamilyId, type LayoutId, type ModuleId } from '../engine/types';
 import type { MemoryTrial } from '../modules/memory/generate';
 import { memorySpan, scoreMemoryTrial, type MemoryAnswer } from '../modules/memory/score';
 import { bandIndex } from '../modules/reaction/common';
@@ -26,6 +27,7 @@ import {
   checkMemoryAnswers,
   diagnosticBlockSeed,
   diagnosticResults,
+  floorsFrom,
   levelChanges,
   planBlock,
   scoreReaction,
@@ -35,6 +37,7 @@ import {
   type BlockPlan,
   type DiagnosticPart,
   type PlanContext,
+  type WindowFloors,
 } from './blocks';
 import { appendPast, pastBlocks, warmupDays, type PastBlocks } from './pastBlocks';
 import { blockRow, errorLogRow, logicItemRows, sessionRow, trialRows, wellbeingRow } from './rowsBuild';
@@ -43,6 +46,7 @@ import {
   AUDIO_NOT_PLAYED,
   conditionLines,
   dayFormLine,
+  floorLine,
   memoryLines,
   reactionLines,
   saveErrorMessage,
@@ -83,9 +87,6 @@ export interface SessionStartOptions {
  * timing_unreliable: a diagnostic reaction block with too many dropped frames, replayed once (I1).
  */
 export type DiscardReason = 'focus_lost' | 'error' | 'user' | 'timing_unreliable';
-
-/** First 3 blocks of a module ever are calibration blocks (g = 2). */
-const CALIBRATION_BLOCKS = 3;
 
 /** The staircase inputs of a block beyond its score, calibration and the previous score (DeltaInput). */
 type LevelInput = Pick<DeltaInput, 'cvAll' | 'lapses' | 'lapseLimit' | 'cvMax' | 'timingUnreliable'>;
@@ -184,6 +185,13 @@ interface SaveContext {
 
 const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
+/** The floor line of a reaction block whose window rested on the personal floor (F3); none otherwise. */
+function floorLines(plan: BlockPlan): string[] {
+  if (plan.kind !== 'reaction' || plan.load === null) return [];
+  const { floorMs, nominalWindowMs } = plan.load;
+  return floorMs !== null && floorMs > nominalWindowMs ? [floorLine(floorMs, nominalWindowMs)] : [];
+}
+
 /**
  * The comparison of the done step: the previous diagnostic is the last earlier one by date (W2-R33), and its index is
  * what readinessOfLatest gave it after the ones before it.
@@ -202,9 +210,13 @@ function compareWithPrevious(earlier: readonly PastDiagnostic[], readiness: numb
  * - Levels: a segment starts at startLevel(L_saved, days since last training) (diagnostics: fixedL) and moves
  *   by nextLevel after every block; its first stored level-moving block gets g = 2 at s ≥ 0.9 (F6). Diagnostics
  *   never change levels, module states or ratings.
- * - Overload blocks (Segment.overload): a finisher starts at L_saved + 3 and moves only its own level; a mix
- *   overload block's lAfter goes to history only. Their flag keeps them out of L_saved, fatigue and g = 2 (an overload
- *   block is never a segment's first block).
+ * - Overload blocks (Segment.overload): a band module's play the next band's load at the window of their own band and
+ *   keep their level (lAfter = lBefore), a finisher of one starts at L_saved (F3). РДО, the tables and memory play
+ *   OVERLOAD_LEVEL_STEP higher: their finisher starts at L_saved + 3 and moves only its own level, a mix overload
+ *   block's lAfter goes to history only. Their flag keeps them out of L_saved, fatigue, g = 2 and the window floor
+ *   (an overload block is never a segment's first block).
+ * - The window of a band module's block rests on the personal floor of its band (F3): the history read at start and
+ *   the blocks of this session as they are stored; diagnostics have none.
  * - The warm-up (F5) plays every block at warmupLevel(L_saved) and moves no level; its flag keeps it out of L_saved,
  *   lastTrainedAt, fatigue, calibration and g = 2. Its summary says so and shows «Форма дня» from the warm-ups of the
  *   history read at start, those of this session and the block itself.
@@ -423,6 +435,7 @@ export class SessionController {
         },
         lines: [
           ...reactionLines(module, summary, stability),
+          ...floorLines(plan),
           ...conditionLines(module, conditions, plan.kind === 'reaction' && plan.overload),
           ...(tl.audioPlayed === false ? [AUDIO_NOT_PLAYED] : []),
         ],
@@ -656,8 +669,12 @@ export class SessionController {
     const at = (L: number): { L: number; startDrop: boolean } => ({ L, startDrop: false });
     if (!this.counted) return at(segment.fixedL ?? 0);
     if (module === 'numseries') return at(0);
-    // The finisher takes a module that is not in the plan: no level in this session yet (§6.3).
-    if (segment.overload === 'finisher') return at(this.states[module].lSaved + OVERLOAD_LEVEL_STEP);
+    // The finisher takes a module that is not in the plan: no level in this session yet (§6.3). A band module's plays
+    // L_saved with the next band's load (F3); РДО, the tables and memory play L_saved + OVERLOAD_LEVEL_STEP.
+    if (segment.overload === 'finisher') {
+      const { lSaved } = this.states[module];
+      return at(isBandModule(module) ? lSaved : lSaved + OVERLOAD_LEVEL_STEP);
+    }
     // The warm-up plays one fixed level and leaves the module's level in the session alone (F5).
     if (segment.purpose === 'warmup') return at(warmupLevel(this.states[module].lSaved));
     const current = this.levels.get(module);
@@ -683,9 +700,19 @@ export class SessionController {
     this.presentNext();
   }
 
-  /** What planBlock needs to know about the session and the segment. */
+  /**
+   * What planBlock needs to know about the session and the segment. The window floors come from the history read at
+   * start and the blocks stored since (F3); a diagnostic has none, nor a session whose history could not be read (Р18).
+   */
   private planContext(seg: SegmentRun): PlanContext {
-    return { layout: this.layout, scale: this.scale, diagnostic: !this.counted, planSeed: this.plan.seed, segmentIndex: seg.index };
+    return {
+      layout: this.layout,
+      scale: this.scale,
+      diagnostic: !this.counted,
+      planSeed: this.plan.seed,
+      segmentIndex: seg.index,
+      floors: this.counted && this.past !== null ? floorsFrom(this.past) : null,
+    };
   }
 
   /** Instruction first if the segment just started, for every Gorbov run, or when the rules changed. */
@@ -786,10 +813,12 @@ export class SessionController {
     const overload = active.plan.kind !== 'numseries' && active.plan.overload;
     // A training warm-up block (F5): lAfter = lBefore, no stability rule, no calibration and no g = 2 (T-R11).
     const warmup = this.counted && seg.segment.purpose === 'warmup';
-    const calibration = b.level !== null && !warmup && this.isCalibration(b.module);
+    // An overload block of a band module plays the next band's load at its own level and keeps it (F3).
+    const fixedLevel = warmup || (overload && isBandModule(b.module));
+    const calibration = b.level !== null && !fixedLevel && this.isCalibration(b.module);
     const firstOfSegment = !overload && !warmup && seg.startDrop && !seg.levelBlockStored;
     const input: DeltaInput | null =
-      this.counted && b.level !== null && !warmup
+      this.counted && b.level !== null && !fixedLevel
         ? { score: b.score, calibration, prevScoreSameSession: this.prevScore(b.module), firstOfSegment, ...b.level }
         : null;
     const lAfter = input === null ? b.L : nextLevel(b.L, input);
@@ -818,13 +847,14 @@ export class SessionController {
     const id = uuidv4();
     const row = blockRow(id, this.sessionId, { module: b.module, lBefore: b.L, lAfter, score: b.score, flags }, active, JSON.stringify(summary));
     const { trials, items } = b.rows(id);
-    const assessment = this.assessOrLog(row, b.meanRating ?? null);
+    const context = this.planContext(seg);
+    const assessment = this.assessOrLog(row, b.meanRating ?? null, context.floors);
     const view: BlockSummaryView = {
       module: b.module,
       title: moduleTitles[b.module],
       lBefore: b.L,
       lAfter,
-      changes: levelChanges(b.module, b.L, lAfter, b.task, this.planContext(seg)),
+      changes: levelChanges(b.module, b.L, lAfter, b.task, context),
       score: b.viewScore ?? b.score,
       lines,
       flags,
@@ -911,9 +941,9 @@ export class SessionController {
    * The «Оценка» of a block; a failure leaves the summary without the section (the block is stored all the same) and
    * goes to the log when the log can be written, without waiting for it.
    */
-  private assessOrLog(row: BlockRow, meanRating: number | null): BlockAssessment | undefined {
+  private assessOrLog(row: BlockRow, meanRating: number | null, floors: WindowFloors | null): BlockAssessment | undefined {
     try {
-      return assessBlock(row, { kind: this.plan.kind, history: this.history, now: this.now(), meanRating });
+      return assessBlock(row, { kind: this.plan.kind, history: this.history, now: this.now(), meanRating, floors });
     } catch (e) {
       this.logLater('session: block assessment failed', { sessionId: this.sessionId, module: row.module, error: errorText(e) });
       return undefined;
@@ -929,8 +959,8 @@ export class SessionController {
 
   /**
    * Book-keeping for a stored block; the segment level becomes lAfter. An overload block leaves the module's
-   * level in the session alone, and in a mix the segment level too (only the finisher moves its own level).
-   * A warm-up block touches neither (F5).
+   * level in the session alone, and in a mix the segment level too (only the finisher moves its own level, and a band
+   * module's keeps it, F3). A warm-up block touches neither (F5).
    */
   private record(b: SessionBlock, lAfter: number): void {
     const seg = this.segment();

@@ -136,6 +136,19 @@ export interface SeriesAnswer {
 export const OVERLOAD_PREFIX = 'Блок с перегрузкой: уровень на 3 выше обычного. ';
 /** Opens the instruction of an overload reaction block: it plays the finisher sound on every trial (M1). */
 export const OVERLOAD_SOUND_PREFIX = 'Блок с перегрузкой: уровень на 3 выше обычного, со звуковыми помехами. Надень наушники. ';
+/**
+ * Opens the instruction of an overload block of a band module (Р16): it plays the next band's load at its own level
+ * with the finisher sound, so the level-3-above prefix would not be true.
+ */
+export function overloadBandPrefix(bandLabel: string): string {
+  return `Блок с перегрузкой, со звуковыми помехами. Надень наушники. Перегрузка: нагрузка следующей полосы — ${bandLabel}. Уровень не меняется. `;
+}
+
+/** The summary line of a block whose window rested on the personal floor (F3): windowMs > nominalWindowMs. */
+export function floorLine(windowMs: number, nominalWindowMs: number): string {
+  return `Окно ответа: ${String(windowMs)} мс — твой минимум для этой нагрузки (по уровню — ${String(nominalWindowMs)} мс).`;
+}
+
 /** The level line of a warm-up block (F5): it plays at L_saved − 1 and moves nothing. */
 export const WARMUP_LEVEL_NOTE = 'Разминка: уровень не меняется';
 export const UNRELIABLE_REPLAY_NOTICE = 'Замер ненадёжен (пропуски кадров). Блок будет повторён.';

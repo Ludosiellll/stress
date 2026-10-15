@@ -1,5 +1,5 @@
-import type { ModuleId, ReactionModuleId } from '../engine/types';
-import type { ReactionModule } from './reaction/common';
+import type { BandModuleId, ModuleId, ReactionModuleId } from '../engine/types';
+import type { BandFields, ReactionModule } from './reaction/common';
 import { gonogo } from './reaction/gonogo';
 import { pomeh } from './reaction/pomeh';
 import { pzmr } from './reaction/pzmr';
@@ -19,6 +19,16 @@ export const reactionModules: Record<ReactionModuleId, ReactionModule<unknown>> 
   stroop,
   taskswitch,
   pomeh,
+};
+
+/** The six modules with load bands (F3), their parameters typed as far as the band fields. */
+export const bandModules: Readonly<Record<BandModuleId, ReactionModule<BandFields>>> = {
+  pzmr,
+  szmr,
+  gonogo,
+  pomeh,
+  stroop,
+  taskswitch,
 };
 
 export const moduleTitles: Record<ModuleId, string> = {

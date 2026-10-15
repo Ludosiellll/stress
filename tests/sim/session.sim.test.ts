@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { MemoryRepository } from '../../src/data/memoryRepository';
 import { currentPhase, firstSessionAt } from '../../src/engine/phases';
 import { localDayIso } from '../../src/engine/dates';
-import { planFree, planTraining, taperBudget, type Segment, type SessionPlan } from '../../src/engine/planner';
+import { planFree, planTraining, taperBudget, warmupLevel, type Segment, type SessionPlan } from '../../src/engine/planner';
 import { createRng } from '../../src/engine/rng';
 import { mean } from '../../src/engine/stats';
+import { FLOOR_FACTOR } from '../../src/engine/windowFloor';
 import { pzmr } from '../../src/modules/reaction/pzmr';
 import { SessionController } from '../../src/session/controller';
 import { playTimeline, type Respond } from '../../src/testing/sessionPlayers';
@@ -16,9 +17,10 @@ import { playTimeline, type Respond } from '../../src/testing/sessionPlayers';
  *
  * Player: on each trial it tries with p(L) = 1 / (1 + e^(L − ability)); a try has a lognormal RT (median m,
  * CV 0.15) and is a miss when the RT is beyond the window. So the window and the CV stability rule
- * (cvMax) both take part. L* is where the expected score is 0.8:
- * p(L) · P(100 ≤ RT ≤ window(L)) = 0.8, found by bisection. The stability rule is not in L*: it can only
- * hold the level back.
+ * (cvMax) both take part. The window is the nominal one of L or the personal floor (F3), whichever is larger; the
+ * floor of a player whose band stays settles at W*, the fixed point of W = 1.2 · P80 of its hits (the tries ≤ W).
+ * L* is where the expected score is 0.8: p(L) · P(100 ≤ RT ≤ max(window(L), W*)) = 0.8, found by bisection. The
+ * stability rule is not in L*: it can only hold the level back.
  *
  * Ruling R29: every case runs on 5 seeds and is judged on window means, not on single values:
  * - each seed: the mean L_saved over sessions 31–60 is within 1 of L*;
@@ -57,9 +59,33 @@ interface Player {
 
 const tryChance = (p: Player, L: number): number => 1 / (1 + Math.exp(L - p.ability));
 
+/** P(RT ≤ x) of the player's tries (lognormal). */
+const rtCdf = (p: Player, x: number): number => phi(Math.log(x / p.medianRt) / SIGMA);
+
+/** The 0.8-quantile of the try RTs truncated to [100, W]: bisection on the CDF. */
+function q80(p: Player, W: number): number {
+  const from = rtCdf(p, 100);
+  const target = from + 0.8 * (rtCdf(p, W) - from);
+  let lo = 100;
+  let hi = W;
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    if (rtCdf(p, mid) < target) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+/** W*: the fixed point of W = 1.2 · q80(W), 50 steps from W = 3000 — the window the personal floor settles at. */
+function floorWindow(p: Player): number {
+  let W = 3000;
+  for (let i = 0; i < 50; i++) W = FLOOR_FACTOR * q80(p, W);
+  return W;
+}
+
 function expectedScore(p: Player, L: number): number {
-  const window = pzmr.params(L).windowMs;
-  const inWindow = phi(Math.log(window / p.medianRt) / SIGMA) - phi(Math.log(100 / p.medianRt) / SIGMA);
+  const window = Math.max(pzmr.params(L).windowMs, Math.round(floorWindow(p)));
+  const inWindow = rtCdf(p, window) - rtCdf(p, 100);
   return tryChance(p, L) * inWindow;
 }
 
@@ -211,46 +237,67 @@ const courseDay = (day: number): Date => new Date(2026, 10, 2 + day, 18);
 const COURSE_DAYS = 90;
 const TAPER_CHECK_DAYS = 10;
 
-/**
- * The taper player: limited by its tries (L* ≈ 8.6), not by the window. Under the F3 window curve (0.824^L) the window
- * binds the mixed player { ability: 18, medianRt: 220 } at L* ≈ 11, where its L_saved swings with the seed (SD ≈ 0.6
- * per course: the mean drop of 5 seeds −0.40, of 20 seeds −0.18), so 5 seeds no longer measure the taper. The
- * personal window floor (F3, Task 8) keeps the window from binding a practising player, which this player models.
- */
-const TAPER_PLAYER: Player = { ability: 10, medianRt: 180 };
+/** The taper player: the mixed player, whose window the personal floor keeps from binding (T-R43). */
+const TAPER_PLAYER: Player = { ability: 18, medianRt: 220 };
+/** A course swings with its seed (SD of the drop ≈ 0.6): the mean of 20 seeds measures the taper. */
+const TAPER_SEEDS = Array.from({ length: 20 }, (_, i) => i + 1);
+
+interface TaperCourse {
+  /** L_saved of ПЗМР at the start of each course day. */
+  lSaved: number[];
+  /** Warm-up blocks that did not play at warmupLevel(L_saved) or moved their level (F5): none expected. */
+  offWarmups: string[];
+}
 
 /**
- * L_saved of ПЗМР at the start of each course day: daily sessions with a day off after every 6, the test on day 90,
- * so the last 9 days are the taper (shorter warm-up and slot).
+ * Daily sessions with a day off after every 6, the test on day 90, so the last 9 days are the taper (shorter warm-up
+ * and slot).
  */
-async function runCourse(seed: number): Promise<number[]> {
+async function runCourse(seed: number): Promise<TaperCourse> {
   const repo = new MemoryRepository();
   const respond = responder(TAPER_PLAYER, seed);
   const testDate = localDayIso(courseDay(COURSE_DAYS).toISOString());
   const lSaved: number[] = [];
+  const offWarmups: string[] = [];
   for (let day = 0; day <= COURSE_DAYS; day++) {
-    lSaved.push((await repo.getModuleStates()).pzmr.lSaved);
+    const saved = (await repo.getModuleStates()).pzmr.lSaved;
+    lSaved.push(saved);
     if (day === COURSE_DAYS || day % 7 === 6) continue;
     const start = courseDay(day);
     const plan = await warmupAndSlot(seed * 1000 + day, repo, start.toISOString(), testDate);
+    const stored = (await repo.listBlocks()).length;
     await playSession(repo, plan, start.getTime(), 28_000, respond);
+    const L = warmupLevel(saved);
+    for (const b of (await repo.listBlocks()).slice(stored)) {
+      if (b.flags.includes('warmup') && (b.lBefore !== L || b.lAfter !== L)) offWarmups.push(`day ${String(day)}: ${String(b.lBefore)} → ${String(b.lAfter)}, not ${String(L)}`);
+    }
   }
-  return lSaved;
+  return { lSaved, offWarmups };
 }
 
+/** The seeds in groups of 5, one test each: a course takes about 7 s through the controller. */
+const TAPER_GROUPS = [0, 5, 10, 15].map((from) => ({ seeds: TAPER_SEEDS.slice(from, from + 5), name: `${String(from + 1)}–${String(from + 5)}` }));
+
 describe('session simulation (F5): the taper', () => {
-  it(
-    'the taper does not pull ПЗМР L_saved down (F5): test day ≥ 10 days before − 0.25',
-    async () => {
+  /** The drop of L_saved over the taper per seed: test day − 10 days before; filled by the seed groups. */
+  const drops = new Map<number, number>();
+
+  it.each(TAPER_GROUPS)(
+    'seeds $name: every warm-up plays at warmupLevel(L_saved) and keeps it (F5)',
+    async ({ seeds }) => {
       // 90 daily sessions (a day off after every 6), test date = day 90; plan = the day's warm-up + a ПЗМР reaction
-      // segment of 5 min (taperBudget in the taper); TAPER_PLAYER; seeds 1–5.
-      const drops: number[] = [];
-      for (const seed of SEEDS) {
-        const lSaved = await runCourse(seed);
-        drops.push((lSaved[COURSE_DAYS] ?? NaN) - (lSaved[COURSE_DAYS - TAPER_CHECK_DAYS] ?? NaN));
+      // segment of 5 min (taperBudget in the taper); TAPER_PLAYER.
+      for (const seed of seeds) {
+        const { lSaved, offWarmups } = await runCourse(seed);
+        expect(offWarmups, `seed ${String(seed)}`).toEqual([]);
+        drops.set(seed, (lSaved[COURSE_DAYS] ?? NaN) - (lSaved[COURSE_DAYS - TAPER_CHECK_DAYS] ?? NaN));
       }
-      expect(mean(drops)).toBeGreaterThanOrEqual(-0.25);
     },
     120_000,
   );
+
+  it('the taper does not pull ПЗМР L_saved down (F5): test day ≥ 10 days before − 0.25, mean of 20 seeds', () => {
+    expect(drops.size, 'the seed groups above fill the drops: run the whole describe').toBe(TAPER_SEEDS.length);
+    expect(mean([...drops.values()])).toBeGreaterThanOrEqual(-0.25);
+  });
 });

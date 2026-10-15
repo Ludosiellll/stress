@@ -161,6 +161,26 @@ describe('loadProgressModel', () => {
   });
 });
 
+describe('the main variant of a band module (Р29, T-R7)', () => {
+  it('«Оценка по модулям» reads the band with the latest block; rows from before the bands are another variant', async () => {
+    const repo = new MemoryRepository();
+    const now = new Date('2026-10-15T12:00:00.000Z');
+    const pz = (id: string, sessionId: string, at: string, paramsJson: string, meanRt: number) =>
+      block(id, sessionId, at, { module: 'pzmr', lBefore: 9, lAfter: 9.5, paramsJson, summaryJson: JSON.stringify({ meanRt, counts: { miss: 0, late: 0 } }) });
+    await repo.createSession(session('a', '2026-10-12T10:00:00.000Z', { endedAt: '2026-10-12T10:10:00.000Z' }));
+    await repo.createSession(session('b', '2026-10-14T10:00:00.000Z', { endedAt: '2026-10-14T10:10:00.000Z' }));
+    await repo.addBlock(pz('old', 'a', '2026-10-12T10:01:00.000Z', '{"windowMs":300}', 250), [], []);
+    await repo.addBlock(pz('b1', 'a', '2026-10-12T10:02:00.000Z', '{"band":1}', 260), [], []);
+    await repo.addBlock(pz('b2', 'b', '2026-10-14T10:01:00.000Z', '{"band":2}', 290), [], []);
+    await repo.addBlock(pz('w', 'b', '2026-10-14T10:05:00.000Z', '{"band":2}', 240), [], []);
+    await repo.addBlock(block('warm', 'b', '2026-10-14T10:09:00.000Z', { module: 'pzmr', flags: ['warmup'], paramsJson: '{"band":2}', summaryJson: '{"meanRt":200}' }), [], []);
+    await rebuildCaches(repo);
+    const model = await loadProgressModel(repo, now);
+    // Band 2 has the latest block (the later warm-up is a variant of its own): its last and best, not 250 or 200.
+    expect(model.assessment[0]).toMatchObject({ module: 'pzmr', title: 'ПЗМР', lastBest: '240 мс / 240 мс' });
+  });
+});
+
 describe('the form of the day', () => {
   it('the form-of-day chart: the daily warm-up median for 30 days', () => {
     const d = (day: string, rts: number[], band = 1) => ({ day, band, rts });

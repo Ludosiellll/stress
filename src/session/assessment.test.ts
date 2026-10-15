@@ -5,9 +5,11 @@ import { defaultModuleState } from '../engine/derive';
 import { NORM_HINTS } from '../engine/norms';
 import type { ModuleState } from '../engine/planner';
 import { MODULE_IDS, type ModuleId } from '../engine/types';
+import { szmr } from '../modules/reaction/szmr';
 import { gorbovParams } from '../modules/tables/gorbov';
 import { assessBlock, assessModules, formatMetric, meanFamilyRating, normLine, type AssessContext, type ModuleAssessment } from './assessment';
 import { buildBlockHistory, type BlockHistory, type HistoryEntry } from './blockHistory';
+import type { WindowFloors } from './blocks';
 
 const NOW = new Date('2026-10-15T12:00:00.000Z');
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -33,7 +35,7 @@ function gorbovRow(task: GorbovTask, L0: number, L1: number, timeMs: number | nu
 }
 
 const H: BlockHistory = new Map([['gorbov:black_up', [e(20, 41.0, 10), e(6, 42.4, 11), e(1, 48.2, 11)]]]);
-const ctx: AssessContext = { kind: 'training', history: H, now: NOW, meanRating: null };
+const ctx: AssessContext = { kind: 'training', history: H, now: NOW, meanRating: null, floors: null };
 const withHistory = (variant: string, entries: HistoryEntry[]): AssessContext => ({ ...ctx, history: new Map([[variant, entries]]) });
 
 const GORBOV_HISTORY = 'Раньше в этом блоке: прошлый раз 48,2 с (ур. 11) · лучший 41,0 с · в среднем за 7 дней 45,3 с';
@@ -204,7 +206,7 @@ describe('assessBlock', () => {
 
   it('number series: steps by the mean family rating', () => {
     const series = row({ module: 'numseries', lBefore: 0, lAfter: 0, summaryJson: '{"correct":7,"total":10}' });
-    expect(assessBlock(series, { kind: 'free', history: new Map(), now: NOW, meanRating: 1180.4 })).toEqual({
+    expect(assessBlock(series, { kind: 'free', history: new Map(), now: NOW, meanRating: 1180.4, floors: null })).toEqual({
       step: 'Ступень 2 из 5+ — на подходе к формату теста (рейтинг 1180; формат теста — 1376)',
       goal: 'До ступени 3 «формат теста»: рейтинг 1376 (+196)',
       norms: [],
@@ -273,7 +275,58 @@ describe('assessBlock', () => {
     expect(at('schulte', { paramsJson: '{"size":6}' })).toEqual([]);
     expect(at('rdo')).toEqual([]);
     expect(at('pomeh')).toEqual([]);
+    // Hints are kept by module: a block of a load band gets its module's (T-R7).
+    expect(at('gonogo', { paramsJson: '{"band":2}' })).toEqual([NORM_HINTS.gonogo]);
+    expect(at('stroop', { paramsJson: '{"band":3}' })).toEqual([NORM_HINTS.stroop]);
     expect(assessBlock(row({ module: 'gonogo', summaryJson: '{}' }), { ...ctx, kind: 'diagnostic' }).norms).toEqual([NORM_HINTS.gonogo]);
+  });
+});
+
+describe('assessBlock of a band module (F3, Р29)', () => {
+  const summaryJson = '{"meanRt":420,"counts":{"miss":0,"late":0}}';
+  const szmrRow = (over: Partial<BlockRow> = {}): BlockRow =>
+    row({ module: 'szmr', lBefore: 9, lAfter: 10, paramsJson: JSON.stringify(szmr.params(9)), summaryJson, ...over });
+
+  it('the history variant is the band played: szmr:b2', () => {
+    expect(szmr.params(9).band).toBe(2);
+    expect(assessBlock(szmrRow(), withHistory('szmr:b2', [e(1, 430, 9)])).history).toBe(
+      'Раньше в этом блоке: прошлый раз 430 мс (ур. 9) · лучший 430 мс · в среднем за 7 дней 430 мс — новый лучший результат',
+    );
+    // Rows from before the bands are another variant.
+    expect(assessBlock(szmrRow(), withHistory('szmr', [e(1, 430, 9)])).history).toBe('Первый такой блок — будет с чем сравнивать');
+  });
+
+  it('an overload step names the load of the next band; old rows and РДО keep the plain note', () => {
+    const over = szmrRow({ lAfter: 9, flags: ['overload'], paramsJson: JSON.stringify({ ...szmr.params(9, 3), band: 2, loadBand: 3 }) });
+    expect(assessBlock(over, ctx)).toMatchObject({
+      step: 'Ступень 3 из 5+ — формат теста (уровень 9; формат теста — 8; перегрузка: нагрузка полосы 3)',
+      goal: null,
+    });
+    const old = szmrRow({ lAfter: 9, flags: ['overload'], paramsJson: '{"windowMs":500}' });
+    expect(assessBlock(old, ctx).step).toBe('Ступень 3 из 5+ — формат теста (уровень 9; формат теста — 8; перегрузка)');
+    const damaged = szmrRow({ lAfter: 9, flags: ['overload'], paramsJson: '{"loadBand":"3"}' });
+    expect(assessBlock(damaged, ctx).step).toMatch(/; перегрузка\)$/);
+    const rdo = row({ module: 'rdo', lBefore: 13, lAfter: 14, flags: ['overload'], summaryJson: '{"meanAbsErrorMs":20}' });
+    expect(assessBlock(rdo, ctx).step).toMatch(/; перегрузка\)$/);
+  });
+
+  it('the goal shows the windows the floors give (AssessContext.floors)', () => {
+    const asked: Array<[string, number]> = [];
+    const floors: WindowFloors = (module, band) => {
+      asked.push([module, band]);
+      return 600 + 100 * band;
+    };
+    expect(assessBlock(szmrRow(), { ...ctx, floors }).goal).toBe(
+      'До ступени 4 «сверх нормы»: уровень 13 (+3). Там: окно ответа: 800 → 900 мс; нагрузка: 3 цвета на 2 клавиши → 4 цвета на 4 клавиши',
+    );
+    expect(asked).toEqual([
+      ['szmr', 2],
+      ['szmr', 3],
+    ]);
+    // Without floors: the nominal windows.
+    expect(assessBlock(szmrRow(), ctx).goal).toBe(
+      'До ступени 4 «сверх нормы»: уровень 13 (+3). Там: окно ответа: 386 → 290 мс; нагрузка: 3 цвета на 2 клавиши → 4 цвета на 4 клавиши',
+    );
   });
 });
 

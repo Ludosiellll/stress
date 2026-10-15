@@ -2,10 +2,11 @@ import type { BlockRow } from '../data/rows';
 import { localDayIso } from '../engine/dates';
 import type { FormDay } from '../engine/dayForm';
 import { isCountedSession } from '../engine/derive';
-import type { SessionKind } from '../engine/types';
+import type { BlockFlag, ReactionModuleId, SessionKind } from '../engine/types';
+import { FLOOR_HITS } from '../engine/windowFloor';
 import { bandIndex } from '../modules/reaction/common';
 import { pzmr } from '../modules/reaction/pzmr';
-import { parseObject } from './blockHistory';
+import { parseObject, storedBand } from './blockHistory';
 
 /**
  * The block history the controller read at start (assessment О11, with the same listBlocks + listSessions as the
@@ -64,4 +65,56 @@ export function warmupDays(past: PastBlocks): FormDay[] {
     if (rts !== null && day !== null) days.push({ day, band: bandIndex(pzmr, row.lBefore), rts });
   }
   return days;
+}
+
+/**
+ * Blocks whose hits never feed the window floor (F3, Справочник): overload blocks play another band's load, and a
+ * timing_unreliable block measured nothing. Warm-up, fatigued and calibration blocks do feed it. `test_format`
+ * (Task 10) and `discarded` (Task 13) join this list with their flags.
+ */
+const NOT_FLOOR_FLAGS: readonly BlockFlag[] = ['overload', 'timing_unreliable'];
+
+/** The load band a block played (paramsJson.band, a whole number from 0) and its clean hits; null: either is unreadable. */
+interface BandHits {
+  band: number;
+  rts: readonly number[];
+}
+
+/** Rows are never changed once stored: each is read once (the floor is asked for before every block). */
+const bandHitsRead = new WeakMap<BlockRow, BandHits | null>();
+
+function bandHitsOf(row: BlockRow): BandHits | null {
+  const known = bandHitsRead.get(row);
+  if (known !== undefined) return known;
+  const band = storedBand(row.paramsJson);
+  const rts = readCleanHits(row.summaryJson);
+  const read = band !== null && rts !== null ? { band, rts } : null;
+  bandHitsRead.set(row, read);
+  return read;
+}
+
+/**
+ * The clean hits of `module` per load band, the source of the window floor (F3, Справочник): blocks of training and
+ * free sessions with a numeric paramsJson.band and readable cleanHitRts, without NOT_FLOOR_FLAGS; in block order (by
+ * startedAt), within a block in trial order. Only the last FLOOR_HITS of a band are kept: all the floor reads.
+ */
+export function cleanHitsByBand(past: PastBlocks, module: ReactionModuleId): Map<number, number[]> {
+  // From the latest block back, until a band has FLOOR_HITS.
+  const chunks = new Map<number, Array<readonly number[]>>();
+  const counts = new Map<number, number>();
+  for (let i = past.blocks.length - 1; i >= 0; i--) {
+    const row = past.blocks[i] as BlockRow;
+    if (row.module !== module || row.flags.some((f) => NOT_FLOOR_FLAGS.includes(f))) continue;
+    const kind = past.kinds.get(row.sessionId);
+    if (kind === undefined || !isCountedSession(kind)) continue;
+    const hits = bandHitsOf(row);
+    if (hits === null) continue;
+    const have = counts.get(hits.band) ?? 0;
+    if (have >= FLOOR_HITS) continue;
+    counts.set(hits.band, have + hits.rts.length);
+    const list = chunks.get(hits.band);
+    if (list === undefined) chunks.set(hits.band, [hits.rts]);
+    else list.push(hits.rts);
+  }
+  return new Map([...chunks].map(([band, list]) => [band, list.reverse().flat().slice(-FLOOR_HITS)]));
 }

@@ -25,6 +25,7 @@ import { generateMemoryTrials, spanProtocolTrials, type MemoryTrial } from '../m
 import { memoryInstruction, memoryParams } from '../modules/memory/params';
 import { spanProtocolStops, type MemoryAnswer } from '../modules/memory/score';
 import { FAMILIES } from '../modules/numseries/families';
+import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
 import { pomeh } from '../modules/reaction/pomeh';
 import { isSwappedSegment } from '../modules/reaction/gonogo';
 import { pzmr } from '../modules/reaction/pzmr';
@@ -44,7 +45,7 @@ import { SessionController, type SessionStartOptions } from './controller';
 import {
   AUDIO_NOT_PLAYED,
   MEMORY_SPAN_INSTRUCTION,
-  OVERLOAD_SOUND_PREFIX,
+  overloadBandPrefix,
   WARMUP_LEVEL_NOTE,
   type BlockSummaryView,
   type Step,
@@ -257,8 +258,8 @@ describe('SessionController — flow', () => {
       await h.c.continueAfterSummary();
     }
     expect(texts).toEqual([
-      'На красный круг нажимай Пробел. На зелёный круг не нажимай ничего.',
-      'В этом задании наоборот: на зелёный круг нажимай Пробел, на красный круг — ничего.',
+      'На красный круг нажимай Пробел. На зелёный круг не нажимай ничего. Нагрузка: no-go 20 %, интервал 0,5–2,5 с.',
+      'В этом задании наоборот: на зелёный круг нажимай Пробел, на красный круг — ничего. Нагрузка: no-go 20 %, интервал 0,5–2,5 с.',
     ]);
     expect(scores).toEqual([1, 1]);
     const swapped = (await h.repo.listBlocks()).map((b) => (JSON.parse(b.paramsJson) as { swapped: boolean }).swapped);
@@ -387,12 +388,15 @@ describe('SessionController — flow', () => {
     expect(expectStep(t.c, 'instruction')).toEqual({
       kind: 'instruction',
       module: 'pzmr',
-      text: pzmr.instruction('keyboard', pzmr.params(0)),
+      text: pzmr.instruction('keyboard', pzmr.params(0)) + ' Нагрузка: красный круг.',
       keysHint: 'Пробел',
     });
 
     const sz = await begin(planFree('szmr', 1), { layout: 'pult' });
-    expect(expectStep(sz.c, 'instruction')).toMatchObject({ text: szmr.instruction('pult', szmr.params(0)), keysHint: '←, →' });
+    expect(expectStep(sz.c, 'instruction')).toMatchObject({
+      text: szmr.instruction('pult', szmr.params(0)) + ' Нагрузка: 2 цвета на 2 клавиши.',
+      keysHint: '←, →',
+    });
     sz.c.ackInstruction();
     expect(expectStep(sz.c, 'reaction_block')).toMatchObject({ keys: ['ArrowLeft', 'ArrowRight'], layout: 'pult' });
 
@@ -427,7 +431,7 @@ describe('SessionController — flow', () => {
     const h = await begin(planFree('szmr', 1), { repo, layout: 'mouse' });
     const instr = expectStep(h.c, 'instruction');
     expect(instr.keysHint).toBe('D, F, J, K');
-    expect(instr.text).toBe(szmr.instruction('mouse', szmr.params(16)));
+    expect(instr.text).toBe(szmr.instruction('mouse', szmr.params(16)) + ' Нагрузка: 4 цвета на 4 клавиши, отвлекающая форма.');
     h.c.ackInstruction();
     expect(expectStep(h.c, 'reaction_block')).toMatchObject({ L: 16, keys: ['KeyD', 'KeyF', 'KeyJ', 'KeyK'], layout: 'keyboard' });
   });
@@ -444,7 +448,7 @@ describe('SessionController — flow', () => {
     // The segment's first block: g = 2 (F6).
     expect(expectStep(h.c, 'summary').view.lAfter).toBe(9);
     await h.c.continueAfterSummary();
-    expect(expectStep(h.c, 'instruction').text).toBe(szmr.instruction('keyboard', szmr.params(9)));
+    expect(expectStep(h.c, 'instruction').text).toBe(szmr.instruction('keyboard', szmr.params(9)) + ' Нагрузка: 3 цвета на 2 клавиши.');
     h.c.ackInstruction(); // does not restart the segment clock
     expect(expectStep(h.c, 'reaction_block').L).toBe(9);
     h.clock.ms = start + 5 * MIN;
@@ -864,7 +868,7 @@ describe('SessionController — levels and persistence', () => {
     const [row] = await h.repo.listBlocks();
     if (!row) throw new Error('no block');
     expect(row).toMatchObject({ sessionId: h.c.sessionId, module: 'pzmr', lBefore: 0, lAfter: 2, score: 1, flags: ['calibration'] });
-    expect(JSON.parse(row.paramsJson)).toEqual(pzmr.params(0));
+    expect(JSON.parse(row.paramsJson)).toEqual({ ...pzmr.params(0), nominalWindowMs: 1000, floorMs: null });
     expect(JSON.parse(row.summaryJson)).toMatchObject({ n: 15, score: 1, medianRt: 300 });
     const trials = await h.repo.listTrials(row.id);
     expect(trials).toHaveLength(15);
@@ -1243,6 +1247,153 @@ describe('SessionController — warm-up and the form of the day (F5)', () => {
   });
 });
 
+describe('SessionController — the personal window floor and the load bands (F3)', () => {
+  const YESTERDAY = new Date(new Date(T0).getTime() - DAY).toISOString();
+  const minutesAfter = (iso: string, m: number): string => new Date(new Date(iso).getTime() + m * MIN).toISOString();
+  /** A block of yesterday's session `sessionId` on load band `band` with these clean hit RTs. */
+  const playedBlock = (id: string, sessionId: string, m: number, over: Partial<BlockRow> & { band: number; rts: number[] }): BlockRow => {
+    const { band, rts, ...rest } = over;
+    return block(id, sessionId, minutesAfter(YESTERDAY, m), {
+      paramsJson: JSON.stringify({ band, windowMs: 1000 }),
+      summaryJson: JSON.stringify({ meanRt: 300, cleanHitRts: rts }),
+      ...rest,
+    });
+  };
+  /** The stored module states rebuilt from the rows, as at app start. */
+  async function rebuilt(repo: MemoryRepository): Promise<MemoryRepository> {
+    await rebuildCaches(repo);
+    return repo;
+  }
+  const loadLine = (label: string): string => ` Нагрузка: ${label}.`;
+
+  it('the floor comes from the history read at start', async () => {
+    const repo = new MemoryRepository();
+    for (const [i, id] of ['y1', 'y2'].entries()) {
+      await repo.createSession(session(id, minutesAfter(YESTERDAY, 10 * i), { kind: 'free', endedAt: minutesAfter(YESTERDAY, 10 * i + 5) }));
+      await repo.addBlock(playedBlock(`${id}b`, id, 10 * i + 1, { module: 'pzmr', lBefore: 10, lAfter: 10, band: 0, rts: Array<number>(10).fill(300) }), [], []);
+    }
+    const h = await begin(planFree('pzmr', 1), { repo: await rebuilt(repo) });
+    h.c.ackInstruction();
+    const step = expectStep(h.c, 'reaction_block');
+    // L 9 is band 2 with the nominal window 299; band 0 has 20 hits (floor 1.2 × 300), bands 1 and 2 follow by chain × 1.0.
+    expect(step.L).toBe(9);
+    expect(pzmr.params(9)).toMatchObject({ band: 2, windowMs: 299 });
+    expect(step.specs[0]?.windowMs).toBe(360);
+    await h.c.submitReaction(playTimeline(step.specs, perfectPlayer));
+    const { view } = expectStep(h.c, 'summary');
+    const floor = 'Окно ответа: 360 мс — твой минимум для этой нагрузки (по уровню — 299 мс).';
+    // After the RT lines, before the condition lines.
+    expect(view.lines.slice(-2)).toEqual(['Пропуски: 0', floor]);
+  });
+
+  it('no floor line while the window is the nominal one', async () => {
+    const h = await begin(planFree('pzmr', 1));
+    const { view } = await playReaction(h);
+    expect(view.lines.some((l) => l.includes('твой минимум'))).toBe(false);
+  });
+
+  it('a band change inside a segment takes the floor of the new band', async () => {
+    const repo = new MemoryRepository();
+    await repo.createSession(session('y', YESTERDAY, { kind: 'free', endedAt: minutesAfter(YESTERDAY, 5) }));
+    await repo.addBlock(playedBlock('yb', 'y', 1, { module: 'szmr', lBefore: 8, lAfter: 8, band: 1, rts: Array<number>(20).fill(500) }), [], []);
+    const h = await begin(planFree('szmr', 1), { repo: await rebuilt(repo) });
+    h.c.ackInstruction();
+    const first = expectStep(h.c, 'reaction_block');
+    // L_saved 8, a day's break: L 7, band 1, floor 1.2 × 500 above the nominal 548.
+    expect([first.L, szmr.params(7).windowMs, first.specs[0]?.windowMs]).toEqual([7, 548, 600]);
+    await h.c.submitReaction(playTimeline(first.specs, perfectPlayer));
+    const { view } = expectStep(h.c, 'summary');
+    // A perfect first block: +2, into band 2, whose floor is band 1's × 1.1 (its own hits at 300 ms keep band 1 at 600).
+    expect(view.lAfter).toBe(9);
+    expect(view.changes).toEqual([
+      { label: 'Окно ответа', from: '600 мс', to: '660 мс' },
+      { label: 'Нагрузка', from: '2 цвета на 2 клавиши', to: '3 цвета на 2 клавиши' },
+    ]);
+    h.clock.advance(30_000);
+    await h.c.continueAfterSummary();
+    expect(expectStep(h.c, 'instruction').text.endsWith(loadLine('3 цвета на 2 клавиши'))).toBe(true);
+    h.c.ackInstruction();
+    expect(expectStep(h.c, 'reaction_block').specs[0]?.windowMs).toBe(660);
+  });
+
+  it('the floor follows the blocks of the session: the next window rests on the hits just stored', async () => {
+    const h = await begin(planFree('pzmr', 1));
+    const slow: Respond = (spec, idx) => {
+      const r = perfectPlayer(spec, idx);
+      return r === null ? null : { ...r, rtMs: 700 };
+    };
+    h.c.ackInstruction();
+    const first = expectStep(h.c, 'reaction_block');
+    expect(first.specs[0]?.windowMs).toBe(1000);
+    await h.c.submitReaction(playTimeline(first.specs, slow));
+    // A perfect calibration block: L 0 → 2, still band 0, whose 15 hits give the floor 1.2 × 700 above the nominal 727.
+    expect(expectStep(h.c, 'summary').view.lAfter).toBe(2);
+    h.clock.advance(30_000);
+    await h.c.continueAfterSummary();
+    const second = expectStep(h.c, 'reaction_block');
+    expect([pzmr.params(2).windowMs, second.specs[0]?.windowMs]).toEqual([727, 840]);
+  });
+
+  it('a finisher of a band module plays at L_saved and keeps the level', async () => {
+    const repo = await calibratedRepo(stateWith('szmr', { lSaved: 9, lastTrainedAt: YESTERDAY, lifetimeBlocks: 3 }));
+    const plan: SessionPlan = { kind: 'training', seed: 21, segments: [{ module: 'szmr', budgetMs: 80_000, purpose: 'finisher', overload: 'finisher' }] };
+    const h = await begin(plan, { repo });
+    const { text } = expectStep(h.c, 'instruction');
+    expect(text.startsWith(overloadBandPrefix('4 цвета на 4 клавиши'))).toBe(true);
+    expect(text.endsWith(loadLine('4 цвета на 4 клавиши'))).toBe(true);
+    const views: BlockSummaryView[] = [];
+    for (let i = 0; i < 3; i++) {
+      if (h.c.step.kind === 'instruction') h.c.ackInstruction();
+      const step = expectStep(h.c, 'reaction_block');
+      // The load of band 3 (4 colours on 4 keys) at the window of band 2.
+      expect(step).toMatchObject({ L: 9, keys: ['KeyD', 'KeyF', 'KeyJ', 'KeyK'] });
+      expect(step.specs[0]?.windowMs).toBe(szmr.params(9).windowMs);
+      h.clock.advance(30_000);
+      await h.c.submitReaction(playTimeline(step.specs, perfectPlayer));
+      views.push(expectStep(h.c, 'summary').view);
+      await h.c.continueAfterSummary();
+    }
+    expect(views.map((v) => [v.lBefore, v.lAfter, v.flags, v.changes])).toEqual(Array(3).fill([9, 9, ['overload'], []]));
+    expect(views[0]?.assessment?.step).toMatch(/\(уровень 9; формат теста — 8; перегрузка: нагрузка полосы 3\)$/);
+    expectStep(h.c, 'wellbeing');
+    const stored = (await repo.listBlocks()).filter((b) => b.sessionId === h.c.sessionId);
+    expect(stored.map((b) => [b.lBefore, b.lAfter])).toEqual(Array(3).fill([9, 9]));
+    expect(JSON.parse(stored[0]?.paramsJson ?? '')).toMatchObject({
+      band: 2,
+      bandLabel: '3 цвета на 2 клавиши',
+      loadBand: 3,
+      loadBandLabel: '4 цвета на 4 клавиши',
+      nColors: 4,
+    });
+    expect((await repo.getModuleStates()).szmr.lSaved).toBe(9);
+  });
+
+  it('the instruction ends with the load line', async () => {
+    const h = await begin(planFree('szmr', 1));
+    const { text } = expectStep(h.c, 'instruction');
+    expect(text).toBe(szmr.instruction('keyboard', szmr.params(0)) + loadLine('2 цвета на 2 клавиши'));
+    expect(text.endsWith('как можно быстрее. Нагрузка: 2 цвета на 2 клавиши.')).toBe(true);
+  });
+
+  it('paramsJson keeps band, bandLabel, nominalWindowMs, windowMs, floorMs', async () => {
+    const h = await begin(planFree('pzmr', 1));
+    await playReaction(h);
+    const [row] = (await h.repo.listBlocks()).filter((b) => b.sessionId === h.c.sessionId);
+    expect(JSON.parse(row?.paramsJson ?? '')).toEqual({ ...pzmr.params(0), nominalWindowMs: 1000, floorMs: null });
+    expect(JSON.parse(row?.paramsJson ?? '')).toMatchObject({ band: 0, bandLabel: 'красный круг', windowMs: 1000 });
+  });
+
+  it('a diagnostic never asks for a floor, whatever the history', async () => {
+    const repo = new MemoryRepository();
+    await repo.createSession(session('y', YESTERDAY, { kind: 'free', endedAt: minutesAfter(YESTERDAY, 5) }));
+    await repo.addBlock(playedBlock('yb', 'y', 1, { module: 'pzmr', lBefore: 0, lAfter: 0, band: 0, rts: Array<number>(20).fill(2000) }), [], []);
+    const pzmrSegment = planDiagnostic(1).segments.find((s) => s.module === 'pzmr') as Segment;
+    const h = await begin({ ...planDiagnostic(1), segments: [pzmrSegment] }, { repo: await rebuilt(repo) });
+    h.c.ackInstruction();
+    expect(new Set(expectStep(h.c, 'reaction_block').specs.map((t) => t.windowMs))).toEqual(new Set([DIAGNOSTIC_PARAMS.pzmr.windowMs]));
+  });
+});
+
 describe('SessionController — assessment', () => {
   it('the next block of the variant compares with the one before it', async () => {
     const h = await begin(planFree('rdo', 1));
@@ -1473,12 +1624,13 @@ describe('SessionController — overload', () => {
     return views;
   }
 
-  it('finisher starts at L_saved + 3 and flags every block overload', async () => {
-    const repo = await calibratedRepo(stateWith('szmr', { lSaved: 10, lastTrainedAt: YESTERDAY, lifetimeBlocks: 3 }));
-    const h = await begin(training(overloadSegment('szmr', 'finisher')), { repo });
+  it('a finisher of a module without bands starts at L_saved + 3 and flags every block overload', async () => {
+    const repo = await calibratedRepo(stateWith('rdo', { lSaved: 10, lastTrainedAt: YESTERDAY, lifetimeBlocks: 3 }));
+    const h = await begin(training(overloadSegment('rdo', 'finisher')), { repo });
     const [first, second] = await playSegment(h, 2);
     expect(first).toMatchObject({ lBefore: 13, flags: ['overload'] });
     // The finisher segment moves its own level.
+    expect(first?.lAfter).toBeGreaterThan(13);
     expect(second).toMatchObject({ lBefore: first?.lAfter, flags: ['overload'] });
     const stored = (await repo.listBlocks()).filter((b) => b.sessionId === h.c.sessionId);
     expect(stored.map((b) => b.flags)).toEqual([['overload'], ['overload']]);
@@ -1514,10 +1666,11 @@ describe('SessionController — overload', () => {
     expect(views.map((v) => v.flags)).toEqual([[], ['overload'], [], ['overload']]);
     const [b0, b1, b2, b3] = views as [BlockSummaryView, BlockSummaryView, BlockSummaryView, BlockSummaryView];
     expect(b0.lBefore).toBe(9); // startLevel(10, 1 day)
-    expect(b1.lBefore).toBe(b0.lAfter + 3);
+    // A band module's overload block plays the segment level with the next band's load and keeps it (F3).
+    expect([b1.lBefore, b1.lAfter]).toEqual([b0.lAfter, b0.lAfter]);
     // The level after overload block 1 is the level after block 0.
     expect(b2.lBefore).toBe(b0.lAfter);
-    expect(b3.lBefore).toBe(b2.lAfter + 3);
+    expect([b3.lBefore, b3.lAfter]).toEqual([b2.lAfter, b2.lAfter]);
     // The overload lAfter goes to history.
     expect((await repo.listBlocks()).filter((b) => b.sessionId === h.c.sessionId).map((b) => b.lAfter)).toEqual(views.map((v) => v.lAfter));
     await playReaction(h);
@@ -1539,25 +1692,26 @@ describe('SessionController — overload', () => {
     await h.c.continueAfterSummary();
     h.c.ackInstruction();
     const pomehBlock = expectStep(h.c, 'reaction_block');
-    expect(pomehBlock.L).toBe(20);
-    // pomeh's own sound at L 20 is hum, beeps and metronome at 0.75, the finisher's hum, beeps and babble at 0.8: only
+    // A band module's finisher plays L_saved with the next band's load (F3): L 17 is band 4, the load band 5's.
+    expect(pomehBlock.L).toBe(17);
+    // pomeh's own sound in band 5 is hum, beeps and metronome at 0.75, the finisher's hum, beeps and babble at 0.8: only
     // a merge has all four layers at 0.8 (keeping its own sound loses the babble, taking the finisher's the metronome).
     // The noise stays.
-    expect(pomeh.params(20).audio).toEqual({ layers: ['hum', 'beeps', 'metronome'], gain: 0.75 });
+    expect(pomeh.params(17, 5).audio).toEqual({ layers: ['hum', 'beeps', 'metronome'], gain: 0.75 });
     expect(pomehBlock.layers).toMatchObject({
-      noise: pomeh.params(20).noise,
+      noise: pomeh.params(17, 5).noise,
       audio: { layers: ['hum', 'beeps', 'metronome', 'babble'], gain: 0.8 },
       gate: 'all',
     });
 
-    // At L 36 pomeh's own sound has all four layers at 1, so only a merge keeps the metronome and the gain.
+    // From band 6 pomeh's own sound has all four layers at 1, so only a merge keeps the metronome and the gain.
     const high = new MemoryRepository();
     await high.saveModuleState(stateWith('pomeh', { lSaved: 33, lastTrainedAt: YESTERDAY, lifetimeBlocks: 10 }));
     const h36 = await begin(training(overloadSegment('pomeh', 'finisher', 1)), { repo: high });
     h36.c.ackInstruction();
     const top = expectStep(h36.c, 'reaction_block');
-    expect(top.L).toBe(36);
-    expect(pomeh.params(36).audio).toEqual({ layers: ['hum', 'beeps', 'metronome', 'babble'], gain: 1 });
+    expect(top.L).toBe(33);
+    expect(pomeh.params(33, 9).audio).toEqual({ layers: ['hum', 'beeps', 'metronome', 'babble'], gain: 1 });
     expect(top.layers).toMatchObject({ audio: { layers: ['hum', 'beeps', 'metronome', 'babble'], gain: 1 }, gate: 'all' });
   });
 
@@ -1566,10 +1720,12 @@ describe('SessionController — overload', () => {
     await repo.saveModuleState(stateWith('pomeh', { lSaved: 17, lastTrainedAt: YESTERDAY, lifetimeBlocks: 10 }));
     const h = await begin(training(overloadSegment('pomeh', 'finisher', 1)), { repo });
     const { text } = expectStep(h.c, 'instruction');
-    expect(text).toBe(OVERLOAD_SOUND_PREFIX + pomeh.instruction('keyboard', pomeh.params(20), true));
+    // L 17 is band 4; the block plays band 5's load (F3).
+    const played = pomeh.params(17, 5);
+    expect(text).toBe(overloadBandPrefix(played.bandLabel) + pomeh.instruction('keyboard', played, true) + ` Нагрузка: ${played.bandLabel}.`);
     expect(text).not.toContain('В части блока');
-    // The window at L 20 is 179 ms.
-    expect(pomeh.params(20).windowMs).toBe(179);
+    // The window at L 17 is 199 ms.
+    expect(pomeh.params(17).windowMs).toBe(199);
     const slowerOnNoisy: Respond = (spec, idx) => {
       const r = perfectPlayer(spec, idx);
       return r === null ? null : { ...r, rtMs: spec.cond === 'noisy' ? 170 : 135 };
@@ -1632,9 +1788,10 @@ describe('SessionController — overload', () => {
       await playReaction(h);
       await h.c.continueAfterSummary();
     }
-    expect(texts[0]?.startsWith(OVERLOAD_SOUND_PREFIX)).toBe(false);
-    expect(texts[1]?.startsWith(OVERLOAD_SOUND_PREFIX)).toBe(true);
-    expect(texts[2]?.startsWith(OVERLOAD_SOUND_PREFIX)).toBe(false);
+    // Block 1 at L 11 (band 2) plays band 3's load (Р16).
+    expect(texts[0]?.startsWith('Блок с перегрузкой')).toBe(false);
+    expect(texts[1]?.startsWith(overloadBandPrefix('4 цвета на 4 клавиши'))).toBe(true);
+    expect(texts[2]?.startsWith('Блок с перегрузкой')).toBe(false);
   });
 });
 
@@ -1815,9 +1972,10 @@ describe('SessionController — save errors', () => {
   it('a block stored on retrySave enters the history once (A-R19)', async () => {
     const repo = new FlakyRepo();
     const h = await begin(planFree('pzmr', 1), { repo });
+    // 3 misses of 15: s = 0.8 keeps the level, so the three blocks play one load band, one history variant (Р29).
     const rt = (ms: number): Respond => (spec, idx) => {
       const p = perfectPlayer(spec, idx);
-      return p === null ? null : { ...p, rtMs: ms };
+      return p === null || idx < 3 ? null : { ...p, rtMs: ms };
     };
     repo.failures.addBlock = 3;
     h.c.ackInstruction();
@@ -1831,7 +1989,7 @@ describe('SessionController — save errors', () => {
     const third = await playReaction(h, rt(450));
     // (300 + 360) / 2 = 330; block 1 counted twice would make it (300 + 300 + 360) / 3 = 320.
     expect(third.view.assessment?.history).toMatch(
-      /^Раньше в этом блоке: прошлый раз 360 мс \(ур\. [\d,]+\) · лучший 300 мс · в среднем за 7 дней 330 мс$/,
+      /^Раньше в этом блоке: прошлый раз 360 мс \(ур\. 0\) · лучший 300 мс · в среднем за 7 дней 330 мс$/,
     );
     expect(await repo.listBlocks()).toHaveLength(3);
   });

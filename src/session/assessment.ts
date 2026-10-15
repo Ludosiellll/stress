@@ -4,8 +4,8 @@ import { R0, type Rating } from '../engine/elo';
 import { levelStep, R_FORMAT, ratingStep, stepName, type LevelStep, type RatingStep } from '../engine/levelSteps';
 import { cutText, gradeByBands, NORM_HINTS, NORMS, type NormTable } from '../engine/norms';
 import { L_NORM, type ModuleState } from '../engine/planner';
-import { MODULE_IDS, type FamilyId, type ModuleId, type SessionKind } from '../engine/types';
-import { changeText, describeChanges, type ParamChange } from '../modules/describe';
+import { MODULE_IDS, isBandModule, type FamilyId, type ModuleId, type SessionKind } from '../engine/types';
+import { changeText, describeChanges, type DescribeContext, type ParamChange } from '../modules/describe';
 import { FAMILIES } from '../modules/numseries/families';
 import { moduleTitles } from '../modules/registry';
 import {
@@ -16,6 +16,7 @@ import {
   KEY_METRICS,
   mainVariant,
   normSamples,
+  parseObject,
   schulteSize,
   variantOf,
   type BlockHistory,
@@ -24,6 +25,7 @@ import {
   type NormSample,
   type VariantKey,
 } from './blockHistory';
+import type { WindowFloors } from './blocks';
 import { decimal, round1, signedMs, whole } from './steps';
 
 /**
@@ -47,6 +49,8 @@ export interface AssessContext {
   now: Date;
   /** Number series in training and free sessions: meanFamilyRating after the block; null otherwise. */
   meanRating: number | null;
+  /** The personal window floors the goal's windows rest on (F3); null: none (a diagnostic, an unread history). */
+  floors: WindowFloors | null;
 }
 
 const FIRST_BLOCK = 'Первый такой блок';
@@ -57,6 +61,7 @@ const BETTER_THAN_LAST = ' — лучше прошлого раза';
 /** Steps 1–4 say «из 5+»; from step 5 there is no ceiling (О14). */
 const STEPS_SHOWN_OF = 4;
 
+/** Hints by variant, and for the modules with load bands by module, whatever band the block played (T-R7). */
 const HINTS: ReadonlyMap<VariantKey, string> = new Map([
   ['gonogo', NORM_HINTS.gonogo],
   ['stroop', NORM_HINTS.stroop],
@@ -104,11 +109,11 @@ export function formatMetric(module: ModuleId, value: number): string {
   }
 }
 
-/** Norm lines of the block; without any, the hint of its variant (if there is one). */
+/** Norm lines of the block; without any, the hint of its variant or, for a band module, of its module (if there is one). */
 function normTexts(row: BlockRow, variant: VariantKey | null, kind: SessionKind): string[] {
   const samples = normSamples(row, kind);
   if (samples.length > 0) return samples.map(normLine);
-  const hint = variant === null ? undefined : HINTS.get(variant);
+  const hint = HINTS.get(isBandModule(row.module) ? row.module : (variant ?? ''));
   return hint === undefined ? [] : [hint];
 }
 
@@ -124,11 +129,29 @@ function goalHead(step: number): string {
 
 const lowerFirst = (s: string): string => s.charAt(0).toLocaleLowerCase('ru') + s.slice(1);
 
-/** What changes from lAfter to the next step; Горбов needs its task, unreadable → nothing (A-R14). */
-function paramChanges(row: BlockRow, next: number): ParamChange[] {
-  if (row.module !== 'gorbov') return describeChanges(row.module, row.lAfter, next);
-  const task = gorbovTaskOf(row);
-  return task === null ? [] : describeChanges(row.module, row.lAfter, next, task);
+/**
+ * What changes from lAfter to the next step; Горбов needs its task, unreadable → nothing (A-R14). A band module's window
+ * rests on the floors of its bands (F3; a band without history takes the chain from the band below).
+ */
+function paramChanges(row: BlockRow, next: number, floors: WindowFloors | null): ParamChange[] {
+  const { module } = row;
+  if (module === 'gorbov') {
+    const task = gorbovTaskOf(row);
+    return task === null ? [] : describeChanges(module, row.lAfter, next, task);
+  }
+  const ctx: DescribeContext | undefined = floors === null || !isBandModule(module) ? undefined : { floors: (band) => floors(module, band) };
+  return describeChanges(module, row.lAfter, next, undefined, ctx);
+}
+
+/**
+ * «; перегрузка», for a band module's overload block «; перегрузка: нагрузка полосы 3» (Р29): the band whose load it
+ * played, from paramsJson.loadBand (an older row has none and keeps the plain note).
+ */
+function overloadNote(row: BlockRow): string {
+  const loadBand = parseObject(row.paramsJson)?.['loadBand'];
+  return isBandModule(row.module) && typeof loadBand === 'number' && Number.isInteger(loadBand)
+    ? `; перегрузка: нагрузка полосы ${String(loadBand)}`
+    : '; перегрузка';
 }
 
 /** The step of a level as shown (A-R7), with the shown level, the test format and «+Δ» to the next step. */
@@ -149,14 +172,14 @@ function shownRatingStep(meanRating: number): { R: string; s: RatingStep; toNext
  * Step and goal by level: lAfter, or lBefore (the played level) for an overload or warm-up block, which has no goal
  * (О4, Р29). Both come from the shown level (A-R7); the parameters come from the level the next block plays.
  */
-function levelLines(row: BlockRow): Pick<BlockAssessment, 'step' | 'goal'> {
+function levelLines(row: BlockRow, floors: WindowFloors | null): Pick<BlockAssessment, 'step' | 'goal'> {
   const overload = row.flags.includes('overload');
   const played = !movesLevel(row.flags);
   const { L, Lnorm, s, toNext } = shownLevelStep(row.module, played ? row.lBefore : row.lAfter);
-  const note = overload ? '; перегрузка' : '';
+  const note = overload ? overloadNote(row) : '';
   const step = `${stepHead(s.step, s.name)} (уровень ${L}; формат теста — ${Lnorm}${note})`;
   if (played) return { step, goal: null };
-  const changes = paramChanges(row, s.nextStepL);
+  const changes = paramChanges(row, s.nextStepL, floors);
   const there = changes.length === 0 ? '' : `. Там: ${changes.map((c) => lowerFirst(changeText(c))).join('; ')}`;
   const goal = `${goalHead(s.step)}: уровень ${levelText(s.nextStepL)} (+${toNext})${there}`;
   return { step, goal };
@@ -207,7 +230,7 @@ export function assessBlock(row: BlockRow, ctx: AssessContext): BlockAssessment 
   const variant = variantOf(row);
   const norms = normTexts(row, variant, ctx.kind);
   if (!isCountedSession(ctx.kind)) return { step: null, goal: null, norms, history: null };
-  const { step, goal } = row.module === 'numseries' ? ratingLines(ctx.meanRating) : levelLines(row);
+  const { step, goal } = row.module === 'numseries' ? ratingLines(ctx.meanRating) : levelLines(row, ctx.floors);
   return { step, goal, norms, history: historyLine(row, variant, ctx) };
 }
 

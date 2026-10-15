@@ -1,6 +1,7 @@
-import { isReactionModule, type ModuleId, type ReactionModuleId } from '../engine/types';
+import { isBandModule, isReactionModule, type ModuleId, type ReactionModuleId } from '../engine/types';
 import { describeMemoryParams, memoryParams } from './memory/params';
-import { reactionModules } from './registry';
+import { withFloor } from './reaction/common';
+import { bandModules, reactionModules } from './registry';
 import { gorbovParams, type TableTaskId } from './tables/gorbov';
 import { schulteParams } from './tables/schulte';
 import { describeTableParams } from './tables/score';
@@ -44,12 +45,27 @@ function changed(before: Described, after: Described): ParamChange[] {
   });
 }
 
+/** The personal window floor of each load band of the module (F3); null: the band has none. */
+export interface DescribeContext {
+  floors: (band: number) => number | null;
+}
+
 /**
  * What changed in the module's parameters between two levels, for the block summary.
- * Reaction modules (any id of the catalogue) describe their own parameters. Gorbov needs the run task
- * (alternate gets 1.6× time); memory parameters do not depend on the mode; numseries has no level, so nothing changes.
+ * Reaction modules (any id of the catalogue) describe their own parameters; with `ctx` a band module's window is the
+ * one a block plays (the nominal window or the floor of its band, whichever is larger), so a window resting on one
+ * floor at both levels is no change (F3). Gorbov needs the run task (alternate gets 1.6× time); memory parameters do
+ * not depend on the mode; numseries has no level, so nothing changes.
  */
-export function describeChanges(module: ModuleId, lBefore: number, lAfter: number, task?: TableTaskId): ParamChange[] {
+export function describeChanges(module: ModuleId, lBefore: number, lAfter: number, task?: TableTaskId, ctx?: DescribeContext): ParamChange[] {
+  if (isBandModule(module) && ctx !== undefined) {
+    const m = bandModules[module];
+    const at = (L: number): unknown => {
+      const p = m.params(L);
+      return withFloor(p, ctx.floors(p.band));
+    };
+    return describeParamChanges(module, at(lBefore), at(lAfter));
+  }
   if (isReactionModule(module)) {
     const m = reactionModules[module];
     return describeParamChanges(module, m.params(lBefore), m.params(lAfter));

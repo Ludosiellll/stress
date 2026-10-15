@@ -18,6 +18,29 @@ describe('describeChanges', () => {
     ]);
   });
 
+  it('describeChanges with floors shows the actual window and the load', () => {
+    // The window rests on the floor 600 at both levels: no window line.
+    expect(describeChanges('szmr', 7, 8, undefined, { floors: () => 600 })).toEqual([
+      { label: 'Нагрузка', from: '2 цвета на 2 клавиши', to: '3 цвета на 2 клавиши' },
+    ]);
+    // Each band its own floor (band 1: 520, band 2: 660); round(floor) and the larger of the two.
+    const asked: number[] = [];
+    const floors = (band: number): number | null => {
+      asked.push(band);
+      return band === 1 ? 519.6 : 660;
+    };
+    expect(describeChanges('szmr', 7, 8, undefined, { floors })).toEqual([
+      { label: 'Окно ответа', from: '548 мс', to: '660 мс' },
+      { label: 'Нагрузка', from: '2 цвета на 2 клавиши', to: '3 цвета на 2 клавиши' },
+    ]);
+    expect(asked).toEqual([1, 2]);
+    // A band without a floor keeps the nominal window.
+    expect(describeChanges('pzmr', 10, 11, undefined, { floors: () => null })).toEqual(describeChanges('pzmr', 10, 11));
+    // Modules without bands ignore the floors.
+    expect(describeChanges('rdo', 0, 2, undefined, { floors: () => 5000 })).toEqual(describeChanges('rdo', 0, 2));
+    expect(describeChanges('schulte', 7, 8, undefined, { floors: () => 5000 })).toEqual(describeChanges('schulte', 7, 8));
+  });
+
   it('level down shows the change in the other direction', () => {
     expect(describeChanges('gonogo', 20, 19)).toEqual([
       { label: 'Окно ответа', from: '179 мс', to: '185 мс' },

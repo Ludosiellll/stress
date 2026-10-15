@@ -9,8 +9,11 @@ import {
   dayFormLine,
   ERROR_KINDS,
   errorLine,
+  floorLine,
   MEMORY_SPAN_INSTRUCTION,
   memoryLines,
+  OVERLOAD_SOUND_PREFIX,
+  overloadBandPrefix,
   plural,
   reactionLines,
   seriesDiagnosticInstruction,
@@ -87,6 +90,21 @@ describe('errorLine (F1)', () => {
       pomeh: ['wrong', 'false_start'],
     });
     expect(Object.keys(ERROR_KINDS).sort()).toEqual([...REACTION_MODULE_IDS].sort());
+  });
+});
+
+describe('the window floor and the overload band (F3)', () => {
+  it('floorLine says the window rests on the personal floor and names the nominal one', () => {
+    expect(floorLine(412, 298)).toBe('Окно ответа: 412 мс — твой минимум для этой нагрузки (по уровню — 298 мс).');
+  });
+
+  it('overloadBandPrefix: the sound, the next band\'s load and a level that does not move (Р16)', () => {
+    expect(overloadBandPrefix('4 цвета на 4 клавиши')).toBe(
+      'Блок с перегрузкой, со звуковыми помехами. Надень наушники. Перегрузка: нагрузка следующей полосы — 4 цвета на 4 клавиши. Уровень не меняется. ',
+    );
+    // It never claims a level 3 above: that is РДО's prefix.
+    expect(overloadBandPrefix('красный круг')).not.toContain('на 3 выше');
+    expect(OVERLOAD_SOUND_PREFIX).toContain('на 3 выше');
   });
 });
 

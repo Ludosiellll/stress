@@ -10,7 +10,9 @@ import { isCleanHitRt, summarize } from '../engine/reaction/summary';
 import type { BlockTimeline, ReactionSummary, TrialResult, TrialSpec } from '../engine/reaction/types';
 import { createRng, deriveSeed } from '../engine/rng';
 import {
+  isBandModule,
   isReactionModule,
+  type BandModuleId,
   type FamilyId,
   type InputKey,
   type LayoutId,
@@ -18,6 +20,7 @@ import {
   type ReactionModuleId,
   type TableModuleId,
 } from '../engine/types';
+import { bandFloors } from '../engine/windowFloor';
 import { generateMemoryTrials, SPAN_PROTOCOL_PARAMS, SPAN_PROTOCOL_TRIALS, spanProtocolTrials } from '../modules/memory/generate';
 import { spanProtocolStops, type MemoryAnswer } from '../modules/memory/score';
 import {
@@ -31,10 +34,10 @@ import {
 } from '../modules/memory/params';
 import { describeChanges, describeParamChanges, type ParamChange } from '../modules/describe';
 import { generateBlockItems, generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
-import { stressorsOf, type BlockStressors, type ReactionModule } from '../modules/reaction/common';
+import { bandIndex, stressorsOf, withFloor, type BandFields, type BlockStressors, type ReactionModule } from '../modules/reaction/common';
 import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
 import { gonogo, isSwappedSegment, swapColours } from '../modules/reaction/gonogo';
-import { reactionModules } from '../modules/registry';
+import { bandModules, reactionModules } from '../modules/registry';
 import {
   generateGorbovTable,
   gorbovMetrics,
@@ -49,6 +52,7 @@ import {
   MEMORY_SPAN_INSTRUCTION,
   OVERLOAD_PREFIX,
   OVERLOAD_SOUND_PREFIX,
+  overloadBandPrefix,
   SERIES_INSTRUCTION_TRAINING,
   SERIES_KEYS_HINT,
   seriesDiagnosticInstruction,
@@ -56,6 +60,7 @@ import {
   type SeriesAnswer,
   type StepOf,
 } from './steps';
+import { cleanHitsByBand, type PastBlocks } from './pastBlocks';
 
 /** Pure parts of a session block: what to play, its seed, its step, and scoring. No state, no I/O. */
 
@@ -103,6 +108,42 @@ export function scaledPractice(n: number, scale: number): number {
   return n > 0 && scale < 1 ? Math.max(1, Math.round(n * scale)) : n;
 }
 
+/** The personal window floor of a module's load band (F3); null: the band has none (band 0 without history, РДО). */
+export type WindowFloors = (module: ReactionModuleId, band: number) => number | null;
+
+/**
+ * The floors of the history read at start and of the blocks of the session stored since (F3): bandFloors over
+ * cleanHitsByBand with the module's ladder; null for a module without bands. Each module's history is read when it
+ * is first asked for, so a WindowFloors is made for the block about to be planned.
+ */
+export function floorsFrom(past: PastBlocks): WindowFloors {
+  const byModule = new Map<BandModuleId, (band: number) => number | null>();
+  return (module, band) => {
+    if (!isBandModule(module)) return null;
+    let floorOf = byModule.get(module);
+    if (floorOf === undefined) {
+      floorOf = bandFloors(cleanHitsByBand(past, module), bandModules[module].bands ?? []);
+      byModule.set(module, floorOf);
+    }
+    return floorOf(band);
+  };
+}
+
+/**
+ * The load of a band module's training or free block (F3): the band b of L, the band whose load it plays (an overload
+ * block: the next one, at the window of b), the nominal window of L and the floor of b (round(floor); null: none).
+ */
+export interface BlockLoad {
+  band: number;
+  bandLabel: string;
+  /** An overload block: the band whose load it plays (b + 1, the last band at the ladder's end); null otherwise. */
+  loadBand: number | null;
+  /** The label of loadBand (T-R25); null when loadBand is. */
+  loadBandLabel: string | null;
+  nominalWindowMs: number;
+  floorMs: number | null;
+}
+
 /**
  * The next block of a segment, decided before its instruction: level, parameters, task, keys and volume.
  * `overload`: an overload block (isOverloadBlock); number series never are.
@@ -112,6 +153,7 @@ export type BlockPlan =
       kind: 'reaction';
       module: ReactionModuleId;
       L: number;
+      /** With the window the block plays (F3: the floor of its band when that is larger). */
       params: unknown;
       keys: InputKey[];
       /** Effective layout ('keyboard' when the mouse cannot serve the keys). */
@@ -119,6 +161,8 @@ export type BlockPlan =
       size: number;
       practice: number;
       overload: boolean;
+      /** A band module's training or free block; null for РДО and diagnostics (F3). */
+      load: BlockLoad | null;
     }
   | { kind: 'table'; module: TableModuleId; L: number; task: TableTaskId; params: TableParams; overload: boolean }
   /**
@@ -140,6 +184,8 @@ export interface PlanContext {
   /** The plan's seed and the segment's index in it: what a segment draws once (the Go/No-Go colour swap, F8). */
   planSeed: number;
   segmentIndex: number;
+  /** The personal window floors (F3); null: a diagnostic, a test-format run, or the history could not be read (Р18). */
+  floors: WindowFloors | null;
 }
 
 /** Every block of a finisher; the odd blocks (1, 3, …) of a plateau mix. */
@@ -149,17 +195,17 @@ export function isOverloadBlock(segment: Segment, blockIndex: number): boolean {
 
 /**
  * Block `blockIndex` of the segment whose level is `segmentL` (Gorbov runs cycle their tasks, memory blocks
- * their mode, by index). An overload block of a mix plays OVERLOAD_LEVEL_STEP above the segment level; a
- * finisher's segment level already includes the step.
+ * their mode, by index). An overload block of a band module plays the segment level with the next band's load (F3);
+ * one of РДО, the tables or memory in a mix plays OVERLOAD_LEVEL_STEP above the segment level, and a finisher's
+ * segment level already includes the step.
  */
 export function planBlock(segment: Segment, segmentL: number, blockIndex: number, ctx: PlanContext): BlockPlan {
   const { module } = segment;
   const overload = isOverloadBlock(segment, blockIndex);
-  const L = overload && segment.overload === 'mix' ? segmentL + OVERLOAD_LEVEL_STEP : segmentL;
+  const L = overload && segment.overload === 'mix' && !isBandModule(module) ? segmentL + OVERLOAD_LEVEL_STEP : segmentL;
   if (isReactionModule(module)) {
     const mod = reactionModules[module];
-    // A diagnostic plays the frozen 0.2.0 parameters, whatever params(L) becomes (training-fixes spec §2.0).
-    const params = ctx.diagnostic ? DIAGNOSTIC_PARAMS[module] : trainingParams(module, L, ctx);
+    const { params, load } = reactionBlock(module, L, overload, ctx);
     const { keys, effectiveLayout } = layoutKeys(ctx.layout, mod.keyCount(params));
     return {
       kind: 'reaction',
@@ -171,6 +217,7 @@ export function planBlock(segment: Segment, segmentL: number, blockIndex: number
       size: reactionBlockSize(mod, params, segment.trialCount ?? mod.trials(params), ctx.scale),
       practice: scaledPractice(segment.practiceTrials ?? 0, ctx.scale),
       overload,
+      load,
     };
   }
   if (module === 'gorbov') {
@@ -202,29 +249,69 @@ export function planBlock(segment: Segment, segmentL: number, blockIndex: number
 }
 
 /**
- * «What changed» between two levels for the block summary, named as the block's segment plays them: a reaction module
- * describes its training parameters at both levels, so a swapped Go/No-Go segment names its swapped colours (T-R41).
+ * The parameters and the load of a reaction block at L. A diagnostic plays the frozen 0.2.0 parameters, whatever
+ * params(L) becomes (training-fixes spec §2.0), and never gets a floor.
  */
-export function levelChanges(module: ModuleId, lBefore: number, lAfter: number, task: TableTaskId | undefined, ctx: PlanContext): ParamChange[] {
-  if (!isReactionModule(module)) return describeChanges(module, lBefore, lAfter, task);
-  return describeParamChanges(module, trainingParams(module, lBefore, ctx), trainingParams(module, lAfter, ctx));
-}
-
-/** Training and free parameters at L; a Go/No-Go segment may play with the colours swapped (F8). */
-function trainingParams(module: ReactionModuleId, L: number, ctx: PlanContext): unknown {
-  if (module === 'gonogo') {
-    const p = gonogo.params(L);
-    return isSwappedSegment(ctx.planSeed, ctx.segmentIndex) ? swapColours(p) : p;
-  }
-  return reactionModules[module].params(L);
+function reactionBlock(module: ReactionModuleId, L: number, overload: boolean, ctx: PlanContext): { params: unknown; load: BlockLoad | null } {
+  if (ctx.diagnostic) return { params: DIAGNOSTIC_PARAMS[module], load: null };
+  return isBandModule(module) ? bandBlock(module, L, overload, ctx) : { params: reactionModules[module].params(L), load: null };
 }
 
 /**
- * The instruction before a block. An overload block's text starts with OVERLOAD_PREFIX, or with
- * OVERLOAD_SOUND_PREFIX in a reaction block, which plays the finisher sound (overloadStressors).
+ * A band module's block at L (F3): the load of its band b, or for an overload block of the next band, at the window of
+ * b — the nominal window of L or round(floor(b)), whichever is larger.
+ */
+function bandBlock(module: BandModuleId, L: number, overload: boolean, ctx: PlanContext): { params: BandFields; load: BlockLoad } {
+  const band = bandIndex(bandModules[module], L);
+  const own = bandParams(module, L, band, ctx);
+  const played = overload ? bandParams(module, L, band + 1, ctx) : own;
+  const floor = ctx.floors?.(module, band) ?? null;
+  return {
+    params: withFloor(played, floor),
+    load: {
+      band,
+      bandLabel: own.bandLabel,
+      loadBand: overload ? played.band : null,
+      loadBandLabel: overload ? played.bandLabel : null,
+      nominalWindowMs: own.windowMs,
+      floorMs: floor === null ? null : Math.round(floor),
+    },
+  };
+}
+
+/**
+ * «What changed» between two levels for the block summary, named as the block's segment plays them: a reaction module
+ * describes its training parameters at both levels, so a swapped Go/No-Go segment names its swapped colours (T-R41),
+ * and a band module's window is the one its blocks play (the floor of the band when that is larger, F3).
+ */
+export function levelChanges(module: ModuleId, lBefore: number, lAfter: number, task: TableTaskId | undefined, ctx: PlanContext): ParamChange[] {
+  if (!isBandModule(module)) return describeChanges(module, lBefore, lAfter, task);
+  const at = (L: number): BandFields => bandBlock(module, L, false, ctx).params;
+  return describeParamChanges(module, at(lBefore), at(lAfter));
+}
+
+/** A band module's training and free parameters at L with the load of `loadBand`; a Go/No-Go segment may swap its colours (F8). */
+function bandParams(module: BandModuleId, L: number, loadBand: number, ctx: PlanContext): BandFields {
+  if (module === 'gonogo') {
+    const p = gonogo.params(L, loadBand);
+    return isSwappedSegment(ctx.planSeed, ctx.segmentIndex) ? swapColours(p) : p;
+  }
+  return bandModules[module].params(L, loadBand);
+}
+
+/**
+ * The instruction before a block. A band module's block ends with its load line (F3). An overload block's text starts
+ * with OVERLOAD_PREFIX, or in a reaction block, which plays the finisher sound (overloadStressors), with
+ * OVERLOAD_SOUND_PREFIX; a band module's with overloadBandPrefix, naming the next band's load (Р16).
  */
 export function blockInstruction(plan: BlockPlan, layout: LayoutId): { text: string; keysHint: string } {
   const { text, keysHint } = plainInstruction(plan, layout);
+  if (plan.kind === 'reaction' && plan.load !== null) {
+    const { loadBandLabel, bandLabel } = plan.load;
+    const played = loadBandLabel ?? bandLabel;
+    const prefix = plan.overload ? overloadBandPrefix(played) : '';
+    return { text: `${prefix}${text} Нагрузка: ${played}.`, keysHint };
+  }
   if (plan.kind === 'numseries' || !plan.overload) return { text, keysHint };
   return { text: (plan.kind === 'reaction' ? OVERLOAD_SOUND_PREFIX : OVERLOAD_PREFIX) + text, keysHint };
 }
@@ -295,7 +382,7 @@ export function buildBlock(
           legend: mod.legend?.(layout, plan.params) ?? null,
           layers: { ...(plan.overload ? overloadStressors(stressors) : stressors), seed: deriveSeed(seed, 'layers') },
         },
-        paramsJson: JSON.stringify(plan.params),
+        paramsJson: JSON.stringify(reactionParamsJson(plan)),
       };
     }
     case 'table': {
@@ -333,6 +420,19 @@ export function buildBlock(
       };
     }
   }
+}
+
+/**
+ * What a reaction block stores as paramsJson: its parameters, and for a band module the nominal window and the floor
+ * (F3); an overload block names its own band b and the band whose load it played (T-R25).
+ */
+function reactionParamsJson(plan: Extract<BlockPlan, { kind: 'reaction' }>): unknown {
+  const { load } = plan;
+  if (load === null) return plan.params;
+  const floor = { nominalWindowMs: load.nominalWindowMs, floorMs: load.floorMs };
+  if (load.loadBand === null) return { ...(plan.params as object), ...floor };
+  const { band, bandLabel, loadBand, loadBandLabel } = load;
+  return { ...(plan.params as object), band, bandLabel, loadBand, loadBandLabel, ...floor };
 }
 
 /** An overload block adds the finisher sound to the module's own on every trial; the noise keeps its trials (W2-R10). */

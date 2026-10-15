@@ -31,6 +31,13 @@ export function isReactionModule(m: ModuleId): m is ReactionModuleId {
 export const BAND_MODULES = ['pzmr', 'szmr', 'gonogo', 'pomeh', 'stroop', 'taskswitch'] as const satisfies readonly ReactionModuleId[];
 export type BandModuleId = (typeof BAND_MODULES)[number];
 
+const BAND_SET: ReadonlySet<ModuleId> = new Set<ModuleId>(BAND_MODULES);
+
+/** One of BAND_MODULES. */
+export function isBandModule(m: ModuleId): m is BandModuleId {
+  return BAND_SET.has(m);
+}
+
 export type TableModuleId = 'gorbov' | 'schulte';
 export type LayoutId = 'keyboard' | 'mouse' | 'pult';
 export type InputKey = string;

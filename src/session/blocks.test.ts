@@ -3,13 +3,14 @@ import { describe, expect, it, vi } from 'vitest';
 import { deriveRatings } from '../engine/derive';
 import { EMPTY_METRICS, diagnosticSegmentSeed, diagnosticSeriesSchedule, planDiagnostic } from '../engine/diagnostic';
 import { R0, updateRating, type Rating } from '../engine/elo';
+import { block, session } from '../data/repository.contract';
 import { effectiveDifficulty } from '../engine/itemLimit';
 import { FINISHER_AUDIO } from '../engine/audio/stressors';
 import { noiseFrame } from '../engine/noise';
 import { OVERLOAD_LEVEL_STEP, type Segment } from '../engine/planner';
 import { MIN_COND_RTS, condPairOf, type CondPair } from '../engine/reaction/conditions';
 import type { Outcome, ReactionSummary, Stimulus, TrialSpec } from '../engine/reaction/types';
-import { REACTION_MODULE_IDS, isReactionModule, type FamilyId, type ModuleId, type ReactionModuleId } from '../engine/types';
+import { BAND_MODULES, REACTION_MODULE_IDS, isReactionModule, type FamilyId, type ModuleId, type ReactionModuleId } from '../engine/types';
 import { createRng, deriveSeed } from '../engine/rng';
 import { generateMemoryTrials, SPAN_PROTOCOL_PARAMS, spanProtocolTrials } from '../modules/memory/generate';
 import { memoryModeForBlock, memoryParams } from '../modules/memory/params';
@@ -20,7 +21,9 @@ import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
 import { gonogo, isSwappedSegment } from '../modules/reaction/gonogo';
 import { pomeh } from '../modules/reaction/pomeh';
 import { pzmr } from '../modules/reaction/pzmr';
-import { reactionModules } from '../modules/registry';
+import { rdo } from '../modules/reaction/rdo';
+import { szmr } from '../modules/reaction/szmr';
+import { bandModules, reactionModules } from '../modules/registry';
 import { gorbovMetrics } from '../modules/tables/gorbov';
 import { perfectPlayer, playTimeline } from '../testing/sessionPlayers';
 import {
@@ -30,6 +33,7 @@ import {
   diagnosticResults,
   E2E_COND_MARGIN,
   e2eCondFloor,
+  floorsFrom,
   isOverloadBlock,
   planBlock,
   scaledCount,
@@ -40,9 +44,11 @@ import {
   updatedRatings,
   type BlockPlan,
   type PlanContext,
+  type WindowFloors,
 } from './blocks';
+import { appendPast, pastBlocks } from './pastBlocks';
 import { logicItemRows } from './rowsBuild';
-import { MEMORY_SPAN_INSTRUCTION, OVERLOAD_PREFIX, OVERLOAD_SOUND_PREFIX, type StepOf } from './steps';
+import { MEMORY_SPAN_INSTRUCTION, OVERLOAD_PREFIX, OVERLOAD_SOUND_PREFIX, overloadBandPrefix, type StepOf } from './steps';
 
 const counts = {} as Record<Outcome, number>;
 /** penalizedScore differs from score: the diagnostic reads the share of successes, never the penalised s (F1). */
@@ -61,10 +67,10 @@ const summary = (over: Partial<ReactionSummary>): ReactionSummary => ({
   ...over,
 });
 
-/** A plan seed and segment index whose Go/No-Go colours are swapped (F8), or are not. */
-function segmentWhere(swapped: boolean): { planSeed: number; segmentIndex: number } {
+/** A plan seed and segment index whose Go/No-Go colours are swapped (F8), or are not; no window floors (F3). */
+function segmentWhere(swapped: boolean): Pick<PlanContext, 'planSeed' | 'segmentIndex' | 'floors'> {
   for (let planSeed = 1; planSeed <= 100; planSeed++) {
-    if (isSwappedSegment(planSeed, 2) === swapped) return { planSeed, segmentIndex: 2 };
+    if (isSwappedSegment(planSeed, 2) === swapped) return { planSeed, segmentIndex: 2, floors: null };
   }
   throw new Error('no such plan seed');
 }
@@ -338,7 +344,7 @@ describe('diagnostic reaction blocks', () => {
       expect(planBlock(seg, seg.fixedL ?? 0, 0, ctx)).toMatchObject({ kind: 'reaction', L: 10, params: DIAGNOSTIC_PARAMS.gonogo });
       expect(spy).not.toHaveBeenCalled();
       planBlock(freeSegment('gonogo'), 7, 0, { ...ctx, ...PLAIN, diagnostic: false });
-      expect(spy).toHaveBeenCalledWith(7);
+      expect(spy).toHaveBeenCalledWith(7, 1);
     } finally {
       spy.mockRestore();
     }
@@ -457,12 +463,13 @@ describe('overload blocks', () => {
     expect([0, 1, 2, 3].map((i) => isOverloadBlock(seg('szmr'), i))).toEqual([false, false, false, false]);
   });
 
-  it('a mix plays its overload blocks at the segment level + 3; a finisher plays at the level it is given', () => {
+  it('РДО, tables and memory still overload at L + 3; a finisher plays at the level it is given', () => {
     expect(OVERLOAD_LEVEL_STEP).toBe(3);
-    expect(planBlock(seg('szmr', 'mix'), 10, 0, ctx)).toMatchObject({ kind: 'reaction', L: 10, overload: false });
-    expect(planBlock(seg('szmr', 'mix'), 10, 1, ctx)).toEqual({ ...planBlock(seg('szmr'), 13, 1, ctx), overload: true });
-    expect(planBlock(seg('szmr', 'finisher'), 13, 0, ctx)).toMatchObject({ L: 13, overload: true });
-    expect(planBlock(seg('szmr'), 10, 1, ctx)).toMatchObject({ L: 10, overload: false });
+    expect(planBlock(seg('rdo', 'mix'), 10, 0, ctx)).toMatchObject({ kind: 'reaction', L: 10, overload: false, load: null });
+    expect(planBlock(seg('rdo', 'mix'), 10, 1, ctx)).toEqual({ ...planBlock(seg('rdo'), 13, 1, ctx), overload: true });
+    expect(planBlock(seg('rdo', 'mix'), 10, 1, ctx)).toMatchObject({ params: rdo.params(13), load: null });
+    expect(planBlock(seg('rdo', 'finisher'), 13, 0, ctx)).toMatchObject({ L: 13, overload: true, load: null });
+    expect(planBlock(seg('rdo'), 10, 1, ctx)).toMatchObject({ L: 10, overload: false });
     expect(planBlock(seg('schulte', 'mix'), 4, 1, ctx)).toMatchObject({ kind: 'table', L: 7, overload: true });
     expect(planBlock(seg('gorbov', 'mix'), 4, 1, ctx)).toMatchObject({ kind: 'table', L: 7, task: 'red_down', overload: true });
     expect(planBlock(seg('memory', 'mix'), 9, 1, ctx)).toMatchObject({ kind: 'memory', L: 12, mode: memoryModeForBlock(0), overload: true });
@@ -486,14 +493,23 @@ describe('overload blocks', () => {
     expect(build('pzmr', 5, 'finisher')).toMatchObject({
       layers: { noise: null, audio: FINISHER_AUDIO, gate: 'all', seed: deriveSeed(7, 'layers') },
     });
+    // The load of the next band (band 5 at L 18: hum, beeps and metronome at 0.75) with the finisher sound.
     const pomehStep = build('pomeh', 18, 'finisher');
+    expect(pomeh.params(18, 5).audio).toEqual({ layers: ['hum', 'beeps', 'metronome'], gain: 0.75 });
     expect(pomehStep).toMatchObject({
-      layers: { noise: pomeh.params(18).noise, audio: { layers: ['hum', 'beeps', 'babble'], gain: 0.8 }, gate: 'all', noiseGate: 'noisy' },
+      layers: {
+        noise: pomeh.params(18, 5).noise,
+        audio: { layers: ['hum', 'beeps', 'metronome', 'babble'], gain: 0.8 },
+        gate: 'all',
+        noiseGate: 'noisy',
+      },
     });
-    // A band module's noise keeps its every-trial gate.
-    expect(build('pzmr', 12, 'finisher')).toMatchObject({ layers: { noise: pzmr.params(12).noise, audio: FINISHER_AUDIO, noiseGate: 'all' } });
+    // A band module's noise keeps its every-trial gate; ПЗМР at L 12 plays band 4, the far figures and its own sound.
+    expect(build('pzmr', 12, 'finisher')).toMatchObject({
+      layers: { noise: pzmr.params(12, 4).noise, audio: { layers: ['hum', 'beeps', 'babble'], gain: 0.8 }, noiseGate: 'all' },
+    });
     if (pomehStep.kind !== 'reaction_block') throw new Error('expected a reaction block');
-    // Quiet trials stay visually quiet: the trial conditions do not change.
+    // Quiet trials stay visually quiet: the trial conditions do not change (band 5 adds only the metronome).
     const normal = build('pomeh', 18);
     if (normal.kind !== 'reaction_block') throw new Error('expected a reaction block');
     expect(pomehStep.specs).toEqual(normal.specs);
@@ -520,7 +536,7 @@ describe('overload blocks', () => {
     }
   });
 
-  it('the instruction of an overload reaction block announces the sound it plays (M1)', () => {
+  it('the instruction of an overload reaction block announces the sound it plays (M1) and, in a band module, the load (Р16)', () => {
     expect(OVERLOAD_SOUND_PREFIX).toBe('Блок с перегрузкой: уровень на 3 выше обычного, со звуковыми помехами. Надень наушники. ');
     for (const module of REACTION_MODULE_IDS) {
       for (const overload of ['finisher', 'mix'] as const) {
@@ -529,11 +545,159 @@ describe('overload blocks', () => {
         // The module's own text without its sound note (M2): the prefix announces the sound.
         const normal = blockInstruction({ ...plan, overload: false }, 'keyboard');
         const own = reactionModules[module].instruction('keyboard', plan.params, true);
-        expect(blockInstruction(plan, 'keyboard')).toEqual({ text: OVERLOAD_SOUND_PREFIX + own, keysHint: normal.keysHint });
+        // A band module plays the next band's load, named by the prefix and by the load line at the end.
+        const text =
+          plan.load === null
+            ? OVERLOAD_SOUND_PREFIX + own
+            : overloadBandPrefix(plan.load.loadBandLabel ?? '') + own + ` Нагрузка: ${plan.load.loadBandLabel ?? ''}.`;
+        expect(plan.load === null, module).toBe(module === 'rdo');
+        expect(blockInstruction(plan, 'keyboard')).toEqual({ text, keysHint: normal.keysHint });
         const built = buildBlock(plan, 3, 'keyboard', new Map());
         expect(built.step.kind === 'reaction_block' && built.step.layers.audio).toBeTruthy();
       }
     }
+  });
+
+  it('a band that shares the load of the band below it has chain 1.0: its overload only adds the sound (T-R25)', () => {
+    for (const module of BAND_MODULES) {
+      const bands = bandModules[module].bands ?? [];
+      bands.forEach((b, i) => {
+        if (i > 0 && b.label === bands[i - 1]?.label) expect(b.chain, `${module} band ${String(i)}`).toBe(1);
+      });
+    }
+    // ПЗМР band 0 → 1: the same red circle, the same window.
+    const plan = planBlock(seg('pzmr', 'finisher'), 2, 0, { ...ctx, floors: () => 400 });
+    expect(plan).toMatchObject({ load: { band: 0, loadBand: 1, bandLabel: 'красный круг', loadBandLabel: 'красный круг', floorMs: 400 } });
+    // At the ladder's last band there is no next one: the overload plays that band's load.
+    expect(planBlock(seg('pzmr', 'finisher'), 50, 0, ctx)).toMatchObject({ L: 50, load: { band: 12, loadBand: 12 } });
+  });
+});
+
+describe('the personal window floor and the overload band (F3)', () => {
+  const ctx: PlanContext = { layout: 'keyboard', scale: 1, diagnostic: false, ...PLAIN };
+  /** Floors that answer `value` and note what they were asked. */
+  const recording = (value: number | null): { floors: WindowFloors; asked: Array<[ReactionModuleId, number]> } => {
+    const asked: Array<[ReactionModuleId, number]> = [];
+    return {
+      asked,
+      floors: (module, band) => {
+        asked.push([module, band]);
+        return value;
+      },
+    };
+  };
+
+  it('floorsFrom: bandFloors of the stored clean hits with the module\'s ladder; null without bands', () => {
+    const rts = (n: number, v: number): string => JSON.stringify({ cleanHitRts: Array<number>(n).fill(v) });
+    const past = pastBlocks(
+      [
+        block('a', 't', '2026-10-10T09:01:00', { module: 'szmr', paramsJson: '{"band":1}', summaryJson: rts(20, 500) }),
+        block('b', 't', '2026-10-10T09:02:00', { module: 'pzmr', paramsJson: '{"band":0}', summaryJson: rts(14, 300) }),
+        block('c', 't', '2026-10-10T09:03:00', { module: 'rdo', paramsJson: '{"band":0}', summaryJson: rts(20, 300) }),
+      ],
+      [session('t', '2026-10-10T09:00:00')],
+    );
+    const floors = floorsFrom(past);
+    // СЗМР: band 1 has its own 20 hits; band 0 none; band 2 by chain × 1.1, band 3 × 1.1 again.
+    expect([0, 1, 2, 3].map((b) => floors('szmr', b))).toEqual([null, 600, 660, expect.closeTo(726, 9)]);
+    // ПЗМР: 14 hits are not enough for band 0.
+    expect(floors('pzmr', 0)).toBeNull();
+    expect(floors('rdo', 0)).toBeNull();
+    // A new WindowFloors reads the blocks stored since: 15 hits, P80 the 12th of them.
+    appendPast(past, block('e', 'now', '2026-10-15T09:01:00', { module: 'pzmr', paramsJson: '{"band":0}', summaryJson: rts(1, 310) }), 'free');
+    expect(floorsFrom(past)('pzmr', 0)).toBeCloseTo(1.2 * 300, 9);
+  });
+
+  it('the window is the larger of the nominal and the floor', () => {
+    const high = recording(412);
+    const plan = reactionPlan(freeSegment('pzmr'), 12, { ...ctx, floors: high.floors });
+    expect(high.asked).toEqual([['pzmr', 3]]);
+    expect(plan.params).toEqual({ ...pzmr.params(12), windowMs: 412 });
+    expect(plan.load).toEqual({ band: 3, bandLabel: 'интервал 0,3–3 с, помехи', loadBand: null, loadBandLabel: null, nominalWindowMs: 233, floorMs: 412 });
+    const { step, paramsJson } = buildBlock(plan, 5, 'keyboard', new Map());
+    if (step.kind !== 'reaction_block') throw new Error('expected a reaction block');
+    expect(step.specs.map((t) => t.windowMs)).toEqual(Array<number>(15).fill(412));
+    expect(JSON.parse(paramsJson)).toEqual({ ...pzmr.params(12), windowMs: 412, nominalWindowMs: 233, floorMs: 412 });
+
+    const low = reactionPlan(freeSegment('pzmr'), 12, { ...ctx, floors: () => 200 });
+    expect(low.params).toEqual(pzmr.params(12));
+    expect(low.load).toMatchObject({ nominalWindowMs: 233, floorMs: 200 });
+    // The window takes round(floor).
+    expect(reactionPlan(freeSegment('pzmr'), 12, { ...ctx, floors: () => 411.6 }).params).toMatchObject({ windowMs: 412 });
+    // No floor of the band, or no floors at all: the nominal window and floorMs null.
+    expect(reactionPlan(freeSegment('pzmr'), 12, { ...ctx, floors: () => null }).load).toMatchObject({ floorMs: null, nominalWindowMs: 233 });
+    const none = reactionPlan(freeSegment('pzmr'), 12, ctx);
+    expect([none.params, none.load?.floorMs]).toEqual([pzmr.params(12), null]);
+    expect(JSON.parse(buildBlock(none, 5, 'keyboard', new Map()).paramsJson)).toMatchObject({ windowMs: 233, nominalWindowMs: 233, floorMs: null });
+  });
+
+  it('a swapped Go/No-Go keeps its colours under the floor', () => {
+    const plan = reactionPlan(freeSegment('gonogo'), 16, { ...ctx, ...SWAPPING, floors: () => 500 });
+    expect(plan.params).toMatchObject({ swapped: true, windowMs: 500, bandLabel: 'no-go — зелёный квадрат, интервал 0,3–1 с' });
+    expect(plan.load).toMatchObject({ band: 4, bandLabel: 'no-go — зелёный квадрат, интервал 0,3–1 с', nominalWindowMs: 207, floorMs: 500 });
+  });
+
+  it('an overload block of a band module plays the next band\'s load at the window of its own band', () => {
+    const { floors, asked } = recording(null);
+    const own: WindowFloors = (module, band) => floors(module, band) ?? (band === 2 ? 700 : 900);
+    const mix: Segment = { module: 'szmr', budgetMs: 300_000, purpose: 'reaction', overload: 'mix' };
+    const plan = planBlock(mix, 9, 1, { ...ctx, floors: own });
+    if (plan.kind !== 'reaction') throw new Error('expected a reaction plan');
+    expect(asked).toEqual([['szmr', 2]]);
+    expect(plan).toMatchObject({ L: 9, overload: true, keys: ['KeyD', 'KeyF', 'KeyJ', 'KeyK'], size: 20 });
+    expect(plan.params).toEqual({ ...szmr.params(9, 3), windowMs: 700 });
+    expect(plan.params).toMatchObject({ nColors: 4, nKeys: 4, band: 3 });
+    expect(plan.load).toEqual({
+      band: 2,
+      bandLabel: '3 цвета на 2 клавиши',
+      loadBand: 3,
+      loadBandLabel: '4 цвета на 4 клавиши',
+      nominalWindowMs: 431,
+      floorMs: 700,
+    });
+    expect(JSON.parse(buildBlock(plan, 5, 'keyboard', new Map()).paramsJson)).toEqual({
+      ...szmr.params(9, 3),
+      band: 2,
+      bandLabel: '3 цвета на 2 клавиши',
+      loadBand: 3,
+      loadBandLabel: '4 цвета на 4 клавиши',
+      windowMs: 700,
+      nominalWindowMs: 431,
+      floorMs: 700,
+    });
+    // The blocks around it play the segment level on their own band; a finisher plays every block like this one.
+    expect(planBlock(mix, 9, 0, { ...ctx, floors: own })).toMatchObject({ L: 9, overload: false, load: { band: 2, loadBand: null } });
+    const finisher: Segment = { ...mix, purpose: 'finisher', overload: 'finisher' };
+    expect(planBlock(finisher, 9, 0, { ...ctx, floors: own })).toEqual(plan);
+    // The instruction: the overload prefix with the load it plays, the module text, the load line.
+    expect(blockInstruction(plan, 'keyboard').text).toBe(
+      overloadBandPrefix('4 цвета на 4 клавиши') + szmr.instruction('keyboard', szmr.params(9, 3), true) + ' Нагрузка: 4 цвета на 4 клавиши.',
+    );
+  });
+
+  it('the instruction of a band module ends with the load line; РДО and a diagnostic have none', () => {
+    const at = (module: ReactionModuleId, L: number, c: PlanContext = ctx): string => blockInstruction(reactionPlan(freeSegment(module), L, c), 'keyboard').text;
+    expect(at('szmr', 0)).toBe(szmr.instruction('keyboard', szmr.params(0)) + ' Нагрузка: 2 цвета на 2 клавиши.');
+    expect(at('szmr', 0).endsWith('Нажимай нужную как можно быстрее. Нагрузка: 2 цвета на 2 клавиши.')).toBe(true);
+    expect(at('pzmr', 12)).toBe(pzmr.instruction('keyboard', pzmr.params(12)) + ' Нагрузка: интервал 0,3–3 с, помехи.');
+    expect(at('rdo', 5)).toBe(rdo.instruction('keyboard', rdo.params(5)));
+    const diagnostic = planDiagnostic(1).segments.find((s) => s.module === 'szmr') as Segment;
+    expect(blockInstruction(reactionPlan(diagnostic, 0, { ...ctx, diagnostic: true }), 'keyboard').text).toBe(
+      reactionModules.szmr.instruction('keyboard', DIAGNOSTIC_PARAMS.szmr),
+    );
+  });
+
+  it('a diagnostic and a test-format run never get a floor', () => {
+    const { floors, asked } = recording(999);
+    const diagnostic: PlanContext = { ...ctx, diagnostic: true, floors };
+    for (const seg of planDiagnostic(1).segments) {
+      if (!isReactionModule(seg.module)) continue;
+      const plan = reactionPlan(seg, seg.fixedL ?? 0, diagnostic);
+      expect(plan.params, seg.module).toBe(DIAGNOSTIC_PARAMS[seg.module]);
+      expect(plan.load, seg.module).toBeNull();
+    }
+    expect(asked).toEqual([]);
+    // The snapshots of the diagnostic blocks above pin the trials themselves.
   });
 });
 
