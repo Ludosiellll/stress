@@ -125,7 +125,7 @@ const ROW_NORMS: Partial<Record<DiagnosticRowId, NormId>> = { gorbovV: 'gorbovSi
  */
 export function diagnosticNorm(d: DiagnosticMetrics, id: DiagnosticRowId): string | null {
   if (id === 'pzmr' || id === 'szmr') {
-    // The СЗМР norm is the 2-choice one: valid because the diagnostic plays СЗМР below SZMR_TWO_CHOICE_BELOW_L.
+    // The СЗМР norm is the 2-choice one: valid because the diagnostic plays СЗМР with 2 colours on 2 keys (isTwoChoice).
     const mean = id === 'pzmr' ? d.pzmrMeanRt : d.szmrMeanRt;
     if (mean === null) return null;
     const shown = whole(mean);

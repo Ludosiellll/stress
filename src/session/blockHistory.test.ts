@@ -8,6 +8,7 @@ import {
   entersHistory,
   historyEntry,
   historyStats,
+  isTwoChoice,
   keyMetric,
   KEY_METRICS,
   mainVariant,
@@ -137,12 +138,24 @@ describe('normSamples', () => {
     expect(normSamples(row({ module: 'pzmr', summaryJson: 'not json' }))).toEqual([]);
   });
 
-  it('СЗМР: the 2-choice norm only below level 8', () => {
-    expect(normSamples(row({ module: 'szmr', lBefore: 7.5, summaryJson: '{"meanRt":401.6}' }))).toEqual([{ id: 'szmrMean', value: 402 }]);
+  it('СЗМР: the 2-choice norm only for 2 colours on 2 keys, by the parameters of its level', () => {
+    expect(normSamples(row({ module: 'szmr', lBefore: 7.9, summaryJson: '{"meanRt":401.6}' }))).toEqual([{ id: 'szmrMean', value: 402 }]);
     expect(normSamples(row({ module: 'szmr', lBefore: 8, summaryJson: '{"meanRt":401.6}' }))).toEqual([]);
     expect(normSamples(row({ module: 'szmr', lBefore: 0, summaryJson: '{"meanRt":null}' }))).toEqual([]);
-    // Level 8 is where СЗМР adds the third colour.
-    expect([szmr.params(7.5).nColors, szmr.params(8).nColors]).toEqual([2, 3]);
+    // Today level 8 is where СЗМР adds the third colour.
+    expect([szmr.params(7.9), szmr.params(8)].map((p) => [p.nColors, p.nKeys])).toEqual([
+      [2, 2],
+      [3, 2],
+    ]);
+    expect([isTwoChoice(szmr.params(7.9)), isTwoChoice(szmr.params(8))]).toEqual([true, false]);
+  });
+
+  it('СЗМР: the parameters the block was played with come first (FW8)', () => {
+    const played = (lBefore: number, nColors: number, nKeys: number): BlockRow =>
+      row({ module: 'szmr', lBefore, paramsJson: JSON.stringify({ windowMs: 700, nColors, nKeys }), summaryJson: '{"meanRt":401.6}' });
+    expect(normSamples(played(9, 2, 2))).toEqual([{ id: 'szmrMean', value: 402 }]);
+    expect(normSamples(played(5, 3, 2))).toEqual([]);
+    expect(normSamples(played(5, 2, 3))).toEqual([]);
   });
 
   it('Горбов: by task, only a finished table', () => {

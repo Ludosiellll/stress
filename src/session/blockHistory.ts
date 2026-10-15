@@ -4,6 +4,7 @@ import { COND_PAIRS } from '../engine/reaction/conditions';
 import type { BlockFlag, ModuleId, SessionKind } from '../engine/types';
 import type { BlockRow } from '../data/rows';
 import { MEMORY_TRIALS } from '../modules/memory/params';
+import { szmr } from '../modules/reaction/szmr';
 import { displayedCost, round1, whole } from './steps';
 
 /**
@@ -63,8 +64,8 @@ export type BlockHistory = Map<VariantKey, HistoryEntry[]>;
 
 export type HistoryRow = Pick<BlockRow, 'sessionId' | 'module' | 'lBefore' | 'flags' | 'startedAt' | 'paramsJson' | 'summaryJson'>;
 
-/** СЗМР plays 2 colours on 2 keys below this level; the 2-choice norm applies only there. */
-export const SZMR_TWO_CHOICE_BELOW_L = 8;
+/** The СЗМР norm is a choice of 2: it applies to a block of 2 colours on 2 keys only. */
+export const isTwoChoice = (p: { nColors: number; nKeys: number }): boolean => p.nColors === 2 && p.nKeys === 2;
 /** A training memory block gives a span only with this many exact rows out of MEMORY_TRIALS. */
 const MEMORY_SPAN_MIN_EXACT = 4;
 const MS_PER_DAY = 86_400_000;
@@ -202,6 +203,14 @@ function memoryNorms(summary: Json | null): NormSample[] {
   return length === null ? [] : [{ id: 'memorySpan', value: length }];
 }
 
+/** Colours and keys the СЗМР block was played with: its stored params, else those of its level (FW8). */
+function szmrPlayed(paramsJson: string, lBefore: number): { nColors: number; nKeys: number } {
+  const params = parseObject(paramsJson);
+  const nColors = num(params, 'nColors');
+  const nKeys = num(params, 'nKeys');
+  return nColors === null || nKeys === null ? szmr.params(lBefore) : { nColors, nKeys };
+}
+
 function normsFrom(module: ModuleId, lBefore: number, summary: Json | null, paramsJson: string): NormSample[] {
   switch (module) {
     case 'pzmr': {
@@ -214,7 +223,7 @@ function normsFrom(module: ModuleId, lBefore: number, summary: Json | null, para
     }
     case 'szmr': {
       const mean = positiveWhole(summary, 'meanRt');
-      return mean !== null && lBefore < SZMR_TWO_CHOICE_BELOW_L ? [{ id: 'szmrMean', value: mean }] : [];
+      return mean !== null && isTwoChoice(szmrPlayed(paramsJson, lBefore)) ? [{ id: 'szmrMean', value: mean }] : [];
     }
     case 'gorbov': {
       const task = gorbovTask(summary, paramsJson);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { EMPTY_METRICS, planDiagnostic } from '../engine/diagnostic';
-import { SZMR_TWO_CHOICE_BELOW_L } from './blockHistory';
+import { szmr } from '../modules/reaction/szmr';
+import { isTwoChoice } from './blockHistory';
 import { DIAGNOSTIC_ROW_IDS, diagnosticChange, diagnosticNorm, diagnosticValue } from './diagnosticCompare';
 
 const D = { ...EMPTY_METRICS, pzmrMedianRt: 251.4, pzmrMeanRt: 262.4, szmrMedianRt: 402, szmrMeanRt: 401.6, gonogoScore: 93.3,
@@ -46,9 +47,9 @@ describe('diagnosticCompare', () => {
     expect(wrong).toEqual([]);
   });
 
-  it('the diagnostic plays СЗМР below the level of the 2-choice norm its «Ориентир» uses', () => {
-    const szmr = planDiagnostic(1).segments.find((s) => s.module === 'szmr');
-    expect(szmr?.fixedL).toBeLessThan(SZMR_TWO_CHOICE_BELOW_L);
+  it('the diagnostic plays СЗМР with 2 colours on 2 keys, as the 2-choice norm of its «Ориентир» needs', () => {
+    const segment = planDiagnostic(1).segments.find((s) => s.module === 'szmr');
+    expect(isTwoChoice(szmr.params(segment?.fixedL ?? Number.NaN))).toBe(true);
   });
 
   it('no difference in the shown rounding is no change, also from a previous 0 (A-R3)', () => {
