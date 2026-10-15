@@ -474,7 +474,7 @@ describe('Session steps', () => {
     const rows = within(table)
       .getAllByRole('row')
       .slice(1)
-      .map((r) => within(r).getAllByRole('cell').map((td) => td.textContent));
+      .map((r) => within(r).getAllByRole('cell').map((td) => td.textContent.replaceAll('\u00a0', ' ')));
     expect(rows).toEqual([
       ['ПЗМР — медиана времени реакции', '251 мс', 'по среднему 262 мс: средний'],
       ['Сложная реакция (СЗМР) — медиана времени реакции', '402 мс', '—'],

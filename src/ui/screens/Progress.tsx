@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useApp } from '../AppContext';
 import LineChart, { type ChartDomain, type ChartSeries } from '../charts/LineChart';
 import { logEvent } from '../errorLog';
+import { noBreakUnits } from '../format';
 import { useKeyDown } from '../keys';
 import { loadProgressModel, SESSION_LINES, type ProgressModel } from '../progressModel';
 import ReadinessBlock from '../views/ReadinessBlock';
@@ -64,10 +65,10 @@ function Assessment({ model }: { model: ProgressModel }) {
           {model.assessment.map((a) => (
             <tr key={a.module}>
               <td>{a.title}</td>
-              <td>{a.step}</td>
-              <td className="num nowrap">{a.lastBest}</td>
-              <td>{a.norm}</td>
-              <td>{a.goal}</td>
+              <td>{noBreakUnits(a.step)}</td>
+              <td className="num nowrap">{noBreakUnits(a.lastBest)}</td>
+              <td>{noBreakUnits(a.norm)}</td>
+              <td>{noBreakUnits(a.goal)}</td>
             </tr>
           ))}
         </tbody>

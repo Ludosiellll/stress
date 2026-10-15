@@ -72,6 +72,22 @@ describe('BlockSummary', () => {
     expect(metrics.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it('a number never breaks from its unit in the assessment (A-R22)', () => {
+    const assessment = {
+      step: 'Ступень 3 из 5+ — формат теста (уровень 13,5; формат теста — 12)',
+      goal: 'До ступени 4 «сверх нормы»: уровень 17 (+3,5). Там: лимит времени: 39 → 29 с',
+      norms: ['Норма (ориентир): 44,0 с — средний; выше среднего — до 37 с. Бумажная методика, источник не указан'],
+      history: 'Раньше в этом блоке: прошлый раз 67 % (ряд 7, ур. 9)',
+    };
+    render(<BlockSummary view={{ ...VIEW, assessment }} busy={false} onContinue={vi.fn()} />);
+    expect(within(screen.getByRole('list', { name: 'Оценка' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+      'Ступень 3 из 5+ — формат теста (уровень 13,5; формат теста — 12)',
+      'До ступени 4 «сверх нормы»: уровень 17 (+3,5). Там: лимит времени: 39\u00a0→\u00a029\u00a0с',
+      'Норма (ориентир): 44,0\u00a0с — средний; выше среднего — до 37\u00a0с. Бумажная методика, источник не указан',
+      'Раньше в этом блоке: прошлый раз 67\u00a0% (ряд 7, ур. 9)',
+    ]);
+  });
+
   it('leaves out empty lines; no section without an assessment', () => {
     const { rerender } = render(
       <BlockSummary view={{ ...VIEW, assessment: { step: null, goal: null, norms: ['N1'], history: null } }} busy={false} onContinue={vi.fn()} />,

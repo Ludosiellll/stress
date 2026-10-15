@@ -64,12 +64,18 @@ function headers(): string[] {
     .map((th) => th.textContent);
 }
 
-function cells(): string[][] {
+/** The cells as rendered: numbers keep their units with a no-break space (A-R22). */
+function rawCells(): string[][] {
   const table = screen.getByRole('table', { name: 'Результаты диагностики' });
   return within(table)
     .getAllByRole('row')
     .slice(1)
     .map((r) => within(r).getAllByRole('cell').map((td) => td.textContent));
+}
+
+/** The cells with plain spaces, as the tests write them. */
+function cells(): string[][] {
+  return rawCells().map((r) => r.map((text) => text.replaceAll('\u00a0', ' ')));
 }
 
 describe('Done', () => {
@@ -184,6 +190,14 @@ describe('Done', () => {
     expect(headers()).toEqual(['Показатель', 'Результат', 'Ориентир']);
     expect(screen.queryByText(/Индекс:/)).toBeNull();
     expect(screen.queryByText(/Первая диагностика/)).toBeNull();
+  });
+
+  it('a number never breaks from its unit in a comparison cell (A-R22)', () => {
+    render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} comparison={WITH_PREVIOUS} onHome={vi.fn()} />);
+    const rows = rawCells();
+    expect(rows[0]).toEqual(['ПЗМР — медиана времени реакции', '251\u00a0мс', '264\u00a0мс', '−13\u00a0мс, лучше', 'по среднему 262\u00a0мс: средний']);
+    expect(rows[4]?.slice(1)).toEqual(['41,3\u00a0с', '45,0\u00a0с', '−3,7\u00a0с, лучше', 'средний']);
+    expect(rows[2]?.slice(1, 4)).toEqual(['93\u00a0%', '90\u00a0%', '+3\u00a0%, лучше']);
   });
 
   it('only the number columns are right-aligned, not the text ones (A-R12)', () => {

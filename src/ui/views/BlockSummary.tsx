@@ -2,7 +2,7 @@ import type { BlockFlag } from '../../engine/types';
 import { changeText } from '../../modules/describe';
 import type { BlockAssessment } from '../../session/assessment';
 import type { BlockSummaryView } from '../../session/steps';
-import { decimal } from '../format';
+import { decimal, noBreakUnits } from '../format';
 import { fromControl, isEnter, useKeyDown } from '../keys';
 
 export interface BlockSummaryProps {
@@ -63,7 +63,7 @@ export default function BlockSummary({ view, busy, onContinue }: BlockSummaryPro
           <h3>Оценка</h3>
           <ul aria-label="Оценка">
             {assessment.map((line) => (
-              <li key={line}>{line}</li>
+              <li key={line}>{noBreakUnits(line)}</li>
             ))}
           </ul>
         </section>

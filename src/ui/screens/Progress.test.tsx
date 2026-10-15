@@ -177,8 +177,9 @@ describe('Progress edge cases', () => {
     ]);
     const rows = within(table).getAllByRole('row').slice(1);
     expect(rows).toHaveLength(11);
-    const cells = (r: HTMLElement): (string | null)[] => within(r).getAllByRole('cell').map((c) => c.textContent);
-    expect(cells(rows[0] as HTMLElement)).toEqual(['ПЗМР', '1 — начальная (ур. 3,5; формат теста — 14)', '262 мс / 262 мс', 'средний', 'ур. 7 (+3,5)']);
+    const cells = (r: HTMLElement): string[] => within(r).getAllByRole('cell').map((c) => c.textContent);
+    // A number never breaks from its unit (A-R22).
+    expect(cells(rows[0] as HTMLElement)).toEqual(['ПЗМР', '1 — начальная (ур. 3,5; формат теста — 14)', '262\u00a0мс / 262\u00a0мс', 'средний', 'ур. 7 (+3,5)']);
     expect(cells(rows[1] as HTMLElement)).toEqual(['Сложная реакция (СЗМР)', '—', 'ещё не тренировался', '—', '—']);
     // Only the number column is right-aligned; «Ориентир» and «Цель» are text (A-R12).
     const first = within(rows[0] as HTMLElement).getAllByRole('cell');

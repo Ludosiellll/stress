@@ -108,7 +108,8 @@ test('diagnostic run writes results and home shows readiness', async ({ page }) 
   await expect(rows).toHaveCount(12);
   for (const row of await rows.all()) {
     const change = row.locator('td').nth(3);
-    await expect(change).toHaveText(/^(без изменений|[+−][\d,]+( мс| с| %)?, (лучше|хуже))$/);
+    // A unit follows its number after a no-break space (A-R22): \s matches it.
+    await expect(change).toHaveText(/^(без изменений|[+−][\d,]+(\s(мс|с|%))?, (лучше|хуже))$/);
     // A change reads at a glance: never broken over two lines.
     expect(await lineCount(change), await change.innerText()).toBe(1);
   }
@@ -169,7 +170,7 @@ test('free training of rdo shows the assessment and compares with the previous s
   // Every later block, the second session's included, is compared with the reliable blocks before it.
   blocks.forEach((b, i) => {
     const kept = blocks.slice(0, i).some((x) => !x.unreliable);
-    const history = kept ? /^Раньше в этом блоке: прошлый раз \d+ мс \(ур\. [\d,]+\) · лучший \d+ мс/ : /^Первый такой блок/;
+    const history = kept ? /^Раньше в этом блоке: прошлый раз \d+\sмс \(ур\. [\d,]+\) · лучший \d+\sмс/ : /^Первый такой блок/;
     expect(b.lines.at(-1), `block ${String(i + 1)} (session ${String(b.session + 1)})`).toMatch(history);
   });
 });

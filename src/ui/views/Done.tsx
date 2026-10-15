@@ -3,7 +3,7 @@ import { REACTION_MODULE_IDS, type ModuleId, type ReactionModuleId } from '../..
 import { moduleTitles } from '../../modules/registry';
 import { DIAGNOSTIC_ROW_IDS, diagnosticChange, diagnosticNorm, diagnosticValue, type DiagnosticRowId } from '../../session/diagnosticCompare';
 import { signedMs, whole, type BlockSummaryView, type DiagnosticComparison } from '../../session/steps';
-import { decimal } from '../format';
+import { decimal, noBreakUnits } from '../format';
 import { ruDate } from '../progressModel';
 import { DEFERRED_NOTE } from './ReadinessBlock';
 
@@ -116,14 +116,14 @@ function ResultsTable({ d, seriesTotal, comparison }: { d: DiagnosticResults; se
         {DIAGNOSTIC_ROW_IDS.map((id) => (
           <tr key={id}>
             <td>{LABELS[id]}</td>
-            <td className="num">{cellText(d, id, seriesTotal)}</td>
+            <td className="num">{noBreakUnits(cellText(d, id, seriesTotal))}</td>
             {previous !== null && (
               <>
-                <td className="num">{cellText(previous.metrics, id, seriesTotal)}</td>
-                <td className="nowrap">{changeText(id, d, previous.metrics)}</td>
+                <td className="num">{noBreakUnits(cellText(previous.metrics, id, seriesTotal))}</td>
+                <td className="nowrap">{noBreakUnits(changeText(id, d, previous.metrics))}</td>
               </>
             )}
-            <td>{diagnosticNorm(d, id) ?? NONE}</td>
+            <td>{noBreakUnits(diagnosticNorm(d, id) ?? NONE)}</td>
           </tr>
         ))}
       </tbody>

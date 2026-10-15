@@ -450,7 +450,7 @@ test('screens: a training session with pause, wellbeing and done; schulte', asyn
 
   await page.getByRole('button', { name: 'Прогресс' }).click();
   const schulte = page.getByRole('table', { name: 'Оценка по модулям' }).getByRole('row', { name: /^Таблицы Шульте — 5×5/ });
-  await expect(schulte.getByRole('cell').filter({ hasText: /^\d+,\d с \/ \d+,\d с$/ })).toHaveCount(1);
+  await expect(schulte.getByRole('cell').filter({ hasText: /^\d+,\d\sс \/ \d+,\d\sс$/ })).toHaveCount(1);
   // Trained and untrained modules side by side: the right-aligned column («282 мс / 282 мс», «ещё не
   // тренировался») keeps each cell on one line.
   const cells = page.getByRole('table', { name: 'Оценка по модулям' }).locator('tbody td.num');
