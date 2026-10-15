@@ -1,5 +1,5 @@
 import { existsSync, statSync } from 'node:fs';
-import type { Page } from '@playwright/test';
+import type { JSHandle, Page } from '@playwright/test';
 import { chooseExportFile, exportedFile, openApp, pageDate, playSession, setPressDelay } from './bot';
 import { E2E_URL, expect, freshPage, test } from './fixtures';
 
@@ -112,11 +112,14 @@ async function installLook(page: Page): Promise<void> {
   });
 }
 
+/** The lighter flicker shade: FLICKER_BACKGROUND (#3a3a3a) of src/runtime/canvasRenderer.ts. */
 const FLICKER_SHADE = 0x3a3a3a;
 
 /** Polls `fn(arg)` in the page every frame until it returns a value (not null) and returns that value. */
-async function waitValue<T>(page: Page, fn: (arg: number | null) => T | null, arg: number | null, timeout: number): Promise<T> {
-  const value = await (await page.waitForFunction(fn, arg, { polling: 'raf', timeout })).jsonValue();
+async function waitValue<T, A>(page: Page, fn: (arg: A) => T | null, arg: A, timeout: number): Promise<T> {
+  // Playwright types the page function's argument as Unboxed<A>, which equals A for the plain values passed here.
+  const poll = page.waitForFunction.bind(page) as (f: typeof fn, a: A, o: { polling: 'raf'; timeout: number }) => Promise<JSHandle<T | null>>;
+  const value = await (await poll(fn, arg, { polling: 'raf', timeout })).jsonValue();
   // waitForFunction resolves on a truthy value only.
   if (value === null) throw new Error('waitValue: resolved without a value');
   return value;
@@ -131,17 +134,18 @@ async function shootNoisy(page: Page, name: string): Promise<void> {
   const ok = (l: Look | null): l is Look => l !== null && l.zone === FLICKER_SHADE && l.center !== FLICKER_SHADE;
   for (let attempt = 0; attempt < 8; attempt++) {
     const seen = await page.evaluate(() => window.__bot?.stimuli.length ?? 0);
+    // The page function cannot see FLICKER_SHADE: it is passed in with the stimulus count.
     const before = await waitValue(
       page,
-      (n) => {
+      ({ n, shade }) => {
         const s = window.__bot?.stimuli ?? [];
         const last = s.at(-1);
-        if (n === null || s.length <= n || last === undefined || last.cond !== 'noisy' || last.answerAt === null) return null;
+        if (s.length <= n || last === undefined || last.cond !== 'noisy' || last.answerAt === null) return null;
         if (performance.now() >= last.answerAt) return null;
         const l = window.__look?.('.reaction canvas') ?? null;
-        return l !== null && l.zone === 0x3a3a3a && l.center !== 0x3a3a3a ? { look: l, index: s.length } : null;
+        return l !== null && l.zone === shade && l.center !== shade ? { look: l, index: s.length } : null;
       },
-      seen,
+      { n: seen, shade: FLICKER_SHADE },
       60_000,
     );
     await shot(page, name);
@@ -178,34 +182,66 @@ async function shootCue(page: Page, name: string): Promise<void> {
   throw new Error(`${name}: no cue stayed alone on screen through the screenshot`);
 }
 
+/** Trials a memory shot may use: the e2e blocks have 3 (max(3, round(n·scale))). */
+const MEMORY_SHOT_ATTEMPTS = 3;
+
 /**
- * Waits for the next memory canvas picture that is not blank and differs from `previous` (null: any picture);
- * with a `name`, shoots it and checks it was still on screen afterwards. Returns its hash.
+ * Shoots a memory trial's pictures: with `fixation`, the cross (500 ms on screen), and the first row picture (a
+ * digit, the grid with a lit cell, or the card) as `row`. A shot counts when the canvas shows the same picture
+ * after the screenshot as before it; otherwise the trial is answered and the picture still missing is shot in the
+ * next trial, at most MEMORY_SHOT_ATTEMPTS trials (as shootNoisy and shootCue retry). The cross is the first
+ * picture of every trial and the same picture each time, so a row picture is any non-blank one that differs from
+ * it. Returns with the trial of the last shot still to be answered.
  */
-async function shootMemoryFrame(page: Page, name: string | null, previous: number | null): Promise<number> {
-  const before = await waitValue(
-    page,
-    (prev) => {
-      const l = window.__look?.('.memory canvas') ?? null;
-      return l !== null && l.ink > 0 && l.hash !== prev ? l : null;
-    },
-    previous,
-    30_000,
-  );
-  if (name === null) return before.hash;
-  await shot(page, name);
-  const after = await page.evaluate(() => window.__look?.('.memory canvas') ?? null);
-  expect(after?.hash, `${name}: the picture was still on screen when the screenshot was taken`).toBe(before.hash);
-  return before.hash;
+async function shootMemoryTrial(page: Page, names: { fixation?: string; row: string }): Promise<void> {
+  const look = (): Promise<Look | null> => page.evaluate(() => window.__look?.('.memory canvas') ?? null);
+  const held = async (name: string, before: Look): Promise<boolean> => {
+    await shot(page, name);
+    return (await look())?.hash === before.hash;
+  };
+  let cross: number | null = null;
+  let crossShot = names.fixation === undefined;
+  for (let attempt = 0; attempt < MEMORY_SHOT_ATTEMPTS; attempt++) {
+    const first: Look = await waitValue(
+      page,
+      (known: number | null) => {
+        const l = window.__look?.('.memory canvas') ?? null;
+        return l !== null && l.ink > 0 && (known === null || l.hash === known) ? l : null;
+      },
+      cross,
+      30_000,
+    );
+    cross = first.hash;
+    if (!crossShot && names.fixation !== undefined) {
+      crossShot = await held(names.fixation, first);
+      if (!crossShot) {
+        await answerMemoryTrial(page, null);
+        continue;
+      }
+    }
+    const row: Look = await waitValue(
+      page,
+      (c: number) => {
+        const l = window.__look?.('.memory canvas') ?? null;
+        return l !== null && l.ink > 0 && l.hash !== c ? l : null;
+      },
+      cross,
+      30_000,
+    );
+    if (await held(names.row, row)) return;
+    await answerMemoryTrial(page, null);
+  }
+  throw new Error(`${names.row}: the memory picture changed during the screenshot in ${String(MEMORY_SHOT_ATTEMPTS)} trials`);
 }
 
 /**
- * Answers the memory trial now waiting for its answer with the exposed row (digits typed, cells clicked),
- * shoots the filled answer screen before sending it, then waits for the screen to move on.
+ * Answers the memory trial now shown or waiting for its answer with the exposed row (digits typed, cells
+ * clicked); with a `name`, shoots the filled answer screen before sending it. Then waits for the screen to move on.
  */
-async function answerMemoryTrial(page: Page, name: string): Promise<void> {
+async function answerMemoryTrial(page: Page, name: string | null): Promise<void> {
   const response = page.locator('.memory-response[data-e2e-answer]');
-  await expect(response).toBeVisible();
+  // A row of up to 4 items at 1000 + 250 ms each after the 500 ms cross may still be on screen.
+  await expect(response).toBeVisible({ timeout: 30_000 });
   const items = ((await response.getAttribute('data-e2e-answer')) ?? '').split(',');
   const mode = await response.getAttribute('data-mode');
   const counter = await response.locator('.muted').innerText();
@@ -224,7 +260,7 @@ async function answerMemoryTrial(page: Page, name: string): Promise<void> {
     await page.keyboard.type(items.join(''));
     await expect(page.getByLabel('Ответ')).toHaveText(items.join(''));
   }
-  await shot(page, name);
+  if (name !== null) await shot(page, name);
   await page.keyboard.press('Enter');
   await page.waitForFunction((c) => document.querySelector('.memory-response .muted')?.textContent !== c, counter);
 }
@@ -286,8 +322,10 @@ test('screens: home, settings, free, a diagnostic with every block view, progres
 
   // The W2 segments at their diagnostic levels: Помехоустойчивость L 8 (7 figures, flicker; window 456 ms),
   // Струп L 8 (3 colours, key legend; 1099 ms), Переключение правил L 5 (cue 475 ms ahead; 1369 ms).
+  // Presses at 350 ms keep a 106 ms margin to the 456 ms window under a loaded runner; shootNoisy retries a
+  // trial whose stimulus went before the shot was done.
   await untilInstruction(page, 'Помехоустойчивость');
-  await setPressDelay(page, 400);
+  await setPressDelay(page, 350);
   await begin(page);
   await shootNoisy(page, 'reaction-pomeh-noisy');
   await setPressDelay(page, 280);
@@ -309,8 +347,7 @@ test('screens: home, settings, free, a diagnostic with every block view, progres
   // The span protocol: digits only.
   await untilInstruction(page, 'Память');
   await begin(page);
-  const fixation = await shootMemoryFrame(page, 'memory-fixation', null);
-  await shootMemoryFrame(page, 'memory-digit', fixation);
+  await shootMemoryTrial(page, { fixation: 'memory-fixation', row: 'memory-digit' });
   await answerMemoryTrial(page, 'memory-answer-digits');
 
   await playSession(page, {
@@ -391,14 +428,12 @@ test('screens: the overload phase on Home; memory grid, card and grid answer', a
   await page.getByRole('button', { name: 'Память' }).click();
   await untilInstruction(page, 'Память', 'Клетки загораются');
   await begin(page);
-  const fixation = await shootMemoryFrame(page, null, null);
-  await shootMemoryFrame(page, 'memory-grid', fixation);
+  await shootMemoryTrial(page, { row: 'memory-grid' });
   await answerMemoryTrial(page, 'memory-answer-grid');
 
   await untilInstruction(page, 'Память', 'На карточке');
   await begin(page);
-  const cardFixation = await shootMemoryFrame(page, null, null);
-  await shootMemoryFrame(page, 'memory-card', cardFixation);
+  await shootMemoryTrial(page, { row: 'memory-card' });
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Завершить сессию' }).click();
   await expect(page.getByRole('button', { name: 'Начать тренировку' })).toBeVisible();
