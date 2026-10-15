@@ -86,7 +86,7 @@ export function normLine(sample: NormSample): string {
   const table = NORMS[sample.id];
   const grade = gradeByBands(sample.value, table);
   const metric = table.metric === null ? '' : `, ${table.metric}`;
-  const next = grade.toNext === null ? '' : `; ${grade.nextLabel ?? ''} — ${cutText(grade.toNext, table)}`;
+  const next = grade.band === 5 ? '' : `; ${grade.nextLabel} — ${cutText(grade.toNext, table)}`;
   return `Норма (ориентир)${metric}: ${normValue(sample.value, table.unit)} — ${grade.label}${next}. ${table.note}`;
 }
 

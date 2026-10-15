@@ -155,6 +155,15 @@ describe('gradeByBands', () => {
     }
   });
 
+  it('a band below the top always has the next band and its bound (the type says so)', () => {
+    const g = gradeByBands(44, NORMS.gorbovSimple);
+    if (g.band === 5) throw new Error('44 s is not the top band');
+    // Typed as string and NormCut below band 5: no null to guard.
+    const next: string = g.nextLabel;
+    const at: number = g.toNext.at;
+    expect([next, at]).toEqual(['выше среднего', 37]);
+  });
+
   it('cutText writes a fractional bound with a decimal comma', () => {
     expect(cutText({ at: 29.5, inclusive: true }, NORMS.gorbovSimple)).toBe('до 29,5 с');
     expect(cutText({ at: 7.5, inclusive: false }, NORMS.memorySpan)).toBe('больше 7,5');

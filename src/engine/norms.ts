@@ -95,13 +95,10 @@ export const BAND_LABELS = Object.freeze(['низкий', 'ниже средне
 
 export type Band = 1 | 2 | 3 | 4 | 5;
 
-export interface Grade {
-  band: Band;
-  label: string;
-  nextLabel: string | null;
-  /** The bound of the next better band (not the distance to it); null in band 5. */
-  toNext: NormCut | null;
-}
+/** Band 5 has no better band; below it, the next band and its bound (not the distance to it). */
+export type Grade =
+  | { band: 5; label: string; nextLabel: null; toNext: null }
+  | { band: Exclude<Band, 5>; label: string; nextLabel: string; toNext: NormCut };
 
 function passes(value: number, c: NormCut, better: NormTable['better']): boolean {
   if (better === 'lower') return c.inclusive ? value <= c.at : value < c.at;
