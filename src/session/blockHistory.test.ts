@@ -79,7 +79,8 @@ describe('keyMetric', () => {
 
   it('reads every module of the catalogue and never throws on damaged fields', () => {
     expect(keyMetric({ module: 'szmr', summaryJson: '{"meanRt":401.6}' })).toBe(402);
-    expect(keyMetric({ module: 'gonogo', summaryJson: '{"meanRt":0.4}' })).toBe(0);
+    // 0,4 ms shows as 0 ms: out of range (A-R16).
+    expect(keyMetric({ module: 'gonogo', summaryJson: '{"meanRt":0.4}' })).toBeNull();
     expect(keyMetric({ module: 'rdo', summaryJson: '{"meanAbsErrorMs":null}' })).toBeNull();
     expect(keyMetric({ module: 'schulte', summaryJson: '{"timeMs":31960}' })).toBe(32);
     expect(keyMetric({ module: 'stroop', summaryJson: '{"conditions":{"congruent":{"medianRt":500}}}' })).toBeNull();
@@ -91,6 +92,30 @@ describe('keyMetric', () => {
     expect(keyMetric({ module: 'numseries', summaryJson: '{"correct":7,"total":0}' })).toBeNull();
     expect(keyMetric({ module: 'numseries', summaryJson: '{"correct":7}' })).toBeNull();
     expect(keyMetric({ module: 'gorbov', summaryJson: '{"timeMs":1e999}' })).toBeNull();
+  });
+
+  it('rejects out-of-range values of damaged or imported rows (A-R16)', () => {
+    for (const bad of ['{"meanRt":0}', '{"meanRt":-5}']) {
+      for (const module of ['pzmr', 'szmr', 'gonogo'] as const) expect(keyMetric({ module, summaryJson: bad })).toBeNull();
+    }
+    expect(keyMetric({ module: 'rdo', summaryJson: '{"meanAbsErrorMs":-1}' })).toBeNull();
+    expect(keyMetric({ module: 'rdo', summaryJson: '{"meanAbsErrorMs":0}' })).toBe(0);
+    expect(keyMetric({ module: 'gorbov', summaryJson: '{"timeMs":-5}' })).toBeNull();
+    expect(keyMetric({ module: 'schulte', summaryJson: '{"timeMs":0}' })).toBeNull();
+    const cond = (f: number, s: number): string => JSON.stringify({ conditions: { congruent: { medianRt: f }, incongruent: { medianRt: s } } });
+    expect(keyMetric({ module: 'stroop', summaryJson: cond(0, 600) })).toBeNull();
+    expect(keyMetric({ module: 'stroop', summaryJson: cond(500, -1) })).toBeNull();
+    expect(keyMetric({ module: 'memory', summaryJson: '{"exact":9,"answers":[1]}' })).toBeNull();
+    expect(keyMetric({ module: 'memory', summaryJson: '{"exact":-1,"answers":[1,2]}' })).toBeNull();
+    expect(keyMetric({ module: 'memory', summaryJson: '{"exact":2,"answers":[1,2]}' })).toBe(100);
+    expect(keyMetric({ module: 'numseries', summaryJson: '{"correct":11,"total":10}' })).toBeNull();
+    expect(keyMetric({ module: 'numseries', summaryJson: '{"correct":-1,"total":10}' })).toBeNull();
+    expect(keyMetric({ module: 'numseries', summaryJson: '{"correct":0,"total":10}' })).toBe(0);
+  });
+
+  it('a stored 0 ms is never «лучший»: the row stays out of the history (A-R16)', () => {
+    const blocks = [row({ module: 'pzmr', summaryJson: '{"meanRt":0}' }), row({ module: 'pzmr', summaryJson: '{"meanRt":280}' })];
+    expect(buildBlockHistory(blocks, [{ id: 't', kind: 'training' }]).get('pzmr')?.map((e) => e.value)).toEqual([280]);
   });
 
   it('has a key metric description for every module', () => {
@@ -141,6 +166,19 @@ describe('normSamples', () => {
       { id: 'memorySpan', value: 8 },
     ]);
     expect(normSamples(memory({ protocol: 'span', mode: 'digits', exact: 0, span: null, answers: answers(2) }))).toEqual([]);
+  });
+
+  it('out-of-range values get no norm: a 0 ms mean never grades «высокий» (A-R16)', () => {
+    expect(normSamples(row({ module: 'pzmr', summaryJson: '{"meanRt":0,"sdRt":-3}' }))).toEqual([]);
+    expect(normSamples(row({ module: 'pzmr', summaryJson: '{"meanRt":262,"sdRt":0}' }))).toEqual([
+      { id: 'pzmrMean', value: 262 },
+      { id: 'pzmrSd', value: 0 },
+    ]);
+    expect(normSamples(row({ module: 'szmr', lBefore: 0, summaryJson: '{"meanRt":-1}' }))).toEqual([]);
+    expect(normSamples(table('black_up', 0))).toEqual([]);
+    expect(normSamples(memory({ mode: 'digits', length: 7, exact: 9, answers: answers(6) }))).toEqual([]);
+    expect(normSamples(memory({ mode: 'digits', length: 0, exact: 6, answers: answers(6) }))).toEqual([]);
+    expect(normSamples(memory({ protocol: 'span', mode: 'digits', exact: 9, span: -2, answers: answers(14) }))).toEqual([]);
   });
 
   it('РДО and Струп have no norm', () => {

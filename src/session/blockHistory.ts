@@ -97,6 +97,22 @@ function num(o: Json | null, key: string): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
+/**
+ * A field rounded as shown, kept only above 0 (from 0 with `zeroOk`): a damaged or imported row with a 0 ms time would
+ * otherwise stay «лучший» for ever (A-R16).
+ */
+function shown(o: Json | null, key: string, round: (x: number) => number, zeroOk: boolean): number | null {
+  const v = num(o, key);
+  if (v === null) return null;
+  const r = round(v);
+  return r > 0 || (zeroOk && r === 0) ? r : null;
+}
+
+/** A whole number above 0 as shown (a time in ms, a row length). */
+const positiveWhole = (o: Json | null, key: string): number | null => shown(o, key, whole, false);
+/** A whole number from 0 (an error by modulus, a SD, a span). */
+const wholeFromZero = (o: Json | null, key: string): number | null => shown(o, key, whole, true);
+
 /** A string field that is one of `values`; null otherwise. */
 function oneOf<T extends string>(o: Json | null, key: string, values: readonly T[]): T | null {
   const v = o?.[key];
@@ -108,10 +124,9 @@ function gorbovTask(summary: Json | null, paramsJson: string): (typeof GORBOV_TA
   return oneOf(summary, 'task', GORBOV_TASKS) ?? oneOf(parseObject(paramsJson), 'task', GORBOV_TASKS);
 }
 
-/** A finished table's time in seconds, rounded to 0,1; null: not finished (or unreadable). */
+/** A finished table's time in seconds, rounded to 0,1 and above 0; null: not finished (or unreadable). */
 function tableSeconds(summary: Json | null): number | null {
-  const ms = num(summary, 'timeMs');
-  return ms === null ? null : round1(ms / 1000);
+  return shown(summary, 'timeMs', (ms) => round1(ms / 1000), false);
 }
 
 function variantFrom(module: ModuleId, summary: Json | null, paramsJson: string): VariantKey | null {
@@ -137,28 +152,24 @@ function variantFrom(module: ModuleId, summary: Json | null, paramsJson: string)
 function costOf(module: keyof typeof COND_PAIRS, summary: Json | null): number | null {
   const pair = COND_PAIRS[module];
   const conditions = objectField(summary, 'conditions');
-  const fast = num(objectField(conditions, pair.fast), 'medianRt');
-  const slow = num(objectField(conditions, pair.slow), 'medianRt');
+  const fast = positiveWhole(objectField(conditions, pair.fast), 'medianRt');
+  const slow = positiveWhole(objectField(conditions, pair.slow), 'medianRt');
   return fast === null || slow === null ? null : displayedCost(fast, slow);
 }
 
-/** 100·part/total rounded to a whole percent; null without a positive total. */
+/** 100·part/total rounded to a whole percent; null without a positive total or with a part outside [0, total]. */
 function percent(part: number | null, total: number | null): number | null {
-  return part === null || total === null || total <= 0 ? null : whole((100 * part) / total);
+  return part === null || total === null || total <= 0 || part < 0 || part > total ? null : whole((100 * part) / total);
 }
 
 function metricFrom(module: ModuleId, summary: Json | null): number | null {
   switch (module) {
     case 'pzmr':
     case 'szmr':
-    case 'gonogo': {
-      const v = num(summary, 'meanRt');
-      return v === null ? null : whole(v);
-    }
-    case 'rdo': {
-      const v = num(summary, 'meanAbsErrorMs');
-      return v === null ? null : whole(v);
-    }
+    case 'gonogo':
+      return positiveWhole(summary, 'meanRt');
+    case 'rdo':
+      return wholeFromZero(summary, 'meanAbsErrorMs');
     case 'gorbov':
     case 'schulte':
       return tableSeconds(summary);
@@ -178,32 +189,32 @@ function metricFrom(module: ModuleId, summary: Json | null): number | null {
 /** Memory: the span protocol's span; a training block's row length in digits with all 6 answers and ≥ 4 exact. */
 function memoryNorms(summary: Json | null): NormSample[] {
   if (summary?.['protocol'] === 'span') {
-    const span = num(summary, 'span');
-    return span === null ? [] : [{ id: 'memorySpan', value: whole(span) }];
+    const span = wholeFromZero(summary, 'span');
+    return span === null ? [] : [{ id: 'memorySpan', value: span }];
   }
   const answers = summary?.['answers'];
   const exact = num(summary, 'exact');
-  const length = num(summary, 'length');
+  const length = positiveWhole(summary, 'length');
   const full = Array.isArray(answers) && answers.length === MEMORY_TRIALS;
-  if (oneOf(summary, 'mode', MEMORY_MODES) !== 'digits' || !full || exact === null || exact < MEMORY_SPAN_MIN_EXACT || length === null) {
+  if (oneOf(summary, 'mode', MEMORY_MODES) !== 'digits' || !full || exact === null || exact < MEMORY_SPAN_MIN_EXACT || exact > MEMORY_TRIALS) {
     return [];
   }
-  return [{ id: 'memorySpan', value: whole(length) }];
+  return length === null ? [] : [{ id: 'memorySpan', value: length }];
 }
 
 function normsFrom(module: ModuleId, lBefore: number, summary: Json | null, paramsJson: string): NormSample[] {
   switch (module) {
     case 'pzmr': {
-      const mean = num(summary, 'meanRt');
-      const sd = num(summary, 'sdRt');
+      const mean = positiveWhole(summary, 'meanRt');
+      const sd = wholeFromZero(summary, 'sdRt');
       const samples: NormSample[] = [];
-      if (mean !== null) samples.push({ id: 'pzmrMean', value: whole(mean) });
-      if (sd !== null) samples.push({ id: 'pzmrSd', value: whole(sd) });
+      if (mean !== null) samples.push({ id: 'pzmrMean', value: mean });
+      if (sd !== null) samples.push({ id: 'pzmrSd', value: sd });
       return samples;
     }
     case 'szmr': {
-      const mean = num(summary, 'meanRt');
-      return mean !== null && lBefore < SZMR_TWO_CHOICE_BELOW_L ? [{ id: 'szmrMean', value: whole(mean) }] : [];
+      const mean = positiveWhole(summary, 'meanRt');
+      return mean !== null && lBefore < SZMR_TWO_CHOICE_BELOW_L ? [{ id: 'szmrMean', value: mean }] : [];
     }
     case 'gorbov': {
       const task = gorbovTask(summary, paramsJson);
