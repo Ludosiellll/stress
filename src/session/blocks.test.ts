@@ -39,7 +39,7 @@ import {
   type PlanContext,
 } from './blocks';
 import { logicItemRows } from './rowsBuild';
-import { MEMORY_SPAN_INSTRUCTION, OVERLOAD_PREFIX, type StepOf } from './steps';
+import { MEMORY_SPAN_INSTRUCTION, OVERLOAD_PREFIX, OVERLOAD_SOUND_PREFIX, type StepOf } from './steps';
 
 const counts = {} as Record<Outcome, number>;
 const summary = (over: Partial<ReactionSummary>): ReactionSummary => ({
@@ -370,12 +370,26 @@ describe('overload blocks', () => {
     expect(memory).toEqual(buildBlock(planBlock(seg('memory'), 9, 0, ctx), 3, 'keyboard', new Map()));
   });
 
-  it('the instruction of an overload block starts with OVERLOAD_PREFIX', () => {
+  it('the instruction of an overload table or memory block starts with OVERLOAD_PREFIX', () => {
     expect(OVERLOAD_PREFIX).toBe('Блок с перегрузкой: уровень на 3 выше обычного. ');
-    for (const module of ['pzmr', 'schulte', 'memory'] as const) {
+    for (const module of ['gorbov', 'schulte', 'memory'] as const) {
       const normal = blockInstruction(planBlock(seg(module), 5, 0, ctx), 'keyboard');
       const over = blockInstruction(planBlock(seg(module, 'finisher'), 5, 0, ctx), 'keyboard');
       expect(over).toEqual({ text: OVERLOAD_PREFIX + normal.text, keysHint: normal.keysHint });
+    }
+  });
+
+  it('the instruction of an overload reaction block announces the sound it plays (M1)', () => {
+    expect(OVERLOAD_SOUND_PREFIX).toBe('Блок с перегрузкой: уровень на 3 выше обычного, со звуковыми помехами. Надень наушники. ');
+    for (const module of REACTION_MODULE_IDS) {
+      for (const overload of ['finisher', 'mix'] as const) {
+        const plan = planBlock(seg(module, overload), 5, 1, ctx);
+        if (plan.kind !== 'reaction') throw new Error('a reaction plan');
+        const normal = blockInstruction({ ...plan, overload: false }, 'keyboard');
+        expect(blockInstruction(plan, 'keyboard')).toEqual({ text: OVERLOAD_SOUND_PREFIX + normal.text, keysHint: normal.keysHint });
+        const built = buildBlock(plan, 3, 'keyboard', new Map());
+        expect(built.step.kind === 'reaction_block' && built.step.layers.audio).toBeTruthy();
+      }
     }
   });
 });

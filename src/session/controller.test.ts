@@ -29,7 +29,7 @@ import {
   type Respond,
 } from '../testing/sessionPlayers';
 import { SessionController, type SessionStartOptions } from './controller';
-import { AUDIO_NOT_PLAYED, MEMORY_SPAN_INSTRUCTION, OVERLOAD_PREFIX, type BlockSummaryView, type Step, type StepOf } from './steps';
+import { AUDIO_NOT_PLAYED, MEMORY_SPAN_INSTRUCTION, OVERLOAD_SOUND_PREFIX, type BlockSummaryView, type Step, type StepOf } from './steps';
 
 const MIN = 60_000;
 const DAY = 86_400_000;
@@ -1001,9 +1001,9 @@ describe('SessionController — overload', () => {
       await playReaction(h);
       await h.c.continueAfterSummary();
     }
-    expect(texts[0]?.startsWith(OVERLOAD_PREFIX)).toBe(false);
-    expect(texts[1]).toMatch(new RegExp('^' + OVERLOAD_PREFIX));
-    expect(texts[2]?.startsWith(OVERLOAD_PREFIX)).toBe(false);
+    expect(texts[0]?.startsWith(OVERLOAD_SOUND_PREFIX)).toBe(false);
+    expect(texts[1]?.startsWith(OVERLOAD_SOUND_PREFIX)).toBe(true);
+    expect(texts[2]?.startsWith(OVERLOAD_SOUND_PREFIX)).toBe(false);
   });
 });
 

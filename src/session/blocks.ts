@@ -45,6 +45,7 @@ import { generateSchulteTable, schulteParams } from '../modules/tables/schulte';
 import {
   MEMORY_SPAN_INSTRUCTION,
   OVERLOAD_PREFIX,
+  OVERLOAD_SOUND_PREFIX,
   SERIES_INSTRUCTION_TRAINING,
   SERIES_KEYS_HINT,
   seriesDiagnosticInstruction,
@@ -192,10 +193,14 @@ export function planBlock(segment: Segment, segmentL: number, blockIndex: number
   return { kind: 'numseries', diagnostic: false, count: scaledCount(SERIES_BLOCK_ITEMS, ctx.scale), totalLimitMs: null };
 }
 
-/** The instruction before a block; an overload block's text starts with OVERLOAD_PREFIX. */
+/**
+ * The instruction before a block. An overload block's text starts with OVERLOAD_PREFIX, or with
+ * OVERLOAD_SOUND_PREFIX in a reaction block, which plays the finisher sound (overloadStressors).
+ */
 export function blockInstruction(plan: BlockPlan, layout: LayoutId): { text: string; keysHint: string } {
   const { text, keysHint } = plainInstruction(plan, layout);
-  return { text: plan.kind !== 'numseries' && plan.overload ? OVERLOAD_PREFIX + text : text, keysHint };
+  if (plan.kind === 'numseries' || !plan.overload) return { text, keysHint };
+  return { text: (plan.kind === 'reaction' ? OVERLOAD_SOUND_PREFIX : OVERLOAD_PREFIX) + text, keysHint };
 }
 
 function plainInstruction(plan: BlockPlan, layout: LayoutId): { text: string; keysHint: string } {

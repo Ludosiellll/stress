@@ -93,8 +93,10 @@ export interface SeriesAnswer {
   timeMs: number;
 }
 
-/** Opens the instruction of an overload block (finisher, plateau mix). */
+/** Opens the instruction of an overload table or memory block (finisher, plateau mix). */
 export const OVERLOAD_PREFIX = 'Блок с перегрузкой: уровень на 3 выше обычного. ';
+/** Opens the instruction of an overload reaction block: it plays the finisher sound on every trial (M1). */
+export const OVERLOAD_SOUND_PREFIX = 'Блок с перегрузкой: уровень на 3 выше обычного, со звуковыми помехами. Надень наушники. ';
 export const UNRELIABLE_REPLAY_NOTICE = 'Замер ненадёжен (пропуски кадров). Блок будет повторён.';
 /** Summary line of a block that had sound which did not play (no device, a blocked context, volume 0). */
 export const AUDIO_NOT_PLAYED = 'Звук не воспроизводился: проверь устройство вывода и громкость помех в настройках.';

@@ -31,7 +31,9 @@ const BOM = '﻿';
 const SOUND_CHECK: AudioStressorParams = { layers: ['hum', 'beeps'], gain: 1 };
 const SOUND_CHECK_SEED = 1;
 const SOUND_CHECK_MS = 2000;
-const SOUND_HINT = 'Звуковые помехи включаются в «Помехоустойчивости» на высоких уровнях и в финишере. Лучше слушать в наушниках.';
+const SOUND_HINT =
+  'Звуковые помехи включаются в «Помехоустойчивости» на высоких уровнях, а также в финишере и в блоках перегрузки ' +
+  'модулей реакции. Лучше слушать в наушниках.';
 const SOUND_UNAVAILABLE = 'Звук недоступен на этом компьютере';
 const SOUND_SILENT = 'Звук не воспроизводился';
 const SOUND_MUTED = 'Громкость помех — 0: звук выключен.';

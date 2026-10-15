@@ -354,7 +354,12 @@ describe('Settings sound', () => {
     await renderSettings();
     expect(screen.getByRole<HTMLInputElement>('slider', { name: 'Громкость помех' }).value).toBe('60');
     expect(screen.getByText('60 %')).toBeTruthy();
-    expect(screen.getByText('Звуковые помехи включаются в «Помехоустойчивости» на высоких уровнях и в финишере. Лучше слушать в наушниках.')).toBeTruthy();
+    expect(
+      screen.getByText(
+        'Звуковые помехи включаются в «Помехоустойчивости» на высоких уровнях, а также в финишере и в блоках перегрузки ' +
+          'модулей реакции. Лучше слушать в наушниках.',
+      ),
+    ).toBeTruthy();
   });
 
   it('the slider saves stressVolume in steps of 5 and sets the output volume', async () => {
