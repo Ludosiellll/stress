@@ -278,3 +278,45 @@ export function browserAudioOut(w: Window): AudioOut {
   const Ctor = (w as Partial<Pick<typeof globalThis, 'AudioContext'>>).AudioContext;
   return createAudioOut(Ctor === undefined ? null : (): AudioContextLike => new Ctor());
 }
+
+/** A StressorHandle whose calls never throw (prepareQuietly). */
+export type QuietHandle = Omit<StressorHandle, 'playing'>;
+
+/**
+ * The sound, or null when it cannot be built (e.g. the buffer is refused). Every call on the handle is guarded too
+ * (W2-R22): a start that throws (createBufferSource, createGain, connect) counts as not played, and a failing switch
+ * or stop changes nothing else. Sound problems never stop a block or the sound check (M3); they just run silently.
+ */
+export function prepareQuietly(audio: AudioOut, params: AudioStressorParams, seed: number): QuietHandle | null {
+  let h: StressorHandle | null;
+  try {
+    h = audio.prepare(params, seed);
+  } catch {
+    return null;
+  }
+  if (h === null) return null;
+  const sound = h;
+  return {
+    start(offsetS) {
+      try {
+        return sound.start(offsetS);
+      } catch {
+        return false;
+      }
+    },
+    setActive(on) {
+      try {
+        sound.setActive(on);
+      } catch {
+        // The loop keeps its last gain; the trial goes on.
+      }
+    },
+    stop() {
+      try {
+        sound.stop();
+      } catch {
+        // Nothing left that could still sound.
+      }
+    },
+  };
+}

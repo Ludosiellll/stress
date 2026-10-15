@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AudioStressorParams } from '../../engine/audio/stressors';
 import { renderStressor } from '../../engine/audio/synth';
 import { FakeAudioContext, type FakeAudioOptions } from '../../testing/fakeAudio';
-import { IDLE_SUSPEND_MS, SUSPEND_WAIT_MS, browserAudioOut, createAudioOut } from './audioOut';
+import { IDLE_SUSPEND_MS, SUSPEND_WAIT_MS, browserAudioOut, createAudioOut, prepareQuietly, type AudioOut, type StressorHandle } from './audioOut';
 
 const HUM: AudioStressorParams = { layers: ['hum'], gain: 0.5 };
 
@@ -462,6 +462,43 @@ describe('createAudioOut: a hold keeps the context awake (W2-R39)', () => {
     const again = out.unlock();
     await vi.advanceTimersByTimeAsync(0);
     await expect(again).resolves.toBeUndefined();
+  });
+});
+
+describe('prepareQuietly (W2-R22, M3)', () => {
+  const fail = (what: string) => () => {
+    throw new Error(what);
+  };
+  const outWith = (prepare: AudioOut['prepare']): AudioOut => ({
+    available: true,
+    unlock: () => Promise.resolve(),
+    hold: () => () => undefined,
+    setVolume: () => undefined,
+    prepare,
+  });
+
+  it('null when prepare throws or gives nothing', () => {
+    expect(prepareQuietly(outWith(fail('buffer refused')), HUM, 1)).toBeNull();
+    expect(prepareQuietly(outWith(() => null), HUM, 1)).toBeNull();
+  });
+
+  it('passes calls through, and a call that throws changes nothing else: start counts as not played', () => {
+    const start = vi.fn<StressorHandle['start']>(() => true);
+    const setActive = vi.fn<StressorHandle['setActive']>();
+    const stop = vi.fn<StressorHandle['stop']>();
+    const quiet = prepareQuietly(outWith(() => ({ playing: false, start, setActive, stop })), HUM, 7);
+    expect(quiet?.start(2)).toBe(true);
+    quiet?.setActive(true);
+    quiet?.stop();
+    expect(start).toHaveBeenCalledWith(2);
+    expect(setActive).toHaveBeenCalledWith(true);
+    expect(stop).toHaveBeenCalledTimes(1);
+
+    const broken: StressorHandle = { playing: false, start: fail('start'), setActive: fail('setActive'), stop: fail('stop') };
+    const guarded = prepareQuietly(outWith(() => broken), HUM, 7);
+    expect(guarded?.start(0)).toBe(false);
+    expect(() => guarded?.setActive(true)).not.toThrow();
+    expect(() => guarded?.stop()).not.toThrow();
   });
 });
 

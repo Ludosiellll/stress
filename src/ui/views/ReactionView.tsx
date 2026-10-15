@@ -1,8 +1,8 @@
 import { useEffect, useEffectEvent, useRef } from 'react';
-import { STRESSOR_LOOP_S, type AudioStressorParams } from '../../engine/audio/stressors';
+import { STRESSOR_LOOP_S } from '../../engine/audio/stressors';
 import { resolveBlock } from '../../engine/reaction/resolve';
 import type { BlockTimeline } from '../../engine/reaction/types';
-import type { AudioOut, StressorHandle } from '../../runtime/audio/audioOut';
+import { prepareQuietly } from '../../runtime/audio/audioOut';
 import { createCanvasRenderer, type CanvasRenderer } from '../../runtime/canvasRenderer';
 import { attachFocusGuard } from '../../runtime/focusGuard';
 import { browserFrameClock } from '../../runtime/frameClock';
@@ -29,45 +29,6 @@ function hideQuietly(renderer: StimulusRenderer): void {
   } catch {
     // The canvas is already failing; the error being reported is the first one.
   }
-}
-
-/**
- * The block's sound, or null when it cannot be built (e.g. the buffer is refused). Every call on the handle is
- * guarded too (W2-R22): a start that throws (createBufferSource, createGain, connect) counts as not played, and a
- * failing switch or stop leaves the block running. Sound problems never stop a block; it just runs silently.
- */
-function prepareQuietly(audio: AudioOut, params: AudioStressorParams, seed: number): Omit<StressorHandle, 'playing'> | null {
-  let h: StressorHandle | null;
-  try {
-    h = audio.prepare(params, seed);
-  } catch {
-    return null;
-  }
-  if (h === null) return null;
-  const sound = h;
-  return {
-    start(offsetS) {
-      try {
-        return sound.start(offsetS);
-      } catch {
-        return false;
-      }
-    },
-    setActive(on) {
-      try {
-        sound.setActive(on);
-      } catch {
-        // The loop keeps its last gain; the trial goes on.
-      }
-    },
-    stop() {
-      try {
-        sound.stop();
-      } catch {
-        // Nothing left that could still sound.
-      }
-    },
-  };
 }
 
 /**

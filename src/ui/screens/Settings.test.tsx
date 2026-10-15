@@ -462,6 +462,73 @@ describe('Settings sound', () => {
     expect(handle.setActive).not.toHaveBeenCalled();
     expect(handle.stop).toHaveBeenCalled();
   });
+
+  const BUSY_ACTIONS = ['Проверить тайминги (3 с)', 'Экспорт данных (JSON и CSV)', 'Сохранить отчёт об ошибке', 'Восстановить из файла экспорта'];
+  const isDisabled = (name: string): boolean => screen.getByRole<HTMLButtonElement>('button', { name }).disabled;
+
+  it('the sound check waits for the timing check and the export (M3)', async () => {
+    let finish: (f: number[]) => void = () => undefined;
+    const measureFrames = vi.fn(() => new Promise<number[]>((resolve) => { finish = resolve; }));
+    const { audio } = spyAudio();
+    const { platform } = await renderSettings({ audio }, measureFrames);
+    fireEvent.click(screen.getByRole('button', { name: 'Проверить тайминги (3 с)' }));
+    await settleUntil(() => screen.queryByText(/Идёт замер/) !== null, 'the measurement');
+    expect(isDisabled('Проверить звук')).toBe(true);
+    await clickCheckSound();
+    expect(audio.prepare).not.toHaveBeenCalled();
+    finish(frames(181, 1000 / 60));
+    await settleUntil(() => screen.queryByText('Частота: 60 Гц') !== null, 'the measurement result');
+    expect(isDisabled('Проверить звук')).toBe(false);
+
+    let release: () => void = () => undefined;
+    const written = new Promise<void>((resolve) => { release = resolve; });
+    platform.exportFile = async () => {
+      await written;
+      return 'C:\\Downloads\\x';
+    };
+    fireEvent.click(screen.getByRole('button', { name: 'Экспорт данных (JSON и CSV)' }));
+    await waitFor(() => { expect(isDisabled('Проверить звук')).toBe(true); });
+    release();
+    await settleUntil(() => screen.queryByText('Сохранено:') !== null, 'the export');
+    expect(isDisabled('Проверить звук')).toBe(false);
+  });
+
+  it('while the sound check plays, the timing check, export, report and restore wait (M3)', async () => {
+    const { audio, handle } = spyAudio();
+    const { measureFrames } = await renderSettings({ audio });
+    vi.useFakeTimers();
+    await clickCheckSound();
+    expect(handle.start).toHaveBeenCalledTimes(1);
+    for (const name of BUSY_ACTIONS) expect(isDisabled(name), name).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Проверить тайминги (3 с)' }));
+    expect(measureFrames).not.toHaveBeenCalled();
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+    expect(handle.stop).toHaveBeenCalledTimes(1);
+    for (const name of BUSY_ACTIONS) expect(isDisabled(name), name).toBe(false);
+  });
+
+  it('a prepare or start that throws ends the check with a message, never with an error (M3)', async () => {
+    const { audio, handle } = spyAudio();
+    audio.prepare.mockImplementation(() => {
+      throw new Error('the buffer was refused');
+    });
+    await renderSettings({ audio });
+    await clickCheckSound();
+    await settleUntil(() => screen.queryByText('Звук недоступен на этом компьютере') !== null, 'the message');
+    expect(isDisabled('Проверить звук')).toBe(false);
+    for (const name of BUSY_ACTIONS) expect(isDisabled(name), name).toBe(false);
+
+    audio.prepare.mockImplementation(() => handle);
+    handle.start.mockImplementation(() => {
+      throw new Error('createBufferSource failed');
+    });
+    await clickCheckSound();
+    await settleUntil(() => screen.queryByText('Звук не воспроизводился') !== null, 'the message');
+    expect(handle.stop).toHaveBeenCalled();
+    expect(isDisabled('Проверить звук')).toBe(false);
+  });
 });
 
 describe('Settings restore', () => {

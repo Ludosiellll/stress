@@ -4,6 +4,7 @@ import type { Settings as SettingsRow } from '../../data/rows';
 import type { AudioStressorParams } from '../../engine/audio/stressors';
 import type { LayoutId } from '../../engine/types';
 import { measureRefresh } from '../../engine/timing';
+import { prepareQuietly } from '../../runtime/audio/audioOut';
 import { useApp } from '../AppContext';
 import { buildReport, logEvent, safeAppVersion } from '../errorLog';
 import { decimal, localDate, localStamp } from '../format';
@@ -133,6 +134,9 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
   const lifetime = useRef<AbortController | null>(null);
   // A restore writes history: nothing else on the screen may run or change, and the screen stays open.
   const restoring = busy === 'restore';
+  // The sound check synthesizes its loop on the main thread: it never overlaps the timing check (dropped frames),
+  // an export, a report or a restore (M3).
+  const locked = busy !== null || sound === 'playing';
 
   useEffect(() => {
     const controller = new AbortController();
@@ -235,7 +239,7 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
     ]);
     clearTimeout(waited);
     if (signal.aborted) return;
-    const handle = audio.prepare(SOUND_CHECK, SOUND_CHECK_SEED);
+    const handle = prepareQuietly(audio, SOUND_CHECK, SOUND_CHECK_SEED);
     if (handle === null) {
       setSound('unavailable');
       return;
@@ -382,7 +386,7 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
 
       <section>
         <h3>Проверка таймингов</h3>
-        <button type="button" disabled={busy !== null} onClick={() => void runCheck()}>
+        <button type="button" disabled={locked} onClick={() => void runCheck()}>
           Проверить тайминги (3 с)
         </button>
         {busy === 'check' && <p>Идёт замер, не нажимай клавиши…</p>}
@@ -407,7 +411,7 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
           />
           <span>{volume} %</span>
         </div>
-        <button type="button" disabled={sound === 'playing' || restoring} onClick={() => void checkSound()}>
+        <button type="button" disabled={locked} onClick={() => void checkSound()}>
           Проверить звук
         </button>
         {sound === 'unavailable' && <p role="status">{SOUND_UNAVAILABLE}</p>}
@@ -419,10 +423,10 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
       <section>
         <h3>Данные</h3>
         <div className="actions">
-          <button type="button" disabled={busy !== null} onClick={() => void exportData()}>
+          <button type="button" disabled={locked} onClick={() => void exportData()}>
             Экспорт данных (JSON и CSV)
           </button>
-          <button type="button" disabled={busy !== null} onClick={() => void saveReport()}>
+          <button type="button" disabled={locked} onClick={() => void saveReport()}>
             Сохранить отчёт об ошибке
           </button>
         </div>
@@ -439,7 +443,7 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
           </div>
         )}
         {reportMessage !== null && <p role={reportMessage.ok ? 'status' : 'alert'}>{reportMessage.text}</p>}
-        <RestoreSection busy={busy !== null} onBusy={restoreBusy} />
+        <RestoreSection busy={locked} onBusy={restoreBusy} />
       </section>
 
       <p>Версия приложения: {version ?? 'неизвестна'}</p>
