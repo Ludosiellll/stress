@@ -5,7 +5,8 @@ export default defineConfig({
   testDir: 'tests/e2e',
   fullyParallel: true,
   forbidOnly: !!process.env['CI'],
-  retries: process.env['CI'] ? 1 : 0,
+  // No retries, on CI too: a test that fails on its first attempt fails the run, so flaky tests stay visible (M8).
+  retries: 0,
   // The e2e sessions mostly wait on real ISIs and timers, not the CPU: two workers halve the CI time
   // (one worker took 5.6 min). The timing probe passed under three parallel workers locally.
   ...(process.env['CI'] ? { workers: 2 } : {}),
