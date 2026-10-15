@@ -115,4 +115,22 @@ describe('rebuildCaches', () => {
     expect((await repo.getRatings()).get('fib')?.n).toBe(2);
     expect((await repo.getRatings()).get('arith')?.rating).toBeLessThan(1000);
   });
+
+  it('dates a module by its last normal block, so a cache stored before W2-R40 heals at start', async () => {
+    const repo = new MemoryRepository();
+    await repo.createSession(session('t1', '2026-10-01T08:00:00.000Z'));
+    await repo.createSession(session('t2', '2026-10-02T08:00:00.000Z'));
+    await repo.addBlock(block('b1', 't1', '2026-10-01T08:01:00.000Z', { module: 'taskswitch', lAfter: 10 }), [], []);
+    // t2 played taskswitch only as the finisher; the old cache dated the module by it.
+    const finisherAt = '2026-10-02T08:40:00.000Z';
+    await repo.addBlock(block('b2', 't2', finisherAt, { module: 'taskswitch', lAfter: 13, flags: ['overload'] }), [], []);
+    await repo.saveModuleState({ ...(await repo.getModuleStates()).taskswitch, lastTrainedAt: finisherAt, lifetimeBlocks: 2 });
+
+    await rebuildCaches(repo);
+    expect((await repo.getModuleStates()).taskswitch).toMatchObject({
+      lastTrainedAt: '2026-10-01T08:01:00.000Z',
+      lifetimeBlocks: 2,
+      lSaved: 10,
+    });
+  });
 });

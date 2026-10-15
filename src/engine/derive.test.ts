@@ -104,13 +104,13 @@ describe('deriveModuleStates', () => {
     expect(states.gonogo.lastTrainedAt).toBe(day(2, 8, 1));
   });
 
-  it('skips overload blocks for end levels but counts them in lifetime and lastTrainedAt', () => {
+  it('skips overload blocks for end levels and lastTrainedAt but counts them in lifetime (W2-R40)', () => {
     const states = deriveModuleStates(
       [ses('s1', day(1)), ses('s2', day(2))],
       [
         blk('s1', 'szmr', 6, day(1, 8, 1)),
         blk('s1', 'szmr', 11, day(1, 8, 2), ['overload']),
-        // s2 plays the module only in overload blocks (a finisher): no end level for s2.
+        // s2 plays the module only in overload blocks (a finisher): no end level and no training date for s2.
         blk('s2', 'szmr', 14, day(2, 8, 1), ['overload']),
         blk('s2', 'szmr', 15, day(2, 8, 2), ['overload']),
       ],
@@ -119,7 +119,13 @@ describe('deriveModuleStates', () => {
     expect(states.szmr.savedHistory).toEqual([6]);
     expect(states.szmr.lSaved).toBe(6);
     expect(states.szmr.lifetimeBlocks).toBe(4);
-    expect(states.szmr.lastTrainedAt).toBe(day(2, 8, 2));
+    expect(states.szmr.lastTrainedAt).toBe(day(1, 8, 1));
+  });
+
+  it('a module played only in overload blocks counts its blocks but has no training date (W2-R40)', () => {
+    const states = deriveModuleStates([ses('s1', day(1))], [blk('s1', 'taskswitch', 13, day(1, 8, 1), ['overload'])]);
+    expect(states.taskswitch.lifetimeBlocks).toBe(1);
+    expect(states.taskswitch.lastTrainedAt).toBeNull();
   });
 
   it('isCleanBlock: a block without fatigued, timing_unreliable or overload', () => {

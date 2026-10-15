@@ -57,6 +57,8 @@ const LEVELLESS: ReadonlySet<ModuleId> = new Set<ModuleId>(['numseries']);
  * Module states from training and free sessions only (diagnostics never count).
  * A session's end level is lAfter of its last clean block of the module (by startedAt, isCleanBlock);
  * sessions without such a block add nothing. Ties keep input order.
+ * Every block counts in lifetimeBlocks; lastTrainedAt is the last block that was not an overload block, so a
+ * finisher does not make its module look trained and take away its regular slot (W2-R40).
  * Number series keep the default state except lifetimeBlocks and lastTrainedAt.
  */
 export function deriveModuleStates(
@@ -72,7 +74,7 @@ export function deriveModuleStates(
   for (const b of ordered) {
     const st = states[b.module];
     st.lifetimeBlocks++;
-    st.lastTrainedAt = b.startedAt;
+    if (!b.flags.includes('overload')) st.lastTrainedAt = b.startedAt;
     if (LEVELLESS.has(b.module) || !isCleanBlock(b.flags)) continue;
     let perModule = endLevels.get(b.sessionId);
     if (!perModule) {
