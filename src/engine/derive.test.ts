@@ -8,6 +8,7 @@ import {
   deriveRatings,
   isCleanBlock,
   isCountedSession,
+  movesLevel,
 } from './derive';
 import { R0, updateRating, type Rating } from './elo';
 import { effectiveDifficulty } from './itemLimit';
@@ -150,6 +151,12 @@ describe('deriveModuleStates', () => {
     expect(isCleanBlock([])).toBe(true);
     expect(isCleanBlock(['calibration'])).toBe(true);
     for (const f of ['fatigued', 'timing_unreliable', 'overload', 'warmup'] as const) expect(isCleanBlock(['calibration', f])).toBe(false);
+  });
+
+  it('movesLevel: overload and warm-up blocks never move the level; the other flags do not matter (T-R38)', () => {
+    expect(movesLevel([])).toBe(true);
+    for (const f of ['calibration', 'fatigued', 'timing_unreliable'] as const) expect(movesLevel([f])).toBe(true);
+    for (const f of ['overload', 'warmup'] as const) expect(movesLevel(['calibration', f])).toBe(false);
   });
 
   it('ignores diagnostic sessions and blocks of unknown sessions; free sessions count', () => {

@@ -15,11 +15,23 @@ export function isCountedSession(kind: SessionKind): boolean {
   return COUNTED_KINDS.has(kind);
 }
 
-const UNCLEAN_FLAGS: readonly BlockFlag[] = ['fatigued', 'timing_unreliable', 'overload', 'warmup'];
+/** Flags of blocks played at a level they never move. */
+const NOT_MOVING_FLAGS: readonly BlockFlag[] = ['overload', 'warmup'];
 
-/** A block that may move L_saved and feeds fatigue detection: without fatigued, timing_unreliable, overload or warmup. */
+/**
+ * A block that moves the level: not an overload or a warm-up block (T-R38: the one place this rule lives). Only such
+ * blocks are calibration blocks, the previous block for g = 2 or a segment's first, and only they make the module
+ * look trained (lastTrainedAt).
+ */
+export function movesLevel(flags: readonly BlockFlag[]): boolean {
+  return !flags.some((f) => NOT_MOVING_FLAGS.includes(f));
+}
+
+const UNCLEAN_FLAGS: readonly BlockFlag[] = ['fatigued', 'timing_unreliable'];
+
+/** A block that may move L_saved and feeds fatigue detection: movesLevel, without fatigued or timing_unreliable. */
 export function isCleanBlock(flags: readonly BlockFlag[]): boolean {
-  return !flags.some((f) => UNCLEAN_FLAGS.includes(f));
+  return movesLevel(flags) && !flags.some((f) => UNCLEAN_FLAGS.includes(f));
 }
 
 export function defaultModuleState(module: ModuleId): ModuleState {
@@ -75,7 +87,7 @@ export function deriveModuleStates(
   for (const b of ordered) {
     const st = states[b.module];
     st.lifetimeBlocks++;
-    if (!b.flags.includes('overload') && !b.flags.includes('warmup')) st.lastTrainedAt = b.startedAt;
+    if (movesLevel(b.flags)) st.lastTrainedAt = b.startedAt;
     if (LEVELLESS.has(b.module) || !isCleanBlock(b.flags)) continue;
     let perModule = endLevels.get(b.sessionId);
     if (!perModule) {

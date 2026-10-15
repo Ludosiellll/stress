@@ -1,5 +1,5 @@
 import type { BlockRow } from '../data/rows';
-import { isCountedSession } from '../engine/derive';
+import { isCountedSession, movesLevel } from '../engine/derive';
 import { R0, type Rating } from '../engine/elo';
 import { levelStep, R_FORMAT, ratingStep, stepName, type LevelStep, type RatingStep } from '../engine/levelSteps';
 import { cutText, gradeByBands, NORM_HINTS, NORMS, type NormTable } from '../engine/norms';
@@ -151,7 +151,7 @@ function shownRatingStep(meanRating: number): { R: string; s: RatingStep; toNext
  */
 function levelLines(row: BlockRow): Pick<BlockAssessment, 'step' | 'goal'> {
   const overload = row.flags.includes('overload');
-  const played = overload || row.flags.includes('warmup');
+  const played = !movesLevel(row.flags);
   const { L, Lnorm, s, toNext } = shownLevelStep(row.module, played ? row.lBefore : row.lAfter);
   const note = overload ? '; перегрузка' : '';
   const step = `${stepHead(s.step, s.name)} (уровень ${L}; формат теста — ${Lnorm}${note})`;

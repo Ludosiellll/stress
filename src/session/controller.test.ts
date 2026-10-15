@@ -200,6 +200,22 @@ function stateWith(module: ModuleId, over: Partial<ModuleState>): ModuleState {
   return { ...defaultModuleState(module), ...over };
 }
 
+/**
+ * A repository with `state` saved and `n` level-moving blocks of its module at its lSaved, in a training session 30
+ * days before T0: calibration counts the stored level-moving blocks, not lifetimeBlocks (T-R38).
+ */
+async function calibratedRepo(state: ModuleState, n = 3): Promise<MemoryRepository> {
+  const repo = new MemoryRepository();
+  const at = new Date(new Date(T0).getTime() - 30 * DAY).toISOString();
+  await repo.createSession(session('calibrated', at, { endedAt: at }));
+  for (let i = 0; i < n; i++) {
+    const row = block(`calibrated${String(i)}`, 'calibrated', at, { module: state.module, lBefore: state.lSaved, lAfter: state.lSaved });
+    await repo.addBlock(row, [], []);
+  }
+  await repo.saveModuleState(state);
+  return repo;
+}
+
 /** The summaryJson of the latest of these block rows (a reaction block's). */
 function storedSummary(rows: readonly BlockRow[]): {
   cvRt: number | null;
@@ -473,8 +489,7 @@ describe('SessionController — levels and persistence', () => {
   });
 
   it('the staircase runs on the penalised score; «Успешно» keeps the share of successes', async () => {
-    const repo = new MemoryRepository();
-    await repo.saveModuleState(stateWith('szmr', { lSaved: 4, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    const repo = await calibratedRepo(stateWith('szmr', { lSaved: 4, lastTrainedAt: T0, lifetimeBlocks: 3 }));
     const h = await begin(planFree('szmr', 1), { repo });
     h.c.ackInstruction();
     const block = expectStep(h.c, 'reaction_block');
@@ -489,7 +504,7 @@ describe('SessionController — levels and persistence', () => {
     };
     await h.c.submitReaction(playTimeline(block.specs, respond));
     const { view } = expectStep(h.c, 'summary');
-    const [row] = await repo.listBlocks();
+    const row = (await repo.listBlocks()).at(-1);
     const summary = JSON.parse(row?.summaryJson ?? '{}') as {
       counts: unknown;
       score: number;
@@ -510,8 +525,7 @@ describe('SessionController — levels and persistence', () => {
   });
 
   it('the g = 2 rule and fatigue use the penalised score', async () => {
-    const repo = new MemoryRepository();
-    await repo.saveModuleState(stateWith('szmr', { lSaved: 4, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    const repo = await calibratedRepo(stateWith('szmr', { lSaved: 4, lastTrainedAt: T0, lifetimeBlocks: 3 }));
     const h = await begin(planFree('szmr', 1), { repo });
     /** The first `falseStarts` trials answered 50 ms after onset (false starts), the others hit at `rtMs`. */
     const player =
@@ -655,8 +669,7 @@ describe('SessionController — levels and persistence', () => {
   });
 
   it('lapses hold the level', async () => {
-    const repo = new MemoryRepository();
-    await repo.saveModuleState(stateWith('szmr', { lSaved: 4, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    const repo = await calibratedRepo(stateWith('szmr', { lSaved: 4, lastTrainedAt: T0, lifetimeBlocks: 3 }));
     const h = await begin(planFree('szmr', 1), { repo });
     // 17 answers at 300 ms and 3 misses: s 0.85 would give +0.25; 3 lapses reach the limit of 2 and hold it.
     const { view } = await playReaction(h, (spec, idx) => (idx < 3 ? null : perfectPlayer(spec, idx)));
@@ -667,8 +680,7 @@ describe('SessionController — levels and persistence', () => {
   });
 
   it('no stability line when the rule did not lower the step', async () => {
-    const repo = new MemoryRepository();
-    await repo.saveModuleState(stateWith('szmr', { lSaved: 4, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    const repo = await calibratedRepo(stateWith('szmr', { lSaved: 4, lastTrainedAt: T0, lifetimeBlocks: 3 }));
     const h = await begin(planFree('szmr', 1), { repo });
     const hasLine = (v: BlockSummaryView): boolean => v.lines.some((l) => l.startsWith('Уровень '));
     /** Answers alternate 250 and 450 ms (CV_all 0.29); `wrong` trials get the other key, `missed` ones none. */
@@ -706,8 +718,7 @@ describe('SessionController — levels and persistence', () => {
   });
 
   it('a late answer enters CV_all: the CV line shows it and the rule uses it (Р6)', async () => {
-    const repo = new MemoryRepository();
-    await repo.saveModuleState(stateWith('szmr', { lSaved: 4, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    const repo = await calibratedRepo(stateWith('szmr', { lSaved: 4, lastTrainedAt: T0, lifetimeBlocks: 3 }));
     const h = await begin(planFree('szmr', 1), { repo });
     h.c.ackInstruction();
     const block = expectStep(h.c, 'reaction_block');
@@ -761,16 +772,14 @@ describe('SessionController — levels and persistence', () => {
   });
 
   it('the first block of a segment gets g = 2 at s ≥ 0.9', async () => {
-    const repo = new MemoryRepository();
-    await repo.saveModuleState(stateWith('pzmr', { lSaved: 6, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    const repo = await calibratedRepo(stateWith('pzmr', { lSaved: 6, lastTrainedAt: T0, lifetimeBlocks: 3 }));
     const h = await begin(planFree('pzmr', 1), { repo });
     const { view } = await playReaction(h);
     expect(view).toMatchObject({ lBefore: 5, lAfter: 7, flags: [] });
   });
 
   it('the first-block boost is only for a segment that started with the start drop (T-R36)', async () => {
-    const repo = new MemoryRepository();
-    await repo.saveModuleState(stateWith('pzmr', { lSaved: 6, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    const repo = await calibratedRepo(stateWith('pzmr', { lSaved: 6, lastTrainedAt: T0, lifetimeBlocks: 3 }));
     const h = await begin({ kind: 'free', seed: 3, segments: [segment('pzmr', 1), segment('rdo', 1), segment('pzmr', 1)] }, { repo });
     // One miss: s 14/15 is below 0.95, so the previous-score rule gives the later block nothing.
     const first = await playReaction(h, (spec, idx) => (idx === 0 ? null : perfectPlayer(spec, idx)));
@@ -787,8 +796,7 @@ describe('SessionController — levels and persistence', () => {
   });
 
   it('calibration covers the first 3 blocks of a module ever', async () => {
-    const repo = new MemoryRepository();
-    await repo.saveModuleState(stateWith('pzmr', { lSaved: 4, lastTrainedAt: T0, lifetimeBlocks: 1 }));
+    const repo = await calibratedRepo(stateWith('pzmr', { lSaved: 4, lastTrainedAt: T0, lifetimeBlocks: 1 }), 1);
     const h = await begin(planFree('pzmr', 1), { repo });
     const flags: string[][] = [];
     for (let i = 0; i < 3; i++) {
@@ -901,15 +909,15 @@ describe('SessionController — levels and persistence', () => {
   });
 
   it('timing_unreliable block does not change L', async () => {
-    const repo = new MemoryRepository();
-    await repo.saveModuleState(stateWith('pzmr', { lSaved: 10, lastTrainedAt: T0, lifetimeBlocks: 10, sessionEndLevels: [10] }));
+    const state = stateWith('pzmr', { lSaved: 10, lastTrainedAt: T0, lifetimeBlocks: 3, sessionEndLevels: [10], savedHistory: [10] });
+    const repo = await calibratedRepo(state);
     const h = await begin(planFree('pzmr', 1), { repo });
     const unreliable = await playReaction(h, perfectPlayer, (idx) => idx < 2); // 2 of 15 onsets dropped > 5 %
     expect(unreliable.view.flags).toEqual(['timing_unreliable']);
     expect(unreliable.view.lBefore).toBe(9);
     expect(unreliable.view.lAfter).toBe(9);
     // Module state is re-derived from history: the block counts, but gives no session-end level.
-    expect((await h.repo.getModuleStates()).pzmr).toMatchObject({ lifetimeBlocks: 1, sessionEndLevels: [], lSaved: 0 });
+    expect((await h.repo.getModuleStates()).pzmr).toMatchObject({ lifetimeBlocks: 4, sessionEndLevels: [10], lSaved: 10 });
 
     // The unreliable s = 1 does not count as the previous score, and it measured nothing, so it does not use up the
     // segment's first-block boost (T-R35): the next block, s 14/15 ≥ 0.9, gets g = 2 as the first one.
@@ -1095,8 +1103,7 @@ describe('SessionController — warm-up and the form of the day (F5)', () => {
   });
 
   it('a warm-up block is not the previous block for g = 2 and not in fatigue', async () => {
-    const repo = new MemoryRepository();
-    await repo.saveModuleState(stateWith('pzmr', { lSaved: 6, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    const repo = await calibratedRepo(stateWith('pzmr', { lSaved: 6, lastTrainedAt: T0, lifetimeBlocks: 3 }));
     const reaction: Segment = { module: 'pzmr', budgetMs: 1, purpose: 'reaction' };
     const h = await begin(training(reaction, warmup(1), reaction), { repo });
     // One miss: s 14/15 is below 0.95.
@@ -1138,6 +1145,62 @@ describe('SessionController — warm-up and the form of the day (F5)', () => {
       await h.c.continueAfterSummary();
     }
     expect(flags).toEqual([['calibration'], ['calibration'], ['calibration'], []]);
+  });
+
+  /** Flags of the first `n` blocks of a 5-minute ПЗМР reaction segment. */
+  async function reactionFlags(repo: Repository, n: number): Promise<string[][]> {
+    const h = await begin(training({ module: 'pzmr', budgetMs: 5 * MIN, purpose: 'reaction' }), { repo });
+    const flags: string[][] = [];
+    for (let i = 0; i < n; i++) {
+      flags.push((await playReaction(h)).view.flags);
+      h.clock.advance(30_000);
+      await h.c.continueAfterSummary();
+    }
+    return flags;
+  }
+
+  it('warm-ups of earlier sessions do not use up the calibration either (T-R38)', async () => {
+    const repo = new MemoryRepository();
+    const warm: Partial<BlockRow> = { module: 'pzmr', lBefore: 0, lAfter: 0, flags: ['warmup'] };
+    await pastTraining(repo, 's0', 2, [warm, warm, warm]);
+    await pastTraining(repo, 's1', 1, [warm, warm]);
+    const state = deriveModuleStates(await repo.listSessions(), await repo.listBlocks()).pzmr;
+    expect(state.lifetimeBlocks).toBe(5);
+    await repo.saveModuleState(state);
+    expect(await reactionFlags(repo, 4)).toEqual([['calibration'], ['calibration'], ['calibration'], []]);
+  });
+
+  it('only level-moving blocks of training and free sessions count; without the history, lifetimeBlocks does (T-R38)', async () => {
+    const repo = new MemoryRepository();
+    await pastTraining(repo, 's0', 2, [
+      { module: 'pzmr', flags: ['warmup'] },
+      { module: 'pzmr', flags: ['overload'] },
+      { module: 'pzmr', flags: ['calibration'] },
+      { module: 'szmr', flags: ['calibration'] },
+    ]);
+    await repo.createSession(session('d0', daysAgo(1), { kind: 'diagnostic', endedAt: daysAgo(1) }));
+    await repo.addBlock(block('d0b0', 'd0', daysAgo(1), { module: 'pzmr' }), [], []);
+    await repo.saveModuleState(deriveModuleStates(await repo.listSessions(), await repo.listBlocks()).pzmr);
+    expect(await reactionFlags(repo, 3)).toEqual([['calibration'], ['calibration'], []]);
+
+    // The history could not be read: the stored lifetimeBlocks (3 of the training session) stand in.
+    vi.spyOn(repo, 'listBlocks').mockRejectedValueOnce(new Error('disk I/O error'));
+    expect(await reactionFlags(repo, 1)).toEqual([[]]);
+  });
+
+  it('a first-ever warm-up plays at level 0 and stays there', async () => {
+    const h = await begin(training(warmup(1)));
+    const views = await playSegment(h);
+    expect(views.map((v) => [v.lBefore, v.lAfter, v.flags])).toEqual([
+      [0, 0, ['warmup']],
+      [0, 0, ['warmup']],
+    ]);
+    const rows = await h.repo.listBlocks();
+    expect(rows.map((b) => [b.lBefore, b.lAfter])).toEqual([
+      [0, 0],
+      [0, 0],
+    ]);
+    expect((await h.repo.getModuleStates()).pzmr).toMatchObject({ lSaved: 0, lastTrainedAt: null, lifetimeBlocks: 2 });
   });
 });
 
@@ -1372,20 +1435,19 @@ describe('SessionController — overload', () => {
   }
 
   it('finisher starts at L_saved + 3 and flags every block overload', async () => {
-    const repo = new MemoryRepository();
-    await repo.saveModuleState(stateWith('szmr', { lSaved: 10, lastTrainedAt: YESTERDAY, lifetimeBlocks: 10 }));
+    const repo = await calibratedRepo(stateWith('szmr', { lSaved: 10, lastTrainedAt: YESTERDAY, lifetimeBlocks: 3 }));
     const h = await begin(training(overloadSegment('szmr', 'finisher')), { repo });
     const [first, second] = await playSegment(h, 2);
     expect(first).toMatchObject({ lBefore: 13, flags: ['overload'] });
     // The finisher segment moves its own level.
     expect(second).toMatchObject({ lBefore: first?.lAfter, flags: ['overload'] });
-    expect((await repo.listBlocks()).map((b) => b.flags)).toEqual([['overload'], ['overload']]);
+    const stored = (await repo.listBlocks()).filter((b) => b.sessionId === h.c.sessionId);
+    expect(stored.map((b) => b.flags)).toEqual([['overload'], ['overload']]);
   });
 
   it("a finisher's first block is an overload block, not the first", async () => {
     // РДО: the finisher of the development phase on a calibrated module; s 1 moves it by g = 1, not by the first-block g = 2.
-    const repo = new MemoryRepository();
-    await repo.saveModuleState(stateWith('rdo', { lSaved: 10, lastTrainedAt: YESTERDAY, lifetimeBlocks: 10 }));
+    const repo = await calibratedRepo(stateWith('rdo', { lSaved: 10, lastTrainedAt: YESTERDAY, lifetimeBlocks: 3 }));
     const plan: SessionPlan = { kind: 'training', seed: 21, phase: 'development', segments: [overloadSegment('rdo', 'finisher', 3 * MIN)] };
     const h = await begin(plan, { repo });
     const [first] = await playSegment(h, 1);
@@ -1504,8 +1566,7 @@ describe('SessionController — overload', () => {
   });
 
   it('overload table blocks play at L + 3 without sound', async () => {
-    const repo = new MemoryRepository();
-    await repo.saveModuleState(stateWith('schulte', { lSaved: 5, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    const repo = await calibratedRepo(stateWith('schulte', { lSaved: 5, lastTrainedAt: T0, lifetimeBlocks: 3 }));
     const h = await begin(training(overloadSegment('schulte', 'mix')), { repo });
     h.c.ackInstruction();
     const first = expectStep(h.c, 'table_block');

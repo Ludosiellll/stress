@@ -4,7 +4,7 @@ import type { BlockRow, LogicItemRow, TrialRow, WellbeingRow } from '../data/row
 import { detectFatigue, nextLevel, stabilityHold, startLevel, type DeltaInput } from '../engine/adaptive';
 import { daysBetween, localDayIso } from '../engine/dates';
 import { dayForm } from '../engine/dayForm';
-import { deriveModuleStates, isCleanBlock } from '../engine/derive';
+import { deriveModuleStates, isCleanBlock, isCountedSession, movesLevel } from '../engine/derive';
 import { parseResults, type DiagnosticResults } from '../engine/diagnostic';
 import type { Rating } from '../engine/elo';
 import { OVERLOAD_LEVEL_STEP, warmupLevel, type ModuleState, type Segment, type SessionPlan } from '../engine/planner';
@@ -124,11 +124,12 @@ interface SegmentRun {
   lastInstruction: string | null;
 }
 
-/**
- * Overload and warm-up blocks do not move the level: they are not calibration blocks, the previous block for g = 2 or
- * a segment's first.
- */
-const isLevelMoving = (flags: readonly BlockFlag[]): boolean => !flags.includes('overload') && !flags.includes('warmup');
+/** What the start pass read: the block history in its two forms and the level-moving blocks per module. */
+interface HistoryRead {
+  history: BlockHistory;
+  past: PastBlocks;
+  levelBlocks: ReadonlyMap<ModuleId, number>;
+}
 
 /** RTs as summaryJson.cleanHitRts keeps them: 0.1 ms (Справочник F3). */
 const tenthMs = (x: number): number => Math.round(10 * x) / 10;
@@ -264,6 +265,11 @@ export class SessionController {
   private readonly history: BlockHistory | null;
   /** The same history as stored rows, for «Форма дня» (F5); null exactly when `history` is (Р18). */
   private readonly past: PastBlocks | null;
+  /**
+   * Level-moving blocks (movesLevel) of each module in the training and free sessions read at start, for calibration
+   * (T-R38); null exactly when `history` is.
+   */
+  private readonly levelBlocks: ReadonlyMap<ModuleId, number> | null;
 
   private constructor(
     o: SessionStartOptions,
@@ -271,7 +277,7 @@ export class SessionController {
     states: Record<ModuleId, ModuleState>,
     ratings: Map<FamilyId, Rating>,
     earlierDiagnostics: PastDiagnostic[] | null,
-    read: { history: BlockHistory; past: PastBlocks } | null,
+    read: HistoryRead | null,
   ) {
     this.repo = o.repo;
     this.plan = o.plan;
@@ -285,6 +291,7 @@ export class SessionController {
     this.earlierDiagnostics = earlierDiagnostics;
     this.history = read?.history ?? null;
     this.past = read?.past ?? null;
+    this.levelBlocks = read?.levelBlocks ?? null;
   }
 
   /** Creates the session row and shows the first instruction (or `save_error` if the row cannot be written). */
@@ -337,19 +344,22 @@ export class SessionController {
 
   /**
    * The whole block history, read once per training or free session (О11); state writes read only listBlockLevels.
-   * One pass fills the assessment history and the past blocks, as the commit of a block does (T-R19).
+   * One pass fills the assessment history and the past blocks, as the commit of a block does (T-R19), and counts the
+   * level-moving blocks of each module (T-R38).
    */
-  private static async blockHistory(repo: Repository): Promise<{ history: BlockHistory; past: PastBlocks }> {
+  private static async blockHistory(repo: Repository): Promise<HistoryRead> {
     const [blocks, sessions] = await Promise.all([repo.listBlocks(), repo.listSessions()]);
     const past = pastBlocks([], sessions);
     const history: BlockHistory = new Map();
+    const levelBlocks = new Map<ModuleId, number>();
     for (const row of blocks) {
       const kind = past.kinds.get(row.sessionId);
       if (kind === undefined) continue;
       appendBlock(history, row, kind);
       appendPast(past, row, kind);
+      if (isCountedSession(kind) && movesLevel(row.flags)) levelBlocks.set(row.module, (levelBlocks.get(row.module) ?? 0) + 1);
     }
-    return { history, past };
+    return { history, past, levelBlocks };
   }
 
   get step(): Step {
@@ -919,7 +929,7 @@ export class SessionController {
    */
   private record(b: SessionBlock, lAfter: number): void {
     const seg = this.segment();
-    const moving = isLevelMoving(b.flags);
+    const moving = movesLevel(b.flags);
     this.sessionBlocks.push(b);
     if (moving || seg.segment.overload === 'finisher') seg.L = lAfter;
     if (moving && !b.flags.includes('timing_unreliable')) seg.levelBlockStored = true;
@@ -935,20 +945,22 @@ export class SessionController {
   }
 
   /**
-   * One of the first CALIBRATION_BLOCKS blocks of the module: lifetimeBlocks at start (every stored block) plus the
-   * level-moving blocks of this session, so the warm-up does not use up a new module's calibration (T-R11).
+   * One of the first CALIBRATION_BLOCKS level-moving blocks of the module: those stored before the session plus those
+   * of this session, so warm-ups never use up a new module's calibration (T-R11, T-R38). Without the history read at
+   * start, lifetimeBlocks (every stored block) stands in for the stored ones.
    */
   private isCalibration(module: ModuleId): boolean {
     if (!this.counted) return false;
-    const thisSession = this.sessionBlocks.filter((b) => b.module === module && isLevelMoving(b.flags)).length;
-    return this.states[module].lifetimeBlocks + thisSession < CALIBRATION_BLOCKS;
+    const stored = this.levelBlocks === null ? this.states[module].lifetimeBlocks : (this.levelBlocks.get(module) ?? 0);
+    const thisSession = this.sessionBlocks.filter((b) => b.module === module && movesLevel(b.flags)).length;
+    return stored + thisSession < CALIBRATION_BLOCKS;
   }
 
   /** s of the previous level-moving block of the module in this session that was not timing_unreliable. */
   private prevScore(module: ModuleId): number | null {
     for (let i = this.sessionBlocks.length - 1; i >= 0; i--) {
       const b = this.sessionBlocks[i];
-      if (b?.module === module && !b.flags.includes('timing_unreliable') && isLevelMoving(b.flags)) return b.score;
+      if (b?.module === module && !b.flags.includes('timing_unreliable') && movesLevel(b.flags)) return b.score;
     }
     return null;
   }

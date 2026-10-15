@@ -37,7 +37,7 @@ function snap(x: number): number {
 export interface DeltaInput {
   /** Block success rate s ∈ [0, 1]. */
   score: number;
-  /** One of the first 3 blocks of the module ever (lifetimeBlocks < 3). */
+  /** One of the first 3 level-moving blocks of the module ever (movesLevel, T-R38). */
   calibration: boolean;
   /** s of the previous block of the same module in this session, if any. */
   prevScoreSameSession: number | null;
