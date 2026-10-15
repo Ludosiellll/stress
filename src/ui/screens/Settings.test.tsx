@@ -329,6 +329,10 @@ function spyAudio(started = true) {
     unlock: vi.fn<AudioOut['unlock']>(() => Promise.resolve()),
     setVolume: vi.fn<AudioOut['setVolume']>(),
     prepare: vi.fn<AudioOut['prepare']>(() => handle),
+    /** Settings never holds the sound: after «Проверить звук» it may sleep again (W2-R39). */
+    hold: vi.fn<AudioOut['hold']>(() => {
+      throw new Error('Settings must not hold the sound');
+    }),
     available: true,
   };
   return { audio, handle };

@@ -124,6 +124,10 @@ function SessionFlow({
     };
   }, [fullscreen]);
 
+  // The sound stays awake while the session screen is open: no suspend inside a timed block, and every block with
+  // sound finds the context running after the first unlock (W2-R39). It sleeps again once the screen closes.
+  useEffect(() => audio.hold(), [audio]);
+
   const step = phase.kind === 'running' ? phase.c.step : null;
   const stepKind = step?.kind ?? null;
 

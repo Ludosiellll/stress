@@ -171,25 +171,41 @@ describe('MemoryView', () => {
   it('keys, Enter and clicks during the presentation are ignored (B3)', async () => {
     for (const t of [trial(), trial({ mode: 'positions', items: ['4', '8', '2'], gridSide: 3 })]) {
       const view = renderView(step([t, t]));
+      const typeAndSend = (): void => {
+        const canvas = view.container.querySelector('.memory canvas');
+        expect(canvas).not.toBeNull();
+        key('5');
+        key('6');
+        key('Enter');
+        if (canvas !== null) fireEvent.mouseDown(canvas, { button: 0 });
+        key('Enter');
+      };
+      /** At the response screen: nothing was sent and the answer is empty. */
+      const answerIsEmpty = (): void => {
+        expect(view.onSubmit).not.toHaveBeenCalled();
+        if (t.mode === 'positions') expect(view.container.querySelectorAll('.memory-cell.chosen')).toHaveLength(0);
+        else expect(screen.getByLabelText('Ответ').textContent).toBe('____');
+      };
+      // Trial 1 is being shown: type and press Enter, then the response screen.
+      typeAndSend();
       await showTrial();
+      answerIsEmpty();
+      expect(screen.getByText('Проба 1 из 2')).toBeTruthy();
       // Trial 1 answered; trial 2 is being shown.
       if (t.mode === 'positions') fireEvent.mouseDown(cell(4), { button: 0 });
       else key('7');
       key('Enter');
       frames.run(now);
       await nextTask();
-      const canvas = view.container.querySelector('.memory canvas');
-      expect(canvas).not.toBeNull();
-      key('5');
-      key('6');
-      key('Enter');
-      if (canvas !== null) fireEvent.mouseDown(canvas, { button: 0 });
+      typeAndSend();
       await showTrial();
-      expect(view.onSubmit).not.toHaveBeenCalled();
       expect(screen.getByText('Проба 2 из 2')).toBeTruthy();
-      // Nothing typed or chosen during the presentation reached the answer.
-      if (t.mode === 'positions') expect(view.container.querySelectorAll('.memory-cell.chosen')).toHaveLength(0);
-      else expect(screen.getByLabelText('Ответ').textContent).toBe('____');
+      answerIsEmpty();
+      // An Enter now finds the answer empty: no hidden input was kept, nothing is sent, the hint shows.
+      key('Enter');
+      await nextTask();
+      expect(view.onSubmit).not.toHaveBeenCalled();
+      expect(screen.getByText(t.mode === 'positions' ? 'Нажми клетки, потом Enter.' : 'Набери ответ, потом Enter.')).toBeTruthy();
       view.unmount();
     }
   });

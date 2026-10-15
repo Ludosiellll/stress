@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AudioStressorParams } from '../../engine/audio/stressors';
 import { renderStressor } from '../../engine/audio/synth';
 import { FakeAudioContext, type FakeAudioOptions } from '../../testing/fakeAudio';
-import { IDLE_SUSPEND_MS, browserAudioOut, createAudioOut } from './audioOut';
+import { IDLE_SUSPEND_MS, SUSPEND_WAIT_MS, browserAudioOut, createAudioOut } from './audioOut';
 
 const HUM: AudioStressorParams = { layers: ['hum'], gain: 0.5 };
 
@@ -358,6 +358,110 @@ describe('createAudioOut: the context sleeps when idle (B4)', () => {
       expect(out.prepare(HUM, 1)?.start(0)).toBe(true);
       vi.useRealTimers();
     }
+  });
+});
+
+describe('createAudioOut: a hold keeps the context awake (W2-R39)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('an unlock while held never arms the sleep', async () => {
+    vi.useFakeTimers();
+    const { ctx, out } = setup();
+    out.hold();
+    await out.unlock();
+    await vi.advanceTimersByTimeAsync(IDLE_SUSPEND_MS * 10);
+    expect(ctx.suspendCalls).toBe(0);
+    expect(ctx.state).toBe('running');
+  });
+
+  it('two sound blocks more than IDLE_SUSPEND_MS apart inside a session both play, with no suspend between', async () => {
+    vi.useFakeTimers();
+    const { ctx, out } = setup();
+    out.setVolume(0.5);
+    out.hold();
+    // Every instruction key press unlocks; silent blocks play in between.
+    await out.unlock();
+    const first = out.prepare(HUM, 1);
+    expect(first?.start(0)).toBe(true);
+    first?.stop();
+    await out.unlock();
+    await vi.advanceTimersByTimeAsync(IDLE_SUSPEND_MS * 5);
+    await out.unlock();
+    const second = out.prepare(HUM, 2);
+    expect(second?.start(0)).toBe(true);
+    second?.stop();
+    await vi.advanceTimersByTimeAsync(IDLE_SUSPEND_MS * 5);
+    expect(ctx.suspendCalls).toBe(0);
+    expect(ctx.resumeCalls).toBe(1);
+  });
+
+  it('after the last release the sleep arms; a second release changes nothing', async () => {
+    vi.useFakeTimers();
+    const { ctx, out } = setup();
+    const releaseA = out.hold();
+    const releaseB = out.hold();
+    await out.unlock();
+    releaseA();
+    releaseA();
+    await vi.advanceTimersByTimeAsync(IDLE_SUSPEND_MS * 3);
+    expect(ctx.suspendCalls).toBe(0);
+    releaseB();
+    await vi.advanceTimersByTimeAsync(IDLE_SUSPEND_MS - 1);
+    expect(ctx.suspendCalls).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(ctx.suspendCalls).toBe(1);
+    expect(ctx.state).toBe('suspended');
+  });
+
+  it('a release while a loop plays waits for the loop to stop', async () => {
+    vi.useFakeTimers();
+    const { ctx, out } = setup();
+    out.setVolume(0.5);
+    const release = out.hold();
+    await out.unlock();
+    const h = out.prepare(HUM, 1);
+    expect(h?.start(0)).toBe(true);
+    release();
+    await vi.advanceTimersByTimeAsync(IDLE_SUSPEND_MS * 3);
+    expect(ctx.suspendCalls).toBe(0);
+    h?.stop();
+    await vi.advanceTimersByTimeAsync(IDLE_SUSPEND_MS);
+    expect(ctx.suspendCalls).toBe(1);
+  });
+
+  it('a hold taken while the sleep is armed cancels it', async () => {
+    vi.useFakeTimers();
+    const { ctx, out } = setup();
+    await out.unlock();
+    await vi.advanceTimersByTimeAsync(IDLE_SUSPEND_MS - 1);
+    out.hold();
+    await vi.advanceTimersByTimeAsync(IDLE_SUSPEND_MS * 3);
+    expect(ctx.suspendCalls).toBe(0);
+  });
+
+  it('a suspend that never settles holds unlock for SUSPEND_WAIT_MS at most; then start plays', async () => {
+    vi.useFakeTimers();
+    const { ctx, out } = setup({ suspendDelayed: true });
+    out.setVolume(0.5);
+    await out.unlock();
+    await vi.advanceTimersByTimeAsync(IDLE_SUSPEND_MS);
+    expect(ctx.suspendCalls).toBe(1);
+    let done = false;
+    const unlocked = out.unlock().then(() => {
+      done = true;
+    });
+    await vi.advanceTimersByTimeAsync(SUSPEND_WAIT_MS - 1);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await unlocked;
+    expect(done).toBe(true);
+    // The stuck suspend no longer blocks the sound until a restart.
+    expect(out.prepare(HUM, 1)?.start(0)).toBe(true);
+    const again = out.unlock();
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(again).resolves.toBeUndefined();
   });
 });
 

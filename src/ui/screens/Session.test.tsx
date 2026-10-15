@@ -210,6 +210,7 @@ describe('Session start', () => {
         order.push(`volume ${String(v)}`);
       }),
       prepare: vi.fn<AudioOut['prepare']>(() => null),
+      hold: vi.fn<AudioOut['hold']>(() => () => undefined),
       available: true,
     };
     const c = fakeDriver(INSTRUCTION);
@@ -221,6 +222,24 @@ describe('Session start', () => {
     expect(audio.unlock).not.toHaveBeenCalled();
     await press('Enter');
     expect(order).toEqual(['volume 0.35', 'unlock', 'ack']);
+  });
+
+  it('holds the sound awake for the whole session screen and releases it on unmount (W2-R39)', async () => {
+    const release = vi.fn<() => void>();
+    const hold = vi.fn<AudioOut['hold']>(() => release);
+    const audio: AudioOut = {
+      available: true,
+      unlock: vi.fn<AudioOut['unlock']>(() => Promise.resolve()),
+      setVolume: vi.fn<AudioOut['setVolume']>(),
+      prepare: vi.fn<AudioOut['prepare']>(() => null),
+      hold,
+    };
+    const { unmount } = await renderSession(fakeDriver(INSTRUCTION), { audio });
+    expect(hold).toHaveBeenCalledTimes(1);
+    await press('Enter');
+    expect(release).not.toHaveBeenCalled();
+    unmount();
+    expect(release).toHaveBeenCalledTimes(1);
   });
 
   it('on battery asks first; «Назад» leaves without starting', async () => {

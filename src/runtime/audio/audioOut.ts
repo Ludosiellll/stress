@@ -50,10 +50,16 @@ export interface AudioOut {
   /** False once Web Audio is known to be missing: no AudioContext in the window, or it could not be created. */
   readonly available: boolean;
   /**
-   * Resumes the context (waiting for a sleep in progress first); call it from a user gesture (a click or a key
-   * press). Never rejects.
+   * Resumes the context (waiting for a sleep in progress first, at most SUSPEND_WAIT_MS); call it from a user
+   * gesture (a click or a key press). Never rejects.
    */
   unlock(): Promise<void>;
+  /**
+   * Keeps the context awake until the returned release is called (idempotent): the idle sleep arms only when no
+   * hold is taken and no loop plays. A session screen holds it for its whole life, so the context never changes
+   * state inside a timed block and every block after the first unlock finds it running (W2-R39).
+   */
+  hold(): () => void;
   /** 0..1, the volume setting / 100. Silent (0) until set. Active loops follow it. */
   setVolume(v: number): void;
   /** Synthesizes (or takes from the cache) the loop buffer; null without Web Audio. */
@@ -68,14 +74,17 @@ const STOP_DELAY_S = 0.08;
 const CACHE_LIMIT = 4;
 /** The context is suspended this long after the last loop stopped (or an unlock with nothing played): no idle audio thread. */
 export const IDLE_SUSPEND_MS = 1000;
+/** unlock() waits at most this long for a suspend in flight; one that never settles is then forgotten. */
+export const SUSPEND_WAIT_MS = 300;
 
 const clamp01 = (v: number): number => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0);
 
 /**
  * Plays synthesized stressor loops. The context is created on first use; buffers are cached by
  * layers + seed (at most 4). Output gain never exceeds the volume setting. Without Web Audio, or when
- * the context cannot start, nothing sounds and nothing throws. When nothing plays for IDLE_SUSPEND_MS the
- * context is suspended; unlock() wakes it (every block with sound and the sound check unlock first).
+ * the context cannot start, nothing sounds and nothing throws. When nothing plays and nothing holds it
+ * (hold()) for IDLE_SUSPEND_MS the context is suspended; unlock() wakes it (every block with sound and the
+ * sound check unlock first).
  */
 export function createAudioOut(makeContext: (() => AudioContextLike) | null, synth: typeof renderStressor = renderStressor): AudioOut {
   let ctx: AudioContextLike | null = null;
@@ -89,13 +98,18 @@ export function createAudioOut(makeContext: (() => AudioContextLike) | null, syn
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   /** A suspend() that has not settled yet: a loop started now would be cut by it. */
   let suspending: Promise<void> | null = null;
+  /** Holds taken and not released: the context stays awake while there are any. */
+  let holds = 0;
 
-  /** Puts the context to sleep IDLE_SUSPEND_MS from now unless a loop starts first. A failed suspend is ignored. */
+  /**
+   * Puts the context to sleep IDLE_SUSPEND_MS from now unless a loop starts or a hold is taken first. A failed
+   * suspend is ignored.
+   */
   const sleepWhenIdle = (c: AudioContextLike): void => {
     clearTimeout(idleTimer);
-    if (playing > 0) return;
+    if (playing > 0 || holds > 0) return;
     idleTimer = setTimeout(() => {
-      if (playing > 0 || c.state !== 'running') return;
+      if (playing > 0 || holds > 0 || c.state !== 'running') return;
       let pending: Promise<void>;
       try {
         pending = c.suspend();
@@ -213,13 +227,38 @@ export function createAudioOut(makeContext: (() => AudioContextLike) | null, syn
       const c = context();
       if (c === null) return;
       clearTimeout(idleTimer);
-      if (suspending !== null) await suspending;
+      const inFlight = suspending;
+      if (inFlight !== null) {
+        let waited: ReturnType<typeof setTimeout> | undefined;
+        const settled = await Promise.race([
+          inFlight.then(() => true),
+          new Promise<boolean>((resolve) => {
+            waited = setTimeout(() => {
+              resolve(false);
+            }, SUSPEND_WAIT_MS);
+          }),
+        ]);
+        clearTimeout(waited);
+        // A suspend that never settles must not keep start() silent until a restart.
+        if (!settled && suspending === inFlight) suspending = null;
+      }
       try {
         if (c.state !== 'running') await c.resume();
       } catch {
         // A blocked device: start() reports false and the block runs without sound.
       }
       sleepWhenIdle(c);
+    },
+    hold() {
+      holds++;
+      clearTimeout(idleTimer);
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        holds--;
+        if (ctx !== null) sleepWhenIdle(ctx);
+      };
     },
     setVolume(v) {
       volume = clamp01(v);
