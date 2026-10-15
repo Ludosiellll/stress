@@ -9,7 +9,8 @@ import type { BlockTimeline, TrialSpec } from '../../engine/reaction/types';
 import type { SessionStartOptions } from '../../session/controller';
 import type { BlockSummaryView, Step, StepOf } from '../../session/steps';
 import { frameStamps, manualFrames, mockCanvas, nextTask, settleUntil, stamped, type ManualFrames } from '../../testing/domFakes';
-import type { AudioOut } from '../../runtime/audio/audioOut';
+import { createAudioOut, type AudioOut } from '../../runtime/audio/audioOut';
+import { FakeAudioContext } from '../../testing/fakeAudio';
 import { createFakePlatform, type FakePlatform } from '../../testing/fakePlatform';
 import { renderWithApp } from '../testUtils';
 import Session, { type SessionDriver } from './Session';
@@ -197,7 +198,7 @@ describe('Session start', () => {
     expect(screen.getByText(INSTRUCTION.text)).toBeTruthy();
   });
 
-  it('starting a block from the instruction unlocks audio and applies the saved volume', async () => {
+  it('the key that starts a block with sound applies the saved volume and unlocks the audio in that key press (M4)', async () => {
     const repo = new MemoryRepository();
     await repo.saveSettings({ stressVolume: 35 });
     const order: string[] = [];
@@ -216,12 +217,35 @@ describe('Session start', () => {
     const c = fakeDriver(INSTRUCTION);
     c.ackInstruction.mockImplementation(() => {
       order.push('ack');
-      c.step = { kind: 'summary', view: SUMMARY };
+      c.step = { ...REACTION, layers: { noise: null, audio: { layers: ['hum'], gain: 0.5 }, gate: 'all', seed: 1 } };
     });
     await renderSession(c, { repo, audio });
     expect(audio.unlock).not.toHaveBeenCalled();
-    await press('Enter');
-    expect(order).toEqual(['volume 0.35', 'unlock', 'ack']);
+    let inKeyPress: string[] = [];
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'Enter', code: 'Enter' });
+      // Read before any await: the unlock must happen inside the key press, the user gesture the browser needs.
+      inKeyPress = [...order];
+      await Promise.resolve();
+    });
+    await nextTask();
+    expect(inKeyPress).toEqual(['volume 0.35', 'ack', 'unlock']);
+  });
+
+  it('a step without sound never unlocks: a session without sound never creates an audio context (M4)', async () => {
+    const make = vi.fn(() => new FakeAudioContext());
+    const audio = createAudioOut(make);
+    for (const next of [REACTION, TABLE, { kind: 'summary', view: SUMMARY } as const]) {
+      const c = fakeDriver(INSTRUCTION);
+      c.ackInstruction.mockImplementation(() => {
+        c.step = next;
+      });
+      const { unmount } = await renderSession(c, { audio });
+      await press('Enter');
+      expect(c.ackInstruction).toHaveBeenCalledTimes(1);
+      unmount();
+    }
+    expect(make).not.toHaveBeenCalled();
   });
 
   it('holds the sound awake for the whole session screen and releases it on unmount (W2-R39)', async () => {

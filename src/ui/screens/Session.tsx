@@ -167,7 +167,10 @@ function SessionFlow({
     })();
   };
 
-  /** One controller call at a time; afterwards the screen follows `controller.step`. */
+  /**
+   * One controller call at a time; afterwards the screen follows `controller.step`. `fn` starts at once, inside the
+   * caller's key or click handler (the instruction's audio unlock relies on it, M4).
+   */
   const run = (fn: (c: SessionDriver) => void | Promise<void>): void => {
     if (phase.kind !== 'running' || busyRef.current) return;
     const { c } = phase;
@@ -266,11 +269,13 @@ function SessionFlow({
           text={step.text}
           keysHint={step.keysHint}
           onStart={() => {
-            // A key press or click: the moment the browser lets the audio context start.
             audio.setVolume(stressVolume.current / 100);
-            void audio.unlock();
             run((c) => {
               c.ackInstruction();
+              // Still inside the key press or click, the moment the browser lets the audio context start. Only a
+              // block with sound needs it: a session without sound never creates an audio context (M4).
+              const next = c.step;
+              if (next.kind === 'reaction_block' && next.layers.audio !== null) void audio.unlock();
             });
           }}
         />
