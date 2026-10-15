@@ -685,7 +685,13 @@ export class SessionController {
   /** Instruction first if the segment just started, for every Gorbov run, or when the rules changed. */
   private presentNext(): void {
     const seg = this.segment();
-    const ctx: PlanContext = { layout: this.layout, scale: this.scale, diagnostic: !this.counted };
+    const ctx: PlanContext = {
+      layout: this.layout,
+      scale: this.scale,
+      diagnostic: !this.counted,
+      planSeed: this.plan.seed,
+      segmentIndex: seg.index,
+    };
     const plan = planBlock(seg.segment, seg.L, seg.blocksDone, ctx);
     const { text, keysHint } = blockInstruction(plan, this.layout);
     if (seg.segment.module === 'gorbov' || text + '\n' + keysHint !== seg.lastInstruction) {

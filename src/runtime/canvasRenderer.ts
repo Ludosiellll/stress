@@ -20,6 +20,8 @@ const STIMULUS_SIZE = 0.18;
 const FRAME_WIDTH_PX = 12;
 const FRAME_GAP_PX = 10;
 const STAR_INNER = 0.45;
+/** The mark: a white dot whose diameter is this share of the figure's (F8). */
+const MARK_SIZE = 0.2;
 /** Stroop word height as a share of the shorter side. */
 const WORD_SIZE = 0.12;
 const WORD_FONT = "'Segoe UI', Arial, sans-serif";
@@ -111,6 +113,12 @@ function drawShape(
   shapePath(ctx, s.shape, cx, cy, r);
   ctx.fillStyle = COLORS[s.color];
   ctx.fill();
+  if (s.mark === true) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, MARK_SIZE * r, 0, FULL_TURN);
+    ctx.fillStyle = COLORS.white;
+    ctx.fill();
+  }
   if (s.frame === undefined) return;
   ctx.beginPath();
   ctx.arc(cx, cy, extent(s.shape, r) + FRAME_GAP_PX + FRAME_WIDTH_PX / 2, 0, FULL_TURN);

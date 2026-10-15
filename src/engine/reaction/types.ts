@@ -20,7 +20,8 @@ export type SwitchRule = 'color' | 'shape' | 'size';
 export const RULE_WORDS: Readonly<Record<SwitchRule, string>> = { color: 'ЦВЕТ', shape: 'ФОРМА', size: 'РАЗМЕР' };
 
 export type Stimulus =
-  | { kind: 'shape'; shape: ShapeId; color: ColorId; frame?: ColorId }
+  /** `mark`: a white dot in the centre, 20 % of the figure's diameter (the Go/No-Go no-go most like the go, F8). */
+  | { kind: 'shape'; shape: ShapeId; color: ColorId; frame?: ColorId; mark?: true }
   | { kind: 'rdo'; startDeg: number; targetDeg: number; periodMs: number }
   /** A colour word (`word`) printed in another or the same colour (`ink`); the answer goes by the ink. */
   | { kind: 'word'; word: StroopColor; ink: StroopColor }

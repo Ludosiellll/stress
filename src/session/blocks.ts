@@ -32,6 +32,7 @@ import {
 import { generateBlockItems, generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
 import { stressorsOf, type BlockStressors, type ReactionModule } from '../modules/reaction/common';
 import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
+import { gonogo, isSwappedSegment } from '../modules/reaction/gonogo';
 import { reactionModules } from '../modules/registry';
 import {
   generateGorbovTable,
@@ -135,6 +136,9 @@ export interface PlanContext {
   scale: number;
   /** A diagnostic block: reaction modules play DIAGNOSTIC_PARAMS, memory the span protocol, number series the schedule. */
   diagnostic: boolean;
+  /** The plan's seed and the segment's index in it: what a segment draws once (the Go/No-Go colour swap, F8). */
+  planSeed: number;
+  segmentIndex: number;
 }
 
 /** Every block of a finisher; the odd blocks (1, 3, …) of a plateau mix. */
@@ -154,7 +158,7 @@ export function planBlock(segment: Segment, segmentL: number, blockIndex: number
   if (isReactionModule(module)) {
     const mod = reactionModules[module];
     // A diagnostic plays the frozen 0.2.0 parameters, whatever params(L) becomes (training-fixes spec §2.0).
-    const params = ctx.diagnostic ? DIAGNOSTIC_PARAMS[module] : mod.params(L);
+    const params = ctx.diagnostic ? DIAGNOSTIC_PARAMS[module] : trainingParams(module, L, ctx);
     const { keys, effectiveLayout } = layoutKeys(ctx.layout, mod.keyCount(params));
     return {
       kind: 'reaction',
@@ -194,6 +198,12 @@ export function planBlock(segment: Segment, segmentL: number, blockIndex: number
     };
   }
   return { kind: 'numseries', diagnostic: false, count: scaledCount(SERIES_BLOCK_ITEMS, ctx.scale), totalLimitMs: null };
+}
+
+/** Training and free parameters at L; a Go/No-Go segment may play with the colours swapped (F8). */
+function trainingParams(module: ReactionModuleId, L: number, ctx: PlanContext): unknown {
+  if (module === 'gonogo') return { ...gonogo.params(L), swapped: isSwappedSegment(ctx.planSeed, ctx.segmentIndex) };
+  return reactionModules[module].params(L);
 }
 
 /**

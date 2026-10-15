@@ -67,7 +67,7 @@ export const COLOR_NAMES: Readonly<Record<ColorId, string>> = {
   purple: 'фиолетовый',
 };
 
-/** ISI range shared by ПЗМР (L < 25), СЗМР and Go/No-Go. */
+/** ISI range shared by ПЗМР (L < 25), СЗМР and Помехоустойчивость; Go/No-Go starts from it and speeds up (F8). */
 export const ISI_MIN = 500;
 export const ISI_MAX = 2500;
 

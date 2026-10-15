@@ -26,6 +26,7 @@ import { memoryInstruction, memoryParams } from '../modules/memory/params';
 import { spanProtocolStops, type MemoryAnswer } from '../modules/memory/score';
 import { FAMILIES } from '../modules/numseries/families';
 import { pomeh } from '../modules/reaction/pomeh';
+import { isSwappedSegment } from '../modules/reaction/gonogo';
 import { pzmr } from '../modules/reaction/pzmr';
 import { szmr } from '../modules/reaction/szmr';
 import { gorbovMetrics } from '../modules/tables/gorbov';
@@ -238,6 +239,32 @@ function firstDayPlan(states: Record<ModuleId, ModuleState>, todayIso: string, s
 }
 
 describe('SessionController — flow', () => {
+  it('Go/No-Go swaps its colours in the segments the plan seed picks (F8); answers by the expected key score 1', async () => {
+    let seed = 1;
+    while (isSwappedSegment(seed, 0) || !isSwappedSegment(seed, 1)) seed++;
+    const h = await begin({ kind: 'free', seed, segments: [segment('gonogo', 1), segment('gonogo', 1)] });
+    const texts: string[] = [];
+    const scores: number[] = [];
+    for (let i = 0; i < 2; i++) {
+      texts.push(expectStep(h.c, 'instruction').text);
+      h.c.ackInstruction();
+      const block = expectStep(h.c, 'reaction_block');
+      const goColors = new Set(block.specs.flatMap((t) => (t.expected.kind === 'press' && t.stimulus.kind === 'shape' ? [t.stimulus.color] : [])));
+      expect([...goColors]).toEqual([i === 0 ? 'red' : 'green']);
+      await h.c.submitReaction(playTimeline(block.specs, perfectPlayer));
+      scores.push(expectStep(h.c, 'summary').view.score);
+      h.clock.advance(1);
+      await h.c.continueAfterSummary();
+    }
+    expect(texts).toEqual([
+      'На красный круг нажимай Пробел. На зелёный круг не нажимай ничего.',
+      'В этом задании наоборот: на зелёный круг нажимай Пробел, на красный круг — ничего.',
+    ]);
+    expect(scores).toEqual([1, 1]);
+    const swapped = (await h.repo.listBlocks()).map((b) => (JSON.parse(b.paramsJson) as { swapped: boolean }).swapped);
+    expect(swapped).toEqual([false, true]);
+  });
+
   it('walks a full training plan to done', async () => {
     const repo = new MemoryRepository();
     const plan = firstDayPlan(await repo.getModuleStates(), T0, 42);

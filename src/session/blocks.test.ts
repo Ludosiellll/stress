@@ -8,7 +8,7 @@ import { FINISHER_AUDIO } from '../engine/audio/stressors';
 import { noiseFrame } from '../engine/noise';
 import { OVERLOAD_LEVEL_STEP, type Segment } from '../engine/planner';
 import { MIN_COND_RTS, condPairOf, type CondPair } from '../engine/reaction/conditions';
-import type { Outcome, ReactionSummary } from '../engine/reaction/types';
+import type { Outcome, ReactionSummary, Stimulus, TrialSpec } from '../engine/reaction/types';
 import { REACTION_MODULE_IDS, isReactionModule, type FamilyId, type ModuleId, type ReactionModuleId } from '../engine/types';
 import { createRng, deriveSeed } from '../engine/rng';
 import { generateMemoryTrials, SPAN_PROTOCOL_PARAMS, spanProtocolTrials } from '../modules/memory/generate';
@@ -17,6 +17,7 @@ import { FAMILIES } from '../modules/numseries/families';
 import { generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
 import { NO_STRESSORS } from '../modules/reaction/common';
 import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
+import { gonogo, isSwappedSegment } from '../modules/reaction/gonogo';
 import { pomeh } from '../modules/reaction/pomeh';
 import { pzmr } from '../modules/reaction/pzmr';
 import { reactionModules } from '../modules/registry';
@@ -60,6 +61,16 @@ const summary = (over: Partial<ReactionSummary>): ReactionSummary => ({
   ...over,
 });
 
+/** A plan seed and segment index whose Go/No-Go colours are swapped (F8), or are not. */
+function segmentWhere(swapped: boolean): { planSeed: number; segmentIndex: number } {
+  for (let planSeed = 1; planSeed <= 100; planSeed++) {
+    if (isSwappedSegment(planSeed, 2) === swapped) return { planSeed, segmentIndex: 2 };
+  }
+  throw new Error('no such plan seed');
+}
+const SWAPPING = segmentWhere(true);
+const PLAIN = segmentWhere(false);
+
 /** The reaction modules with trial conditions (COND_PAIRS). */
 const CONDITION_MODULES: readonly ReactionModuleId[] = ['stroop', 'pomeh', 'taskswitch'];
 
@@ -82,7 +93,7 @@ describe('scale', () => {
   });
 
   it('under the e2e scale pomeh, stroop and taskswitch blocks hold MIN_COND_RTS + 2 trials per condition; the others 3', () => {
-    const ctx = { layout: 'keyboard', scale: 0.02, diagnostic: true } as const;
+    const ctx = { layout: 'keyboard', scale: 0.02, diagnostic: true, ...PLAIN } as const;
     const sizes = planDiagnostic(1).segments.flatMap((seg) => {
       const plan = planBlock(seg, seg.fixedL ?? 0, 0, ctx);
       return plan.kind === 'reaction' ? [[plan.module, plan.L, plan.size, plan.practice]] : [];
@@ -106,7 +117,7 @@ describe('scale', () => {
   it('pins the margin (W2-R30): at the levels e2e plays, every condition of every seed keeps MIN_COND_RTS + 2 trials', () => {
     expect(E2E_COND_MARGIN).toBe(2);
     const need = MIN_COND_RTS + E2E_COND_MARGIN;
-    const ctx = { layout: 'keyboard', scale: 0.02, diagnostic: true } as const;
+    const ctx = { layout: 'keyboard', scale: 0.02, diagnostic: true, ...PLAIN } as const;
     // The diagnostic plays each at its fixedL; free training (and a new module's first training) plays L 0.
     const diag = planDiagnostic(1)
       .segments.filter((seg) => CONDITION_MODULES.includes(seg.module as ReactionModuleId))
@@ -138,9 +149,9 @@ describe('scale', () => {
       for (let L = 0; L <= 40; L++) {
         for (const seg of [diagSeg, freeSegment(module)]) {
           const diagnostic = seg.purpose === 'diagnostic';
-          const e2e = reactionPlan(seg, L, { layout: 'keyboard', scale: 0.02, diagnostic });
+          const e2e = reactionPlan(seg, L, { layout: 'keyboard', scale: 0.02, diagnostic, ...PLAIN });
           expect(mod.minCondTrials?.(e2e.params, e2e.size), `${module} L ${String(L)}`).toBeGreaterThanOrEqual(need);
-          expect(planBlock(seg, L, 0, { layout: 'keyboard', scale: 1, diagnostic })).toMatchObject({ size: seg.trialCount ?? mod.blockSize });
+          expect(planBlock(seg, L, 0, { layout: 'keyboard', scale: 1, diagnostic, ...PLAIN })).toMatchObject({ size: seg.trialCount ?? mod.blockSize });
         }
       }
     }
@@ -180,14 +191,14 @@ describe('seeds', () => {
 describe('planBlock', () => {
   it('diagnostic series: count capped by the 20-item schedule, total limit scaled', () => {
     const segment = planDiagnostic(1).segments[5] as Segment;
-    expect(planBlock({ ...segment, items: 50 }, 0, 0, { layout: 'keyboard', scale: 1, diagnostic: true })).toEqual({
+    expect(planBlock({ ...segment, items: 50 }, 0, 0, { layout: 'keyboard', scale: 1, diagnostic: true, ...PLAIN })).toEqual({
       kind: 'numseries',
       diagnostic: true,
       count: 20,
       totalLimitMs: 600_000,
     });
     const noLimit: Segment = { module: 'numseries', budgetMs: 0, purpose: 'diagnostic', items: 20 };
-    expect(planBlock(noLimit, 0, 0, { layout: 'keyboard', scale: 0.5, diagnostic: true })).toMatchObject({
+    expect(planBlock(noLimit, 0, 0, { layout: 'keyboard', scale: 0.5, diagnostic: true, ...PLAIN })).toMatchObject({
       count: 10,
       totalLimitMs: null,
     });
@@ -195,7 +206,7 @@ describe('planBlock', () => {
 
   it('memory: mode by block index, level params, 6 trials (3 under the e2e scale); keys and text per mode', () => {
     const segment: Segment = { module: 'memory', budgetMs: 300_000, purpose: 'free' };
-    const ctx = { layout: 'pult' as const, scale: 1, diagnostic: false };
+    const ctx = { layout: 'pult' as const, scale: 1, diagnostic: false, ...PLAIN };
     const plan = planBlock(segment, 9, 2, ctx);
     expect(plan).toEqual({ kind: 'memory', protocol: 'fixed', L: 9, mode: 'card', params: memoryParams(9), count: 6, overload: false });
     expect(planBlock(segment, 9, 0, { ...ctx, scale: 0.02 })).toMatchObject({ mode: 'digits', count: 3 });
@@ -219,7 +230,7 @@ describe('planBlock', () => {
   it('diagnostic memory: the span protocol, digits at 1000 / 250 ms, the first scaledCount(20) trials', () => {
     const segment = planDiagnostic(1).segments[9] as Segment;
     expect(segment.module).toBe('memory');
-    const ctx = { layout: 'keyboard' as const, scale: 1, diagnostic: true };
+    const ctx = { layout: 'keyboard' as const, scale: 1, diagnostic: true, ...PLAIN };
     const plan = planBlock(segment, 0, 0, ctx);
     expect(plan).toEqual({
       kind: 'memory',
@@ -248,7 +259,7 @@ describe('planBlock', () => {
 });
 
 describe('diagnostic reaction blocks', () => {
-  const ctx = { layout: 'keyboard', scale: 1, diagnostic: true } as const;
+  const ctx = { layout: 'keyboard', scale: 1, diagnostic: true, ...SWAPPING } as const;
   /** Plan and step of block 0, attempt 0 of every reaction segment of diagnostic n. */
   const diagnosticBlocks = (n: number) =>
     planDiagnostic(n).segments.flatMap((seg) => {
@@ -301,11 +312,31 @@ describe('diagnostic reaction blocks', () => {
       const seg = planDiagnostic(1).segments.find((s) => s.module === 'gonogo') as Segment;
       expect(planBlock(seg, seg.fixedL ?? 0, 0, ctx)).toMatchObject({ kind: 'reaction', L: 10, params: DIAGNOSTIC_PARAMS.gonogo });
       expect(spy).not.toHaveBeenCalled();
-      planBlock(freeSegment('gonogo'), 7, 0, { ...ctx, diagnostic: false });
+      planBlock(freeSegment('gonogo'), 7, 0, { ...ctx, ...PLAIN, diagnostic: false });
       expect(spy).toHaveBeenCalledWith(7);
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it('a swapped segment plays swapped colours in training and free, never in a diagnostic', () => {
+    const goOf = (plan: BlockPlan): Stimulus => {
+      const { step } = buildBlock(plan, 9, 'keyboard', new Map());
+      if (step.kind !== 'reaction_block') throw new Error('expected a reaction block');
+      return (step.specs.find((t) => t.expected.kind === 'press') as TrialSpec).stimulus;
+    };
+    const green: Stimulus = { kind: 'shape', shape: 'circle', color: 'green' };
+    const training: Segment = { module: 'gonogo', budgetMs: 360_000, purpose: 'reaction' };
+    for (const seg of [training, freeSegment('gonogo')]) {
+      const swapped = reactionPlan(seg, 12, { ...ctx, ...SWAPPING, diagnostic: false });
+      expect(swapped.params).toEqual({ ...gonogo.params(12), swapped: true });
+      expect(goOf(swapped)).toEqual(green);
+      expect(reactionPlan(seg, 12, { ...ctx, ...PLAIN, diagnostic: false }).params).toEqual(gonogo.params(12));
+    }
+    // ctx has the swapping plan seed and segment: the diagnostic keeps its colours (the snapshots above too).
+    const diag = reactionPlan(diagnosticSegment('gonogo'), 10, ctx);
+    expect(diag.params).toBe(DIAGNOSTIC_PARAMS.gonogo);
+    expect(goOf(diag)).toEqual({ kind: 'shape', shape: 'circle', color: 'red' });
   });
 
   it('the distractors of the diagnostic Помехоустойчивость are those of 0.2.0', () => {
@@ -321,7 +352,7 @@ describe('diagnostic reaction blocks', () => {
 });
 
 describe('reaction blocks', () => {
-  const ctx = { layout: 'keyboard', scale: 1, diagnostic: false } as const;
+  const ctx = { layout: 'keyboard', scale: 1, diagnostic: false, ...PLAIN } as const;
   const free = (module: Segment['module']): Segment => ({ module, budgetMs: 300_000, purpose: 'free' });
 
   it('keys come from keyCount', () => {
@@ -381,7 +412,7 @@ describe('reaction blocks', () => {
 });
 
 describe('overload blocks', () => {
-  const ctx = { layout: 'keyboard', scale: 1, diagnostic: false } as const;
+  const ctx = { layout: 'keyboard', scale: 1, diagnostic: false, ...PLAIN } as const;
   const seg = (module: Segment['module'], overload?: 'finisher' | 'mix'): Segment => ({
     module,
     budgetMs: 300_000,
@@ -601,7 +632,7 @@ describe('number series', () => {
 
   it('diagnostic items have no per-item limit', () => {
     const segment = planDiagnostic(1).segments[5] as Segment;
-    const plan = planBlock(segment, 0, 0, { layout: 'keyboard', scale: 1, diagnostic: true });
+    const plan = planBlock(segment, 0, 0, { layout: 'keyboard', scale: 1, diagnostic: true, ...PLAIN });
     const seed = diagnosticBlockSeed(1, 'numseries', 0, 0);
     const { step: built, paramsJson } = buildBlock(plan, seed, 'keyboard', new Map());
     if (built.kind !== 'numseries_block') throw new Error(built.kind);
@@ -617,7 +648,7 @@ describe('number series', () => {
   });
 
   it('training blocks store each item\'s limit in paramsJson', () => {
-    const plan = planBlock({ module: 'numseries', budgetMs: 0, purpose: 'logic' }, 0, 0, { layout: 'keyboard', scale: 1, diagnostic: false });
+    const plan = planBlock({ module: 'numseries', budgetMs: 0, purpose: 'logic' }, 0, 0, { layout: 'keyboard', scale: 1, diagnostic: false, ...PLAIN });
     const ratings = new Map<FamilyId, Rating>([['arith', { rating: 1900, n: 50 }]]);
     const { step: built, paramsJson } = buildBlock(plan, 9, 'keyboard', ratings);
     if (built.kind !== 'numseries_block') throw new Error(built.kind);

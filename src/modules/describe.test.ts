@@ -21,7 +21,12 @@ describe('describeChanges', () => {
   it('level down shows the change in the other direction', () => {
     expect(describeChanges('gonogo', 20, 19)).toEqual([
       { label: 'Окно ответа', from: '253 мс', to: '265 мс' },
-      { label: 'Доля no-go', from: '30 %', to: '29 %' },
+      { label: 'No-go', from: 'красный круг с белой точкой', to: 'красный квадрат' },
+    ]);
+    expect(describeChanges('gonogo', 8, 7)).toEqual([
+      { label: 'Окно ответа', from: '516 мс', to: '557 мс' },
+      { label: 'Интервал между сигналами', from: '0,4–1,8 с', to: '0,5–2,5 с' },
+      { label: 'Доля no-go', from: '15 %', to: '20 %' },
     ]);
   });
 

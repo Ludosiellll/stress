@@ -150,6 +150,21 @@ describe('createCanvasRenderer', () => {
     expect(fill[0]?.fillStyle).toBe(COLORS.red);
   });
 
+  it('a marked circle carries a white dot of 20 % of its diameter', () => {
+    const { renderer, calls } = setup({ w: 800, h: 600 });
+    calls.length = 0;
+    renderer.show({ kind: 'shape', shape: 'circle', color: 'red', mark: true });
+    expect(named(calls, 'arc').map((c) => c.args)).toEqual([
+      [400, 300, 54, 0, 2 * Math.PI],
+      [400, 300, 0.2 * 54, 0, 2 * Math.PI],
+    ]);
+    expect(named(calls, 'fill').map((c) => c.fillStyle)).toEqual([COLORS.red, COLORS.white]);
+    // Swapped colours: the same dot on the green circle.
+    calls.length = 0;
+    renderer.show({ kind: 'shape', shape: 'circle', color: 'green', mark: true });
+    expect(named(calls, 'fill').map((c) => c.fillStyle)).toEqual([COLORS.green, COLORS.white]);
+  });
+
   const shapes: ShapeId[] = ['circle', 'square', 'triangle', 'diamond', 'hexagon', 'star'];
   const colors: ColorId[] = ['red', 'green', 'yellow', 'blue', 'white', 'purple'];
 

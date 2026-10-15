@@ -42,7 +42,7 @@ function deepFreeze<T>(v: T): DeepReadonly<T> {
 export const DIAGNOSTIC_PARAMS: DeepReadonly<DiagnosticParams> = deepFreeze<DiagnosticParams>({
   pzmr: { windowMs: 1000, isiMin: 500, isiMax: 2500 },
   szmr: { windowMs: 1500, nColors: 2, nKeys: 2, shapeDistractor: false, inversion: false },
-  gonogo: { windowMs: 446, noGoRatio: 0.2, noGoStimulus: 'green_circle' },
+  gonogo: { windowMs: 446, noGoRatio: 0.2, noGoStimulus: 'green_circle', isiMin: 500, isiMax: 2500, swapped: false },
   rdo: { periodMs: 3000, toleranceMs: 60, isiMin: 800, isiMax: 1500 },
   pomeh: {
     windowMs: 456,
