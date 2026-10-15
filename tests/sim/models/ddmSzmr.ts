@@ -7,8 +7,8 @@ import { Rand, buildDdm, countLe, learn, nearestIdx, type DdmCell } from './lear
 /**
  * СЗМР over a 90-day course, played by a two-boundary diffusion learner (spec §8.2; ported from the fixes simulation
  * bands.ts). The rules are the app's: the window and the load from szmr.params(L), the block score from
- * penalizedScore, the level from nextLevel (levelDelta), startLevel and savedLevel. The stability rule is off here
- * (cvMax null).
+ * penalizedScore, the level from nextLevel (levelDelta; a session is one segment, so its first block may take g = 2),
+ * startLevel and savedLevel. The stability rule is off here (cvMax null).
  */
 
 /** Drift rates and boundary separations of the diffusion table: start z = a/2, 2500 trajectories a cell, seed 31. */
@@ -165,6 +165,7 @@ export function runSzmrCourse(seed: number, o: { floors: boolean; policy: Bounda
         score: s,
         calibration: lifetime < CALIBRATION_BLOCKS,
         prevScoreSameSession: prev,
+        firstOfSegment: k === 0,
         cvAll: null,
         lapses: 0,
         lapseLimit: 0,

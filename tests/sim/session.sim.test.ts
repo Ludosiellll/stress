@@ -10,7 +10,7 @@ import { playTimeline, type Respond } from '../../src/testing/sessionPlayers';
 
 /**
  * Rulings R6 / R28a: months of sessions through the real SessionController and MemoryRepository on ПЗМР.
- * Each session starts at startLevel(L_saved, days) (−2, or −3 after a break); L_saved is the median of the
+ * Each session starts at startLevel(L_saved, days) (−1 up to 4 days, −2 for 5–14, −3 beyond; F6); L_saved is the median of the
  * last 3 session-end levels.
  *
  * Player: on each trial it tries with p(L) = 1 / (1 + e^(L − ability)); a try has a lognormal RT (median m,

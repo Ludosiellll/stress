@@ -102,6 +102,8 @@ interface SegmentRun {
   /** Wall-clock ms of the first instruction ack; null before it. */
   clockStart: number | null;
   blocksDone: number;
+  /** A level-moving block (not an overload block) of the segment is stored: the next one is not the first (F6). */
+  levelBlockStored: boolean;
   /** Discards of the current block. */
   attempt: number;
   /** Diagnostics: the current block was already replayed once for timingUnreliable (I1). */
@@ -175,9 +177,11 @@ function compareWithPrevious(earlier: readonly PastDiagnostic[], readiness: numb
  * every block as soon as it ends. The UI renders `step` and calls back; it never touches levels or the repository.
  *
  * - Levels: a segment starts at startLevel(L_saved, days since last training) (diagnostics: fixedL) and moves
- *   by nextLevel after every block. Diagnostics never change levels, module states or ratings.
+ *   by nextLevel after every block; its first stored level-moving block gets g = 2 at s ≥ 0.9 (F6). Diagnostics
+ *   never change levels, module states or ratings.
  * - Overload blocks (Segment.overload): a finisher starts at L_saved + 3 and moves only its own level; a mix
- *   overload block's lAfter goes to history only. Their flag keeps them out of L_saved, fatigue and g = 2.
+ *   overload block's lAfter goes to history only. Their flag keeps them out of L_saved, fatigue and g = 2 (an overload
+ *   block is never a segment's first block).
  * - After each block: addBlock (with its trials / logic items); then the block's in-memory effects; then for
  *   training and free sessions the module state derived from the module's history (listBlockLevels) and, for
  *   number series, the ratings. Writes are tried 3 times (pauses 100 and 500 ms), then `save_error` keeps
@@ -586,6 +590,7 @@ export class SessionController {
       L: this.segmentLevel(segment),
       clockStart: null,
       blocksDone: 0,
+      levelBlockStored: false,
       attempt: 0,
       unreliableReplayed: false,
       lastInstruction: null,
@@ -719,9 +724,11 @@ export class SessionController {
     const seg = this.segment();
     const active = this.block();
     const calibration = b.level !== null && this.isCalibration(b.module);
+    const overload = active.plan.kind !== 'numseries' && active.plan.overload;
+    const firstOfSegment = !overload && !seg.levelBlockStored;
     const input: DeltaInput | null =
       this.counted && b.level !== null
-        ? { score: b.score, calibration, prevScoreSameSession: this.prevScore(b.module), ...b.level }
+        ? { score: b.score, calibration, prevScoreSameSession: this.prevScore(b.module), firstOfSegment, ...b.level }
         : null;
     const lAfter = input === null ? b.L : nextLevel(b.L, input);
     const lines = [...b.lines];
@@ -738,7 +745,7 @@ export class SessionController {
     if (calibration) flags.push('calibration');
     if (b.level?.timingUnreliable === true) flags.push('timing_unreliable');
     if (this.fatigueContinued.has(b.module)) flags.push('fatigued');
-    if (active.plan.kind !== 'numseries' && active.plan.overload) flags.push('overload');
+    if (overload) flags.push('overload');
 
     const id = uuidv4();
     const row = blockRow(id, this.sessionId, { module: b.module, lBefore: b.L, lAfter, score: b.score, flags }, active, JSON.stringify(summary));
@@ -847,6 +854,7 @@ export class SessionController {
     const overload = b.flags.includes('overload');
     this.sessionBlocks.push(b);
     if (!overload || seg.segment.overload === 'finisher') seg.L = lAfter;
+    if (!overload) seg.levelBlockStored = true;
     seg.blocksDone++;
     seg.attempt = 0;
     seg.unreliableReplayed = false;

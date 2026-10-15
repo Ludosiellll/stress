@@ -2,6 +2,7 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import {
   CV_HOLD_CAP,
+  FIRST_BLOCK_BOOST,
   LAPSE_HOLD_CAP,
   TARGET,
   detectFatigue,
@@ -19,6 +20,7 @@ const input = (over: Partial<DeltaInput> = {}): DeltaInput => ({
   score: 0.8,
   calibration: false,
   prevScoreSameSession: null,
+  firstOfSegment: false,
   cvAll: null,
   lapses: 0,
   lapseLimit: 2,
@@ -31,6 +33,7 @@ const deltaInputArb = fc.record({
   score: fc.double({ min: 0, max: 1, noNaN: true }),
   calibration: fc.boolean(),
   prevScoreSameSession: fc.option(fc.double({ min: 0, max: 1, noNaN: true })),
+  firstOfSegment: fc.boolean(),
   cvAll: fc.option(fc.double({ min: 0, max: 2, noNaN: true })),
   lapses: fc.nat({ max: 20 }),
   lapseLimit: fc.integer({ min: 2, max: 10 }),
@@ -147,6 +150,22 @@ describe('levelDelta', () => {
     );
   });
 
+  it('g = 2 in the first level-moving block of a segment only when s ≥ 0.9', () => {
+    const i = { calibration: false, prevScoreSameSession: null, cvAll: null, lapses: 0, lapseLimit: 2, cvMax: 0.22, timingUnreliable: false };
+    expect(levelDelta({ ...i, score: 0.9, firstOfSegment: true })).toBe(1);
+    expect(levelDelta({ ...i, score: 1, firstOfSegment: true })).toBe(2);
+    expect(levelDelta({ ...i, score: 0.89, firstOfSegment: true })).toBeCloseTo(0.45, 12);
+    expect(levelDelta({ ...i, score: 0.9, firstOfSegment: false })).toBe(0.5);
+  });
+
+  it('the first-block boost keeps the stability caps and the other g = 2 rules', () => {
+    expect(FIRST_BLOCK_BOOST).toBe(0.9);
+    expect(levelDelta(input({ score: 0.9 - 1e-12, firstOfSegment: true }))).toBeCloseTo(1, 9);
+    expect(levelDelta(input({ score: 1, firstOfSegment: true, cvAll: 0.3, cvMax: 0.22 }))).toBe(0.5);
+    expect(levelDelta(input({ score: 0.7, firstOfSegment: true, calibration: true }))).toBe(-1);
+    expect(levelDelta(input({ score: 0.89, firstOfSegment: true, prevScoreSameSession: 1 }))).toBeCloseTo(0.9, 12);
+  });
+
   it('rejects a score outside [0, 1]', () => {
     expect(() => levelDelta(input({ score: Number.NaN }))).toThrow(RangeError);
     expect(() => levelDelta(input({ score: -0.05 }))).toThrow(RangeError);
@@ -155,7 +174,7 @@ describe('levelDelta', () => {
 });
 
 describe('stability rule (F2, F-R1)', () => {
-  const base = { calibration: false, prevScoreSameSession: null, cvAll: 0.1, lapses: 0, lapseLimit: 2, cvMax: 0.22, timingUnreliable: false };
+  const base = { calibration: false, prevScoreSameSession: null, firstOfSegment: false, cvAll: 0.1, lapses: 0, lapseLimit: 2, cvMax: 0.22, timingUnreliable: false };
   it('F-R1: CV over cvMax caps the step at +0.5; lapses at the limit cap it at 0 and win', () => {
     expect(levelDelta({ ...base, score: 1 })).toBe(1);
     expect(levelDelta({ ...base, score: 1, cvAll: 0.23 })).toBe(0.5);
@@ -209,25 +228,19 @@ describe('nextLevel', () => {
 });
 
 describe('startLevel', () => {
-  it('drops 2 levels after a short break', () => {
-    expect(startLevel(10, 0)).toBe(8);
-    expect(startLevel(10, 1)).toBe(8);
-    expect(startLevel(10, 4)).toBe(8);
+  it('start drop 1 up to 4 days, 2 for 5–14, 3 beyond (spec §2.4)', () => {
+    expect([0, 4, 5, 14, 15, -3].map((d) => startLevel(10, d))).toEqual([9, 9, 8, 8, 7, 9]);
+    expect(startLevel(0.5, 2)).toBe(0);
   });
 
-  it('drops 3 levels after more than 4 days', () => {
-    expect(startLevel(10, 5)).toBe(7);
-    expect(startLevel(10, 4.5)).toBe(7);
-    expect(startLevel(10, 30)).toBe(7);
+  it('a fraction of a day past a boundary already costs the next drop', () => {
+    expect([4.5, 14.5, 30].map((d) => startLevel(10, d))).toEqual([8, 7, 7]);
   });
 
   it('never goes below 0', () => {
     expect(startLevel(1, 0)).toBe(0);
-    expect(startLevel(0, 10)).toBe(0);
-  });
-
-  it('treats negative daysSince as 0', () => {
-    expect(startLevel(10, -3)).toBe(8);
+    expect(startLevel(2, 10)).toBe(0);
+    expect(startLevel(0, 30)).toBe(0);
   });
 });
 

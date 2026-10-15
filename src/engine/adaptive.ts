@@ -11,8 +11,11 @@ export const CV_HOLD_CAP = 0.5;
 export const LAPSE_HOLD_CAP = 0;
 /** g = 2 also follows a block of the same module in this session with s ≥ 0.95. */
 const BOOST_PREV_SCORE = 0.95;
-/** A break longer than this many days costs 3 levels instead of 2. */
-const LONG_BREAK_DAYS = 4;
+/** g = 2 also in the first level-moving block of a segment when its own s is at least this (F6). */
+export const FIRST_BLOCK_BOOST = 0.9;
+/** A break of up to this many days costs 1 level at session start, up to LONG_BREAK_DAYS 2, a longer one 3 (F6). */
+const SHORT_BREAK_DAYS = 4;
+const LONG_BREAK_DAYS = 14;
 /** L_saved is the median of this many latest session-end levels. */
 const SAVED_WINDOW = 3;
 /** Sessions without a strict new maximum of L_saved that make a plateau. */
@@ -38,6 +41,8 @@ export interface DeltaInput {
   calibration: boolean;
   /** s of the previous block of the same module in this session, if any. */
   prevScoreSameSession: number | null;
+  /** No level-moving block (not overload, warm-up or test-format) of this segment has been stored yet (F6). */
+  firstOfSegment: boolean;
   /** CV_all of the block (stabilityOf); null: too few answers, or a module without RTs. */
   cvAll: number | null;
   /** Lapses of the block (stabilityOf); 0 for modules without RTs. */
@@ -49,7 +54,10 @@ export interface DeltaInput {
   timingUnreliable: boolean;
 }
 
-/** ΔL before the stability rule: g·(s − 0.8)/0.2 clamped to [−2, +3]; 0 for a block whose timing is unreliable. */
+/**
+ * ΔL before the stability rule: g·(s − 0.8)/0.2 clamped to [−2, +3]; 0 for a block whose timing is unreliable. g = 2 in
+ * calibration, after a block of the session with s ≥ 0.95, and in a segment's first block with s ≥ 0.9 (F6).
+ */
 function staircaseStep(i: DeltaInput): number {
   if (!(i.score >= 0 && i.score <= 1)) {
     throw new RangeError(`score must be within [0, 1], got ${String(i.score)}`);
@@ -57,7 +65,8 @@ function staircaseStep(i: DeltaInput): number {
   if (i.timingUnreliable) return 0;
   const boosted =
     i.calibration ||
-    (i.prevScoreSameSession !== null && i.prevScoreSameSession >= BOOST_PREV_SCORE - EPS);
+    (i.prevScoreSameSession !== null && i.prevScoreSameSession >= BOOST_PREV_SCORE - EPS) ||
+    (i.firstOfSegment && i.score >= FIRST_BLOCK_BOOST - EPS);
   const g = boosted ? 2 : 1;
   const raw = snap((g * (i.score - TARGET)) / (1 - TARGET));
   return Math.min(MAX_DELTA, Math.max(MIN_DELTA, raw));
@@ -94,9 +103,10 @@ export function nextLevel(L: number, i: DeltaInput): number {
   return Math.max(0, L + levelDelta(i));
 }
 
-/** L_start = max(0, L_saved − 2), or − 3 after more than 4 days; negative daysSince acts as 0. */
+/** L_start = max(0, L_saved − d): d = 1 up to 4 days, 2 up to 14, 3 beyond (F6); negative daysSince acts as 0. */
 export function startLevel(lSaved: number, daysSince: number): number {
-  const drop = Math.max(0, daysSince) > LONG_BREAK_DAYS ? 3 : 2;
+  const days = Math.max(0, daysSince);
+  const drop = days <= SHORT_BREAK_DAYS ? 1 : days <= LONG_BREAK_DAYS ? 2 : 3;
   return Math.max(0, lSaved - drop);
 }
 

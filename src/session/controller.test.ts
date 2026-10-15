@@ -360,7 +360,7 @@ describe('SessionController — flow', () => {
 
   it('mouse layout falls back to the keyboard when the level needs more than 2 keys', async () => {
     const repo = new MemoryRepository();
-    await repo.saveModuleState(stateWith('szmr', { lSaved: 18, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    await repo.saveModuleState(stateWith('szmr', { lSaved: 17, lastTrainedAt: T0, lifetimeBlocks: 10 }));
     const h = await begin(planFree('szmr', 1), { repo, layout: 'mouse' });
     const instr = expectStep(h.c, 'instruction');
     expect(instr.keysHint).toBe('D, F, J, K');
@@ -371,18 +371,19 @@ describe('SessionController — flow', () => {
 
   it('shows the instruction again when the rules change mid-segment (СЗМР gets a third color)', async () => {
     const repo = new MemoryRepository();
-    await repo.saveModuleState(stateWith('szmr', { lSaved: 9, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    await repo.saveModuleState(stateWith('szmr', { lSaved: 8, lastTrainedAt: T0, lifetimeBlocks: 10 }));
     const h = await begin(planFree('szmr', 1), { repo });
     h.c.ackInstruction();
     const start = h.clock.ms;
     expect(expectStep(h.c, 'reaction_block').L).toBe(7);
     h.clock.advance(4 * MIN);
     await h.c.submitReaction(playTimeline(expectStep(h.c, 'reaction_block').specs, perfectPlayer));
-    expect(expectStep(h.c, 'summary').view.lAfter).toBe(8);
+    // The segment's first block: g = 2 (F6).
+    expect(expectStep(h.c, 'summary').view.lAfter).toBe(9);
     await h.c.continueAfterSummary();
-    expect(expectStep(h.c, 'instruction').text).toBe(szmr.instruction('keyboard', szmr.params(8)));
+    expect(expectStep(h.c, 'instruction').text).toBe(szmr.instruction('keyboard', szmr.params(9)));
     h.c.ackInstruction(); // does not restart the segment clock
-    expect(expectStep(h.c, 'reaction_block').L).toBe(8);
+    expect(expectStep(h.c, 'reaction_block').L).toBe(9);
     h.clock.ms = start + 5 * MIN;
     await h.c.submitReaction(playTimeline(expectStep(h.c, 'reaction_block').specs, perfectPlayer));
     await h.c.continueAfterSummary();
@@ -491,7 +492,7 @@ describe('SessionController — levels and persistence', () => {
     expect(summary.score).toBeCloseTo(0.85, 12);
     expect(summary.penalizedScore).toBeCloseTo(0.65, 12);
     const { cvAll, lapses, lapseLimit } = summary.stability;
-    const input = { score: 0.65, calibration: false, prevScoreSameSession: null, cvAll, lapses, lapseLimit, cvMax: szmr.cvMax, timingUnreliable: false };
+    const input = { score: 0.65, calibration: false, prevScoreSameSession: null, firstOfSegment: true, cvAll, lapses, lapseLimit, cvMax: szmr.cvMax, timingUnreliable: false };
     expect(view.lAfter).toBe(nextLevel(view.lBefore, input));
     // The share 0.85 would have raised the level; s 0.65 takes 0.75 off it.
     expect(view.lAfter).toBe(view.lBefore - 0.75);
@@ -595,7 +596,7 @@ describe('SessionController — levels and persistence', () => {
 
   it('a block with sound that did not play says so', async () => {
     const repo = new MemoryRepository();
-    await repo.saveModuleState(stateWith('pomeh', { lSaved: 20, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    await repo.saveModuleState(stateWith('pomeh', { lSaved: 19, lastTrainedAt: T0, lifetimeBlocks: 10 }));
     const h = await begin(planFree('pomeh', 4), { repo });
     h.c.ackInstruction();
     const block = expectStep(h.c, 'reaction_block');
@@ -668,7 +669,16 @@ describe('SessionController — levels and persistence', () => {
         const key = wrong(idx) ? (expectStep(h.c, 'reaction_block').keys.find((k) => k !== r.key) as InputKey) : r.key;
         return { key, rtMs: idx % 2 === 0 ? 250 : 450 };
       };
+    // s 0.8 and below: no rule, whatever the spread and the lapses. The segment's first block, so the next is not.
+    const weak = await playReaction(
+      h,
+      uneven(() => false, (idx) => idx % 5 === 0),
+    );
+    expect(weak.view.score).toBe(0.8);
+    expect(hasLine(weak.view)).toBe(false);
+    expect(storedSummary(await repo.listBlocks()).stability).toMatchObject({ lapses: 4, held: false, cap: null });
     // s 0.9 (one wrong key) gives +0.5: the CV cap fires but lowers nothing.
+    await h.c.continueAfterSummary();
     const capped = await playReaction(
       h,
       uneven((idx) => idx === 0, () => false),
@@ -682,15 +692,6 @@ describe('SessionController — levels and persistence', () => {
     expect(steady.view.lAfter - steady.view.lBefore).toBe(1);
     expect(hasLine(steady.view)).toBe(false);
     expect(storedSummary(await repo.listBlocks()).stability).toMatchObject({ cvAll: 0, held: false, cap: null });
-    // s 0.8 and below: no rule, whatever the spread and the lapses.
-    await h.c.continueAfterSummary();
-    const weak = await playReaction(
-      h,
-      uneven(() => false, (idx) => idx % 5 === 0),
-    );
-    expect(weak.view.score).toBe(0.8);
-    expect(hasLine(weak.view)).toBe(false);
-    expect(storedSummary(await repo.listBlocks()).stability).toMatchObject({ lapses: 4, held: false, cap: null });
   });
 
   it('a late answer enters CV_all: the CV line shows it and the rule uses it (Р6)', async () => {
@@ -724,11 +725,36 @@ describe('SessionController — levels and persistence', () => {
       h.c.ackInstruction();
       return expectStep(h.c, 'reaction_block').L;
     };
-    expect(await at(new Date(new Date(T0).getTime() - 2 * DAY).toISOString(), 10)).toBe(8);
-    expect(await at(new Date(new Date(T0).getTime() - 6 * DAY).toISOString(), 10)).toBe(7);
-    expect(await at(new Date(new Date(T0).getTime() + 3 * DAY).toISOString(), 10)).toBe(8); // clock went back
+    expect(await at(new Date(new Date(T0).getTime() - 2 * DAY).toISOString(), 10)).toBe(9);
+    expect(await at(new Date(new Date(T0).getTime() - 6 * DAY).toISOString(), 10)).toBe(8);
+    expect(await at(new Date(new Date(T0).getTime() - 20 * DAY).toISOString(), 10)).toBe(7);
+    expect(await at(new Date(new Date(T0).getTime() + 3 * DAY).toISOString(), 10)).toBe(9); // clock went back
     expect(await at(null, 0)).toBe(0);
-    expect(await at(new Date(T0).toISOString(), 1)).toBe(0);
+    expect(await at(new Date(T0).toISOString(), 0.5)).toBe(0);
+  });
+
+  it('days since the last training come from lastTrainedAt: 5 days → −2', async () => {
+    const daysAgo = (d: number): string => new Date(new Date(T0).getTime() - d * DAY).toISOString();
+    const repo = new MemoryRepository();
+    await repo.createSession(session('s5', daysAgo(5), { endedAt: daysAgo(5) }));
+    for (let i = 0; i < 3; i++) await repo.addBlock(block(`n${String(i)}`, 's5', daysAgo(5), { module: 'gonogo', lBefore: 10, lAfter: 10 }), [], []);
+    // An overload block yesterday is not training of the level: the break is still 5 days.
+    await repo.createSession(session('s1', daysAgo(1), { endedAt: daysAgo(1) }));
+    await repo.addBlock(block('o', 's1', daysAgo(1), { module: 'gonogo', lBefore: 13, lAfter: 14, flags: ['overload'] }), [], []);
+    const state = deriveModuleStates(await repo.listSessions(), await repo.listBlocks()).gonogo;
+    expect(state).toMatchObject({ lSaved: 10, lastTrainedAt: daysAgo(5) });
+    await repo.saveModuleState(state);
+    const h = await begin(planFree('gonogo', 1), { repo });
+    h.c.ackInstruction();
+    expect(expectStep(h.c, 'reaction_block').L).toBe(8);
+  });
+
+  it('the first block of a segment gets g = 2 at s ≥ 0.9', async () => {
+    const repo = new MemoryRepository();
+    await repo.saveModuleState(stateWith('pzmr', { lSaved: 6, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    const h = await begin(planFree('pzmr', 1), { repo });
+    const { view } = await playReaction(h);
+    expect(view).toMatchObject({ lBefore: 5, lAfter: 7, flags: [] });
   });
 
   it('calibration covers the first 3 blocks of a module ever', async () => {
@@ -851,16 +877,17 @@ describe('SessionController — levels and persistence', () => {
     const h = await begin(planFree('pzmr', 1), { repo });
     const unreliable = await playReaction(h, perfectPlayer, (idx) => idx < 2); // 2 of 15 onsets dropped > 5 %
     expect(unreliable.view.flags).toEqual(['timing_unreliable']);
-    expect(unreliable.view.lBefore).toBe(8);
-    expect(unreliable.view.lAfter).toBe(8);
+    expect(unreliable.view.lBefore).toBe(9);
+    expect(unreliable.view.lAfter).toBe(9);
     // Module state is re-derived from history: the block counts, but gives no session-end level.
     expect((await h.repo.getModuleStates()).pzmr).toMatchObject({ lifetimeBlocks: 1, sessionEndLevels: [], lSaved: 0 });
 
-    // The unreliable s = 1 does not count as the previous score: g stays 1 for the next block.
+    // The unreliable s = 1 does not count as the previous score: g stays 1 for the next block. That block is not the
+    // segment's first either: the unreliable one is a stored level-moving block (F6).
     await h.c.continueAfterSummary();
     const next = await playReaction(h, (spec, idx) => (idx === 0 ? null : perfectPlayer(spec, idx)));
     expect(next.view.score).toBeCloseTo(14 / 15, 12);
-    expect(next.view.lAfter).toBeCloseTo(8 + (14 / 15 - 0.8) / 0.2, 9);
+    expect(next.view.lAfter).toBeCloseTo(9 + (14 / 15 - 0.8) / 0.2, 9);
   });
 
   it('state writes never read the whole block history (R26); it is read once at session start (О11)', async () => {
@@ -912,7 +939,7 @@ describe('SessionController — levels and persistence', () => {
     const b = await begin(planFree('pzmr', 2), { repo, clock });
     expect(b.c.sessionId).not.toBe(a.c.sessionId);
     b.c.ackInstruction();
-    expect(expectStep(b.c, 'reaction_block').L).toBe(Math.max(0, afterA.lSaved - 2));
+    expect(expectStep(b.c, 'reaction_block').L).toBe(Math.max(0, afterA.lSaved - 1));
     await drive(b, { blockMs: 150_000 });
 
     const sessions = await repo.listSessions();
@@ -1178,6 +1205,16 @@ describe('SessionController — overload', () => {
     expect((await repo.listBlocks()).map((b) => b.flags)).toEqual([['overload'], ['overload']]);
   });
 
+  it("a finisher's first block is an overload block, not the first", async () => {
+    // РДО: the finisher of the development phase on a calibrated module; s 1 moves it by g = 1, not by the first-block g = 2.
+    const repo = new MemoryRepository();
+    await repo.saveModuleState(stateWith('rdo', { lSaved: 10, lastTrainedAt: YESTERDAY, lifetimeBlocks: 10 }));
+    const plan: SessionPlan = { kind: 'training', seed: 21, phase: 'development', segments: [overloadSegment('rdo', 'finisher', 3 * MIN)] };
+    const h = await begin(plan, { repo });
+    const [first] = await playSegment(h, 1);
+    expect(first).toMatchObject({ module: 'rdo', score: 1, lBefore: 13, lAfter: 14, flags: ['overload'] });
+  });
+
   it('finisher blocks leave L_saved alone', async () => {
     const repo = await trainedRepo('szmr', 10);
     const before = (await repo.getModuleStates()).szmr;
@@ -1198,7 +1235,7 @@ describe('SessionController — overload', () => {
     const views = await playSegment(h, 4);
     expect(views.map((v) => v.flags)).toEqual([[], ['overload'], [], ['overload']]);
     const [b0, b1, b2, b3] = views as [BlockSummaryView, BlockSummaryView, BlockSummaryView, BlockSummaryView];
-    expect(b0.lBefore).toBe(8); // startLevel(10, 1 day)
+    expect(b0.lBefore).toBe(9); // startLevel(10, 1 day)
     expect(b1.lBefore).toBe(b0.lAfter + 3);
     // The level after overload block 1 is the level after block 0.
     expect(b2.lBefore).toBe(b0.lAfter);
@@ -1291,7 +1328,7 @@ describe('SessionController — overload', () => {
 
   it('overload table blocks play at L + 3 without sound', async () => {
     const repo = new MemoryRepository();
-    await repo.saveModuleState(stateWith('schulte', { lSaved: 6, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    await repo.saveModuleState(stateWith('schulte', { lSaved: 5, lastTrainedAt: T0, lifetimeBlocks: 10 }));
     const h = await begin(training(overloadSegment('schulte', 'mix')), { repo });
     h.c.ackInstruction();
     const first = expectStep(h.c, 'table_block');

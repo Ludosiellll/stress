@@ -177,7 +177,7 @@ export function fireShare(m: BandModuleId, kind: LearnerKind, load: number): num
     if (!(score > TARGET)) continue;
     eligible++;
     const { cvAll, lapses, lapseLimit } = stabilityOf(specs, results);
-    const input = { score, calibration: false, prevScoreSameSession: null, cvAll, lapses, lapseLimit, cvMax, timingUnreliable: false };
+    const input = { score, calibration: false, prevScoreSameSession: null, firstOfSegment: false, cvAll, lapses, lapseLimit, cvMax, timingUnreliable: false };
     if (stabilityHold(input) !== null) fired++;
   }
   const share = fired / Math.max(1, eligible);
