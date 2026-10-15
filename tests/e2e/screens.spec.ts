@@ -1,7 +1,7 @@
 import type { JSHandle, Page } from '@playwright/test';
 import { chooseExportFile, exportedFile, openApp, pageDate, playSession, setPressDelay } from './bot';
 import { NORM_HINTS } from '../../src/engine/norms';
-import { E2E_URL, expect, freshPage, lineCount, shot, test } from './fixtures';
+import { E2E_URL, expect, freshPage, lineCount, pauseWithEscape, shot, test } from './fixtures';
 
 /**
  * Screenshots of every screen at 1280×800 into test-results/screens/<name>.png for the visual check
@@ -40,15 +40,9 @@ async function untilInstruction(page: Page, title: string, text?: string): Promi
   }
 }
 
-/**
- * Ends the session from the block summary on display (Escape → «Завершить сессию») and waits for Home. The
- * session takes Escape only when no controller call runs («Дальше» enabled) and from the task after the screen
- * mounted (useKeyDown attaches its listener in a timeout), so the press waits for both.
- */
+/** Ends the session from the block summary on display (Escape → «Завершить сессию») and waits for Home. */
 async function endSessionFromSummary(page: Page): Promise<void> {
-  await expect(page.getByRole('button', { name: 'Дальше' })).toBeEnabled();
-  await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => { requestAnimationFrame(() => { r(); }); })));
-  await page.keyboard.press('Escape');
+  await pauseWithEscape(page);
   await page.getByRole('button', { name: 'Завершить сессию' }).click();
   await expect(page.getByRole('button', { name: 'Начать тренировку' })).toBeVisible();
 }
@@ -396,8 +390,7 @@ test('screens: a training session with pause, wellbeing and done; schulte', asyn
   await openApp(page, E2E_URL);
   await page.getByRole('button', { name: 'Начать тренировку' }).click();
   await playSession(page, { stopAt: 'instruction' });
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('heading', { name: 'Пауза' })).toBeVisible();
+  await pauseWithEscape(page);
   await shot(page, 'pause');
   await page.getByRole('button', { name: 'Продолжить', exact: true }).click();
 
@@ -481,7 +474,7 @@ test('screens: the overload phase on Home; memory grid, card and grid answer', a
   await untilInstruction(page, 'Память', 'На карточке');
   await begin(page);
   await shootMemoryTrial(page, { row: 'memory-card' });
-  await page.keyboard.press('Escape');
+  await pauseWithEscape(page);
   await page.getByRole('button', { name: 'Завершить сессию' }).click();
   await expect(page.getByRole('button', { name: 'Начать тренировку' })).toBeVisible();
 });

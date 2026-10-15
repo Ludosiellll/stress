@@ -60,6 +60,20 @@ export async function shot(page: Page, name: string, fullPage = false): Promise<
   expect(statSync(path).size, path).toBeGreaterThan(1000);
 }
 
+/**
+ * Opens the pause menu with Escape and waits for it. A session screen listens to keys only while no controller call
+ * runs, and from the task after it mounted (useKeyDown attaches its listener in a timeout), so an Escape pressed right
+ * after a screen came up can be lost. The press is repeated until «Пауза» shows; a second press does nothing, because
+ * the pause menu ignores Escape.
+ */
+export async function pauseWithEscape(page: Page): Promise<void> {
+  const pause = page.getByRole('heading', { name: 'Пауза' });
+  await expect(async () => {
+    await page.keyboard.press('Escape');
+    await expect(pause).toBeVisible({ timeout: 1_000 });
+  }).toPass({ timeout: 20_000 });
+}
+
 /** The number of lines the element's text is laid out on (distinct tops of its text boxes). */
 export function lineCount(element: Locator): Promise<number> {
   return element.evaluate((el) => {

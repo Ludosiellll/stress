@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { cancelPendingPresses, openApp, pageDate, playSession, type Screen } from './bot';
-import { E2E_URL, expect, lineCount, shot, test } from './fixtures';
+import { E2E_URL, expect, lineCount, pauseWithEscape, shot, test } from './fixtures';
 
 // Whole sessions at scale 0.02 still take tens of seconds each.
 test.describe.configure({ timeout: 240_000 });
@@ -252,7 +252,7 @@ test('settings layout pult changes key hints to arrows', async ({ page }) => {
   const titles: string[] = [];
   await playSession(page, { stopAt: 'summary', onScreen: checkSummaries(page, titles) });
   expect(titles).toEqual(['ПЗМР']);
-  await page.keyboard.press('Escape');
+  await pauseWithEscape(page);
   await page.getByRole('button', { name: 'Завершить сессию' }).click();
   await expect(home(page)).toBeVisible();
 });
@@ -277,8 +277,7 @@ test('escape pauses and the pause menu resumes or ends the session', async ({ pa
   await openApp(page, E2E_URL);
   await home(page).click();
   await playSession(page, { stopAt: 'instruction' });
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('heading', { name: 'Пауза' })).toBeVisible();
+  await pauseWithEscape(page);
   await expect(page.getByText('Уже сохранённые блоки не пропадут.')).toBeVisible();
   await page.getByRole('button', { name: 'Продолжить', exact: true }).click();
   await expect(page.locator('.instruction')).toBeVisible();
@@ -287,16 +286,14 @@ test('escape pauses and the pause menu resumes or ends the session', async ({ pa
   await page.getByRole('button', { name: 'Начать (Enter)' }).click();
   await waitForStimuli(page, 1);
   await cancelPendingPresses(page);
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('heading', { name: 'Пауза' })).toBeVisible();
+  await pauseWithEscape(page);
   await expect(page.getByText('Блок начнётся заново. Уже сохранённые блоки не пропадут.')).toBeVisible();
   await page.getByRole('button', { name: 'Продолжить блок заново' }).click();
   const titles: string[] = [];
   await playSession(page, { stopAt: 'summary', onScreen: checkSummaries(page, titles) });
   expect(titles).toEqual(['ПЗМР']);
 
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('heading', { name: 'Пауза' })).toBeVisible();
+  await pauseWithEscape(page);
   await page.getByRole('button', { name: 'Завершить сессию' }).click();
   await expect(home(page)).toBeVisible();
 });
