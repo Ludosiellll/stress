@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { block, session } from '../data/repository.contract';
+import { pzmr } from '../modules/reaction/pzmr';
 import { szmr } from '../modules/reaction/szmr';
 import type { BlockRow } from '../data/rows';
 import type { ModuleId } from '../engine/types';
@@ -183,6 +184,34 @@ describe('normSamples', () => {
       // The diagnostic window is wide: its norms stay.
       expect(normSamples(reaction(module, { ...clean, miss: 1 }), 'diagnostic')).not.toEqual([]);
     }
+  });
+
+  it('ПЗМР and СЗМР in training: the published norms grade only a block without noise and sound (T-R23)', () => {
+    const clean = { hit: 15, miss: 0, late: 0 };
+    const played = (module: 'pzmr' | 'szmr', paramsJson: string): BlockRow =>
+      row({ module, lBefore: 5, paramsJson, summaryJson: JSON.stringify({ meanRt: 262.4, sdRt: 50.2, counts: clean }) });
+    const norms = [
+      { id: 'pzmrMean', value: 262 },
+      { id: 'pzmrSd', value: 50 },
+    ];
+    // Band 0: a quiet screen. Band 3 (L 12): far figures; band 4 (L 16): figures and sound.
+    expect(pzmr.params(0)).toMatchObject({ noise: null, audio: null });
+    expect(normSamples(played('pzmr', JSON.stringify(pzmr.params(0))), 'training')).toEqual(norms);
+    expect(pzmr.params(12)).toMatchObject({ noise: { farOnly: true }, audio: null });
+    expect(normSamples(played('pzmr', JSON.stringify(pzmr.params(12))), 'training')).toEqual([]);
+    expect(pzmr.params(16).audio).not.toBeNull();
+    expect(normSamples(played('pzmr', JSON.stringify(pzmr.params(16))), 'free')).toEqual([]);
+    // A 2-choice СЗМР block with sound (a damaged or future row) is not graded either.
+    expect(normSamples(played('szmr', '{"nColors":2,"nKeys":2}'), 'training')).toEqual([{ id: 'szmrMean', value: 262 }]);
+    expect(normSamples(played('szmr', '{"nColors":2,"nKeys":2,"audio":{"layers":["hum"],"gain":0.5}}'), 'training')).toEqual([]);
+    // Read defensively: a damaged value, or parameters that cannot be read, leave the block ungraded; an old row without
+    // the fields is quiet.
+    expect(normSamples(played('pzmr', '{"windowMs":300,"noise":"x"}'), 'training')).toEqual([]);
+    expect(normSamples(played('pzmr', '{"windowMs":300,"audio":0}'), 'training')).toEqual([]);
+    expect(normSamples(played('pzmr', 'not json'), 'training')).toEqual([]);
+    expect(normSamples(played('pzmr', '{"windowMs":300}'), 'training')).toEqual(norms);
+    // A diagnostic plays the frozen 0.2.0 parameters: graded as before, whatever the row says.
+    expect(normSamples(played('pzmr', JSON.stringify(pzmr.params(16))), 'diagnostic')).toEqual(norms);
   });
 
   it('СЗМР: the 2-choice norm only for 2 colours on 2 keys, by the parameters of its level', () => {

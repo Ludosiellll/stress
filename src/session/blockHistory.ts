@@ -230,14 +230,24 @@ function szmrPlayed(paramsJson: string, lBefore: number): { nColors: number; nKe
 type NormRow = Pick<BlockRow, 'module' | 'lBefore' | 'flags' | 'paramsJson'>;
 
 /**
+ * No figures and no sound in the stored parameters: an absent or null `noise` and `audio` (a block from before the load
+ * bands has neither field). A damaged value, or parameters that cannot be read, do not count as quiet.
+ */
+function playedQuiet(paramsJson: string): boolean {
+  const params = parseObject(paramsJson);
+  return params !== null && (params['noise'] ?? null) === null && (params['audio'] ?? null) === null;
+}
+
+/**
  * Training and free sessions: the response window cuts the slow answers off, so the mean of the hits grades too well
  * unless every trial was answered in time. ПЗМР and СЗМР get their norms only from a block without misses and late
- * answers that is not an overload block (FW2); the diagnostic window is wide, so its blocks always do.
+ * answers that is not an overload block (FW2) and played on a quiet screen without sound, as the published norms were
+ * measured (T-R23); the diagnostic plays the frozen 0.2.0 parameters with a wide window, so its blocks always do.
  */
 function rtGradable(row: NormRow, summary: Json | null, kind: SessionKind): boolean {
   if (!isCountedSession(kind)) return true;
   const counts = objectField(summary, 'counts');
-  return !row.flags.includes('overload') && num(counts, 'miss') === 0 && num(counts, 'late') === 0;
+  return !row.flags.includes('overload') && num(counts, 'miss') === 0 && num(counts, 'late') === 0 && playedQuiet(row.paramsJson);
 }
 
 function normsFrom(row: NormRow, summary: Json | null, kind: SessionKind): NormSample[] {
