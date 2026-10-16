@@ -263,9 +263,19 @@ export class SqliteRepository implements Repository {
     }));
   }
 
+  /**
+   * The params are read for the band and the window only (T-R78): a band module's paramsJson carries noise lists of
+   * 1–2 KB, and Home, rebuildCaches and every block save read these rows. `->` keeps each value as stored (a band of
+   * `true` or `"2"` stays one, so storedBand reads it as it reads the full row); a key that is absent becomes null, and
+   * params that are no JSON become `{}` (json_object would reject them).
+   */
   async listBlockLevels(module: ModuleId): Promise<BlockLevelRow[]> {
     const rows = await this.db.select<Pick<BlockDb, 'id' | 'session_id' | 'module' | 'l_after' | 'flags_json' | 'started_at' | 'params_json'>>(
-      'SELECT id, session_id, module, l_after, flags_json, started_at, params_json FROM blocks WHERE module = ? ORDER BY started_at, rowid',
+      `SELECT id, session_id, module, l_after, flags_json, started_at,
+         CASE WHEN json_valid(params_json)
+           THEN json_object('band', params_json -> '$.band', 'windowMs', params_json -> '$.windowMs')
+           ELSE '{}' END AS params_json
+       FROM blocks WHERE module = ? ORDER BY started_at, rowid`,
       [module],
     );
     return rows.map((r) => ({

@@ -32,7 +32,11 @@ export interface BlockLevelRow {
   lAfter: number;
   flags: BlockFlag[];
   startedAt: string;
-  /** Read for its band: a band module's block without one is of the old level rule (Р9). */
+  /**
+   * Only the band and the window of the stored params, `{"band":…,"windowMs":…}` with each value as stored (null when
+   * absent), `{}` for params that are no JSON (T-R78). The band: a band module's block without one is of the old level
+   * rule (Р9); the window: the fallback floor of a session whose block history could not be read (levelFloors).
+   */
   paramsJson: string;
 }
 

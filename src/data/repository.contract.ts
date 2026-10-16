@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveModuleStates, MODULE_IDS } from '../engine/derive';
+import { deriveModuleStates, MODULE_IDS, storedBand } from '../engine/derive';
 import type { ModuleState } from '../engine/planner';
 import { LOG_LIMIT, type Repository } from './repository';
 import type { BlockRow, DiagnosticRow, LogicItemRow, LogRow, SessionRow, TrialRow, WellbeingRow } from './rows';
@@ -248,22 +248,65 @@ export function repositoryContract(make: () => Promise<Repository>): void {
       await repo.addBlock(block('b3', 's2', T3, { lAfter: 9, flags: ['timing_unreliable'] }), [trial('t1', 'b3', 0)], []);
       await repo.addBlock(block('b1', 's1', T1, { lAfter: 4, flags: ['calibration'] }), [], []);
       await repo.addBlock(block('bx', 's1', T2, { module: 'gorbov' }), [], []);
-      await repo.addBlock(block('b2', 's1', T3, { lAfter: 5, paramsJson: '{"band":1,"windowMs":480}' }), [], []);
+      // A band module's params carry noise lists and more: the light row keeps only the band and the window (T-R78).
+      const noise = { count: 10, colors: Array<string>(40).fill('gray'), positions: Array<number>(80).fill(0.25) };
+      await repo.addBlock(block('b2', 's1', T3, { lAfter: 5, paramsJson: JSON.stringify({ band: 1, windowMs: 480, noise, bandLabel: 'интервал 0,3–3 с' }) }), [], []);
       const rows = await repo.listBlockLevels('pzmr');
-      const params = '{"windowMs":512}';
-      expect(rows).toEqual([
-        { id: 'b1', sessionId: 's1', module: 'pzmr', lAfter: 4, flags: ['calibration'], startedAt: T1, paramsJson: params },
-        { id: 'b3', sessionId: 's2', module: 'pzmr', lAfter: 9, flags: ['timing_unreliable'], startedAt: T3, paramsJson: params },
-        { id: 'b2', sessionId: 's1', module: 'pzmr', lAfter: 5, flags: [], startedAt: T3, paramsJson: '{"band":1,"windowMs":480}' },
+      expect(rows.map(({ paramsJson, ...r }) => ({ ...r, params: JSON.parse(paramsJson) as unknown }))).toEqual([
+        { id: 'b1', sessionId: 's1', module: 'pzmr', lAfter: 4, flags: ['calibration'], startedAt: T1, params: { band: null, windowMs: 512 } },
+        { id: 'b3', sessionId: 's2', module: 'pzmr', lAfter: 9, flags: ['timing_unreliable'], startedAt: T3, params: { band: null, windowMs: 512 } },
+        { id: 'b2', sessionId: 's1', module: 'pzmr', lAfter: 5, flags: [], startedAt: T3, params: { band: 1, windowMs: 480 } },
       ]);
-      // The same paramsJson as the full rows (Р9: the old level rule reads its band).
-      const full = new Map((await repo.listBlocks()).map((b) => [b.id, b.paramsJson]));
-      for (const r of rows) expect(r.paramsJson).toBe(full.get(r.id));
       rows[0]?.flags.push('fatigued');
       expect((await repo.listBlockLevels('pzmr'))[0]?.flags).toEqual(['calibration']);
       // The light rows are enough for deriveModuleStates and agree with full rows.
       const sessions = await repo.listSessions();
       expect(deriveModuleStates(sessions, rows).pzmr).toEqual(deriveModuleStates(sessions, await repo.listBlocks()).pzmr);
+    });
+
+    it('listBlockLevels reads the band and the window as the full rows do, whatever the params (Р9, T-R78)', async () => {
+      const repo = await make();
+      await repo.createSession(session('s1', T1));
+      const params = [
+        '{"band":2,"windowMs":360}',
+        '{"band":2.0,"windowMs":360.5}',
+        '{"band":2.5}',
+        '{"band":-1}',
+        '{"band":true,"windowMs":true}',
+        '{"band":"2","windowMs":"360"}',
+        '{"band":{"x":1},"windowMs":[360]}',
+        '{"band":null}',
+        '{}',
+        '[1,2]',
+        'null',
+        'not json',
+        '{"band":3',
+      ];
+      for (const [i, paramsJson] of params.entries()) {
+        await repo.addBlock(block(`b${String(i)}`, 's1', new Date(Date.parse(T1) + i * 1000).toISOString(), { lAfter: i, paramsJson }), [], []);
+      }
+      const light = await repo.listBlockLevels('pzmr');
+      const full = await repo.listBlocks();
+      expect(light.map((r) => r.id)).toEqual(full.map((r) => r.id));
+      /** A field of the params as a reader of the JSON gets it; undefined: none. */
+      const field = (json: string, key: string): unknown => {
+        try {
+          const v: unknown = JSON.parse(json);
+          return typeof v === 'object' && v !== null && !Array.isArray(v) ? ((v as Record<string, unknown>)[key] ?? undefined) : undefined;
+        } catch {
+          return undefined;
+        }
+      };
+      light.forEach((r, i) => {
+        const f = full[i]?.paramsJson ?? '';
+        expect(storedBand(r.paramsJson), f).toBe(storedBand(f));
+        expect(field(r.paramsJson, 'band') ?? null, f).toEqual(field(f, 'band') ?? null);
+        expect(field(r.paramsJson, 'windowMs') ?? null, f).toEqual(field(f, 'windowMs') ?? null);
+        // Nothing else rides along.
+        expect(Object.keys((JSON.parse(r.paramsJson) as object | null) ?? {}).filter((k) => k !== 'band' && k !== 'windowMs'), f).toEqual([]);
+      });
+      const sessions = await repo.listSessions();
+      expect(deriveModuleStates(sessions, light)).toEqual(deriveModuleStates(sessions, full));
     });
 
     it('rejects trials or items that name another block', async () => {

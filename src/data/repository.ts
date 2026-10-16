@@ -50,7 +50,7 @@ export interface Repository {
   listSessions(): Promise<SessionRow[]>;
   /** By startedAt. */
   listBlocks(): Promise<BlockRow[]>;
-  /** Light rows of one module's blocks for deriveModuleStates (R26), by startedAt (ties: insertion). */
+  /** Light rows of one module's blocks for deriveModuleStates (R26), by startedAt (ties: insertion); params: band and window only. */
   listBlockLevels(module: ModuleId): Promise<BlockLevelRow[]>;
   /** Trials of one block by idx. */
   listTrials(blockId: string): Promise<TrialRow[]>;

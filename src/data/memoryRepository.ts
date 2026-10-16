@@ -35,6 +35,21 @@ function assertAllNew(stored: readonly { id: string }[], rows: readonly { id: st
   }
 }
 
+/**
+ * The params of a light row, as the SQLite repository selects them (T-R78): the band and the window as stored, null
+ * when absent; `{}` for params that are no JSON.
+ */
+function lightParams(paramsJson: string): string {
+  let params: unknown;
+  try {
+    params = JSON.parse(paramsJson);
+  } catch {
+    return '{}';
+  }
+  const p = typeof params === 'object' && params !== null && !Array.isArray(params) ? (params as Record<string, unknown>) : {};
+  return JSON.stringify({ band: p['band'] ?? null, windowMs: p['windowMs'] ?? null });
+}
+
 /** In-memory Repository with the same contract as SqliteRepository (tests, web preview). */
 export class MemoryRepository implements Repository {
   private readonly sessions: SessionRow[] = [];
@@ -132,7 +147,7 @@ export class MemoryRepository implements Repository {
       sortedCopies(
         this.blocks.filter((b) => b.module === module),
         (b) => b.startedAt,
-      ).map((b) => ({ id: b.id, sessionId: b.sessionId, module: b.module, lAfter: b.lAfter, flags: b.flags, startedAt: b.startedAt, paramsJson: b.paramsJson })),
+      ).map((b) => ({ id: b.id, sessionId: b.sessionId, module: b.module, lAfter: b.lAfter, flags: b.flags, startedAt: b.startedAt, paramsJson: lightParams(b.paramsJson) })),
     );
   }
 
