@@ -113,6 +113,11 @@ export interface DiagnosticResults extends DiagnosticMetrics {
    * series, not comparable with v2).
    */
   seriesForm: 'v2' | null;
+  /**
+   * The form (0–5) the number series played (T-R73): the next diagnostic plays the one after it. null in rows stored
+   * before it, and when the series was not played.
+   */
+  seriesFormIndex: number | null;
 }
 
 /** What makes two diagnostics comparable: Горбов on one table or on three (F10), the number-series forms (F12). */
@@ -128,6 +133,7 @@ export const EMPTY_RESULTS: Readonly<DiagnosticResults> = Object.freeze({
   restarts: Object.freeze({}),
   gorbovOneTable: false,
   seriesForm: null,
+  seriesFormIndex: null,
 });
 
 const REACTION_IDS: readonly string[] = REACTION_MODULE_IDS;
@@ -171,7 +177,8 @@ function gorbovOf(v: unknown): DiagnosticMetrics['gorbov'] {
  * read as reliable (I1), rows without `restarts` as having none (F11). A damaged or imported row is read field by field
  * (FW9, T-R22): a metric that is not a finite number, or a Горбов result without numeric V, P and Π, reads as null; damaged
  * restarts as restartsOf reads them; a gorbovOneTable that is not `true` reads false (F10), a seriesForm that is not
- * 'v2' null (F12); unknown entries are dropped. Structural: DiagnosticRow fits.
+ * 'v2' null (F12), a seriesFormIndex that is not a whole number 0…5 null (T-R73); unknown entries are dropped.
+ * Structural: DiagnosticRow fits.
  */
 export function parseResults(row: { readonly resultsJson: string }): DiagnosticResults | null {
   let value: unknown;
@@ -191,7 +198,13 @@ export function parseResults(row: { readonly resultsJson: string }): DiagnosticR
     restarts: restartsOf(r['restarts']),
     gorbovOneTable: r['gorbovOneTable'] === true,
     seriesForm: r['seriesForm'] === 'v2' ? 'v2' : null,
+    seriesFormIndex: formIndexOf(r['seriesFormIndex']),
   };
+}
+
+/** A stored form index: a whole number 0…5; anything else reads as null (T-R22, T-R73). */
+function formIndexOf(v: unknown): number | null {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 0 && v < SERIES_FORMS ? v : null;
 }
 
 /**
@@ -241,9 +254,26 @@ export function diagnosticSeriesSchedule(): { family: FamilyId; targetD: number 
  * repeat an earlier one of its form (T-R72).
  */
 export function diagnosticSeriesSeed(seedIndex: number, itemNumber: number, retry = 0): number {
-  const form = (((seedIndex - 1) % SERIES_FORMS) + SERIES_FORMS) % SERIES_FORMS;
-  const base = 'series-form:' + String(form) + ':' + String(itemNumber);
+  const base = 'series-form:' + String(seriesFormOf(seedIndex)) + ':' + String(itemNumber);
   return hashString(retry === 0 ? base : base + ':' + String(retry));
+}
+
+/** The form of seed index `seedIndex`: (seedIndex − 1) mod 6, from 0 (F12). */
+export function seriesFormOf(seedIndex: number): number {
+  return (((seedIndex - 1) % SERIES_FORMS) + SERIES_FORMS) % SERIES_FORMS;
+}
+
+/**
+ * The form the next diagnostic's number series plays (T-R73): the one after the form the latest stored diagnostic played
+ * (`earlier` in stored order; the last one with a seriesFormIndex), or seriesFormOf(seedIndex) when none stored one. A
+ * restart of the task moves on from there, so no form is played twice in a row, restarts included.
+ */
+export function nextSeriesForm(earlier: readonly Pick<DiagnosticResults, 'seriesFormIndex'>[], seedIndex: number): number {
+  for (let i = earlier.length - 1; i >= 0; i--) {
+    const last = (earlier[i] as Pick<DiagnosticResults, 'seriesFormIndex'>).seriesFormIndex;
+    if (last !== null) return (last + 1) % SERIES_FORMS;
+  }
+  return seriesFormOf(seedIndex);
 }
 
 /**

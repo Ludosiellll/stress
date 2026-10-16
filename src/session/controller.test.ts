@@ -3265,9 +3265,10 @@ describe('SessionController — diagnostics', () => {
       gorbov: gorbovMetrics(7.2, 7.5, 14.7),
       numseriesCorrect: 20,
       unreliable: [],
-      // F10: the three Горбов tasks on one table; F12: the number-series forms v2.
+      // F10: the three Горбов tasks on one table; F12: the number-series forms v2, form 0 played (T-R73).
       gorbovOneTable: true,
       seriesForm: 'v2',
+      seriesFormIndex: 0,
     };
     const done = expectStep(h.c, 'done');
     expect(done.diagnostic).toEqual(expected);
@@ -3514,6 +3515,7 @@ describe('SessionController — diagnostics', () => {
       restarts: {},
       gorbovOneTable: true,
       seriesForm: 'v2',
+      seriesFormIndex: 0,
     });
     const [row] = await h.repo.listDiagnostics();
     expect(JSON.parse(row?.resultsJson ?? '')).toEqual(done.diagnostic);
@@ -3796,6 +3798,55 @@ describe('SessionController — diagnostics', () => {
     expect(seeds()).toEqual(form(1));
     // Every item comes from its scheduled family, whatever the form.
     expect(expectStep(h.c, 'numseries_block').items.map((it) => it.family)).toEqual(diagnosticSeriesSchedule().map((e) => e.family));
+  });
+
+  /** A diagnostic of the number series alone. */
+  const seriesOnly = (n: number, seedIndex = n): SessionPlan => {
+    const plan = planDiagnostic(n, seedIndex);
+    return { ...plan, segments: [plan.segments[5] as Segment] };
+  };
+  const formSeeds = (form: number): number[] => diagnosticSeriesItems(form + 1).map((it) => it.seed);
+
+  it('a restart never makes the next diagnostic replay its form; the form played is stored (T-R73)', async () => {
+    const repo = new MemoryRepository();
+    // Diagnostic 1 (seed index 1, form 0) restarts its series once and plays form 1 in full.
+    const first = await begin(seriesOnly(1), { repo });
+    first.c.ackInstruction();
+    const seeds = (h: Harness): number[] => expectStep(h.c, 'numseries_block').items.map((it) => it.seed);
+    expect(seeds(first)).toEqual(formSeeds(0));
+    expect(await first.c.discardBlock('focus_lost', 0.3)).toEqual({ kind: 'restarted' });
+    expect(seeds(first)).toEqual(formSeeds(1));
+    await first.c.submitNumSeries(perfectSeriesAnswers(expectStep(first.c, 'numseries_block').items));
+    await drive(first);
+    expect(expectStep(first.c, 'done').diagnostic?.seriesFormIndex).toBe(1);
+    const [stored] = await repo.listDiagnostics();
+    expect(parseResults(stored ?? { resultsJson: '' })?.seriesFormIndex).toBe(1);
+    // Diagnostic 2 (seed index 2, whose own form is 1) plays form 2: form 1 does not come twice in a row.
+    const second = await begin(seriesOnly(2), { repo });
+    second.c.ackInstruction();
+    expect(seeds(second)).toEqual(formSeeds(2));
+    // Its Esc restart moves on to form 3.
+    expect(await second.c.discardBlock('user', 0.5)).toEqual({ kind: 'restarted' });
+    second.c.ackNotice();
+    expect(seeds(second)).toEqual(formSeeds(3));
+    await second.c.submitNumSeries(perfectSeriesAnswers(expectStep(second.c, 'numseries_block').items));
+    await drive(second);
+    expect(expectStep(second.c, 'done').diagnostic?.seriesFormIndex).toBe(3);
+    // Diagnostic 3 then plays form 4.
+    const third = await begin(seriesOnly(3), { repo });
+    third.c.ackInstruction();
+    expect(seeds(third)).toEqual(formSeeds(4));
+  });
+
+  it('after diagnostics stored without a form, the form of the seed index (T-R73)', async () => {
+    const repo = new MemoryRepository();
+    const oldRow = Object.fromEntries(Object.entries({ ...EMPTY_RESULTS, seriesForm: 'v2', numseriesCorrect: 12 }).filter(([k]) => k !== 'seriesFormIndex'));
+    await repo.createSession(session('old', T0, { kind: 'diagnostic', endedAt: T0 }));
+    await repo.addDiagnostic({ id: 'd-old', sessionId: 'old', number: 1, at: T0, resultsJson: JSON.stringify(oldRow) });
+    const h = await begin(seriesOnly(2, 4), { repo });
+    h.c.ackInstruction();
+    // Seed index 4: form 3.
+    expect(expectStep(h.c, 'numseries_block').items.map((it) => it.seed)).toEqual(formSeeds(3));
   });
 });
 

@@ -507,19 +507,17 @@ describe('diagnostic reaction blocks', () => {
     // A change of the generator, the checks or the schedule must not change a form unnoticed (spec §4.8).
     const seg = diagnosticSegment('numseries');
     const plan = planBlock(seg, 0, 0, ctx);
-    const form = (seedIndex: number): string[] => {
-      const { step } = buildBlock(plan, 0, 'keyboard', new Map(), { seriesSeedIndex: seedIndex });
+    const form = (seriesForm: number): string[] => {
+      const { step } = buildBlock(plan, 0, 'keyboard', new Map(), { seriesForm });
       if (step.kind !== 'numseries_block') throw new Error(step.kind);
       return step.items.map((it, i) => `${String(i + 1)} ${it.family}: ${it.shown.join(', ')} → ${String(it.answer)}`);
     };
-    for (let seedIndex = 1; seedIndex <= SERIES_FORMS; seedIndex++) {
-      const items = form(seedIndex);
+    for (let f = 0; f < SERIES_FORMS; f++) {
+      const items = form(f);
       expect(items).toHaveLength(20);
-      expect(items).toMatchSnapshot(`series form ${String(seedIndex - 1)}`);
+      expect(items).toMatchSnapshot(`series form ${String(f)}`);
     }
-    // Diagnostic 7 plays form 0 again.
-    expect(form(7)).toEqual(form(1));
-    expect(form(2)).not.toEqual(form(1));
+    expect(form(1)).not.toEqual(form(0));
   });
 
   it('a diagnostic block takes DIAGNOSTIC_PARAMS, never params(fixedL)', () => {
@@ -1321,16 +1319,17 @@ describe('number series', () => {
     const segment = planDiagnostic(1).segments[5] as Segment;
     const plan = planBlock(segment, 0, 0, { layout: 'keyboard', scale: 1, diagnostic: true, ...PLAIN });
     const seed = diagnosticBlockSeed(1, 'numseries', 0, 0);
-    const { step: built, paramsJson } = buildBlock(plan, seed, 'keyboard', new Map(), { seriesSeedIndex: 3 });
+    const { step: built, paramsJson } = buildBlock(plan, seed, 'keyboard', new Map(), { seriesForm: 2 });
     if (built.kind !== 'numseries_block') throw new Error(built.kind);
     const schedule = diagnosticSeriesSchedule();
-    // The form of seed index 3 (diagnosticSeriesItems: aimed and without repeats, T-R72), from the schedule of spec §4.8.
+    // Form 2, the form of seed index 3 (diagnosticSeriesItems: aimed and without repeats, T-R72), from the schedule of
+    // spec §4.8.
     expect(built.items).toEqual(diagnosticSeriesItems(3).map((it) => ({ ...it, timeLimitMs: null })));
     expect(built.items.map((it) => it.family)).toEqual(schedule.map((e) => e.family));
     // The block's own seed plays no part: the form is the item seeds.
-    const other = buildBlock(plan, seed + 1, 'keyboard', new Map(), { seriesSeedIndex: 3 }).step;
+    const other = buildBlock(plan, seed + 1, 'keyboard', new Map(), { seriesForm: 2 }).step;
     expect(other).toEqual(built);
-    expect(() => buildBlock(plan, seed, 'keyboard', new Map())).toThrow(/seriesSeedIndex/);
+    expect(() => buildBlock(plan, seed, 'keyboard', new Map())).toThrow(/seriesForm/);
     expect(built.totalLimitMs).toBe(600_000);
     expect(JSON.parse(paramsJson)).toEqual({ items: 20, itemLimitsMs: Array<null>(20).fill(null), totalLimitMs: 600_000 });
     // The total limit applies as in W1: a slow answer is still a success while the block time lasts.
@@ -1481,7 +1480,7 @@ describe('diagnosticResults', () => {
       { module: 'gorbov', run: 0, seconds: 30 },
       { module: 'gorbov', run: 1, seconds: 35 },
       { module: 'gorbov', run: 2, seconds: 70 },
-      { module: 'numseries', correct: 14, total: 20 },
+      { module: 'numseries', correct: 14, total: 20, form: 4 },
       { module: 'pomeh', summary: summary({}), hitRts: [], conditions: { quiet: cond(300), noisy: cond(335) } },
       { module: 'stroop', summary: summary({}), hitRts: [], conditions: { congruent: cond(520), incongruent: cond(610) } },
       { module: 'taskswitch', summary: summary({}), hitRts: [], conditions: { repeat: cond(600), switch: cond(580) } },
@@ -1523,6 +1522,8 @@ describe('diagnosticResults', () => {
       restarts: {},
       gorbovOneTable: true,
       seriesForm: 'v2',
+      // T-R73: the form the series played.
+      seriesFormIndex: 4,
     });
     // A condition with fewer than 3 RTs has no median: its difference is missing, the other median is kept.
     const partial = diagnosticResults([{ module: 'stroop', summary: summary({}), hitRts: [], conditions: { congruent: cond(520), incongruent: cond(null) } }]);
@@ -1536,7 +1537,7 @@ describe('diagnosticResults', () => {
     expect(diagnosticResults([{ module: 'gorbov', run: 0, seconds: 30 }, { module: 'gorbov', run: 2, seconds: 70 }]).gorbov).toBeNull();
     // A diagnostic of 0.3.0 deals Горбов's three tasks from one table (F10) and plays the number-series forms v2 (F12);
     // a stored row without the flags reads three tables and the old series.
-    expect(diagnosticResults([])).toEqual({ ...EMPTY_METRICS, unreliable: [], restarts: {}, gorbovOneTable: true, seriesForm: 'v2' });
+    expect(diagnosticResults([])).toEqual({ ...EMPTY_METRICS, unreliable: [], restarts: {}, gorbovOneTable: true, seriesForm: 'v2', seriesFormIndex: null });
     expect(diagnosticResults([])).toEqual({ ...EMPTY_RESULTS, gorbovOneTable: true, seriesForm: 'v2' });
     expect(EMPTY_RESULTS.gorbovOneTable).toBe(false);
     expect(EMPTY_RESULTS.seriesForm).toBeNull();

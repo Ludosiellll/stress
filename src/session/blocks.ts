@@ -489,22 +489,22 @@ export function diagnosticBlockSeed(n: number, module: ModuleId, blockIndex: num
 export interface SharedSeeds {
   /** A Горбов series block: the seed of block 0's counted attempt (F10). */
   tableSeed?: number;
-  /** A diagnostic number-series block: the seed index its form comes from (diagnosticSeriesSeed, F12). */
-  seriesSeedIndex?: number;
+  /** A diagnostic number-series block: the form (0–5) it plays (F12; the controller picks it, nextSeriesForm, T-R73). */
+  seriesForm?: number;
 }
 
 /**
  * The block step for `plan` from `seed` (and the ratings, for training number series), plus its params JSON. A Горбов
  * series block deals its cells from `tableSeed` (the seed of block 0's counted attempt; its own seed without one) and
  * stores `table` and `tableSeed` (F10); reshuffles still follow the block's own seed. A diagnostic number-series block
- * plays the items of the form of `seriesSeedIndex` (F12), whatever its own seed.
+ * plays the items of form `seriesForm` (F12), whatever its own seed.
  */
 export function buildBlock(
   plan: BlockPlan,
   seed: number,
   layout: LayoutId,
   ratings: ReadonlyMap<FamilyId, Rating>,
-  { tableSeed, seriesSeedIndex }: SharedSeeds = {},
+  { tableSeed, seriesForm }: SharedSeeds = {},
 ): { step: BlockStep; paramsJson: string } {
   switch (plan.kind) {
     case 'reaction': {
@@ -562,7 +562,7 @@ export function buildBlock(
     case 'numseries': {
       // Diagnostic items have no per-item limit: the total limit applies, as in 0.1.0 (R19, R36).
       const items: TimedSeriesItem[] = plan.diagnostic
-        ? diagnosticFormItems(plan.count, seriesSeedIndex)
+        ? diagnosticFormItems(plan.count, seriesForm)
         : generateBlockItems(new Map([...ratings].map(([f, r]) => [f, r.rating])), plan.count, createRng(seed));
       const { totalLimitMs } = plan;
       return {
@@ -573,10 +573,11 @@ export function buildBlock(
   }
 }
 
-/** The first `count` items of the diagnostic number series in the form of `seedIndex` (F12): fixed, whatever else. */
-function diagnosticFormItems(count: number, seedIndex: number | undefined): TimedSeriesItem[] {
-  if (seedIndex === undefined) throw new Error('buildBlock: a diagnostic number-series block needs its seriesSeedIndex');
-  return diagnosticSeriesItems(seedIndex, count).map((it) => ({ ...it, timeLimitMs: null }));
+/** The first `count` items of form `form` of the diagnostic number series (F12): fixed, whatever else. */
+function diagnosticFormItems(count: number, form: number | undefined): TimedSeriesItem[] {
+  if (form === undefined) throw new Error('buildBlock: a diagnostic number-series block needs its seriesForm');
+  // Seed index form + 1 plays form `form` (seriesFormOf).
+  return diagnosticSeriesItems(form + 1, count).map((it) => ({ ...it, timeLimitMs: null }));
 }
 
 /**
@@ -722,7 +723,8 @@ export type DiagnosticPart =
       hitRts: number[];
     }
   | { module: 'gorbov'; run: number; seconds: number | null }
-  | { module: 'numseries'; correct: number; total: number }
+  /** `form`: the form (0–5) the series played (T-R73). */
+  | { module: 'numseries'; correct: number; total: number; form: number }
   | { module: 'memory'; span: number };
 
 /** The fast and slow condition medians of a block and their difference; null where a median is missing. */
@@ -745,13 +747,13 @@ function spreadOf(hitRts: readonly number[]): [sd: number | null, iqr: number | 
  * Missing parts stay null.
  * Reaction blocks stored with timingUnreliable (after their replay) list their module in `unreliable`; `restarts` are the
  * restarts of each module's tasks (F11), copied; `gorbovOneTable` is true: the three Горбов tasks share one table (F10);
- * `seriesForm` is 'v2': the number series play the six fixed forms (F12).
+ * `seriesForm` is 'v2': the number series play the six fixed forms (F12), and `seriesFormIndex` the form it played (T-R73).
  */
 export function diagnosticResults(parts: readonly DiagnosticPart[], restarts: DiagnosticResults['restarts'] = {}): DiagnosticResults {
   const copied = Object.fromEntries(Object.entries(restarts).map(([m, r]) => [m, { ...r }])) as DiagnosticResults['restarts'];
   const unreliable: ReactionModuleId[] = [];
   // Горбов's three tasks play one table (F10); the number series, the forms v2 (F12).
-  const r: DiagnosticResults = { ...EMPTY_METRICS, unreliable, restarts: copied, gorbovOneTable: true, seriesForm: 'v2' };
+  const r: DiagnosticResults = { ...EMPTY_METRICS, unreliable, restarts: copied, gorbovOneTable: true, seriesForm: 'v2', seriesFormIndex: null };
   const seconds: Array<number | null> = [];
   for (const p of parts) {
     if ('summary' in p && p.summary.timingUnreliable) unreliable.push(p.module);
@@ -785,6 +787,7 @@ export function diagnosticResults(parts: readonly DiagnosticPart[], restarts: Di
         break;
       case 'numseries':
         r.numseriesCorrect = p.correct;
+        r.seriesFormIndex = p.form;
         break;
       case 'pomeh':
         [r.pomehQuietRt, r.pomehNoisyRt, r.pomehDeltaMs] = condMetrics(p.conditions, COND_PAIRS.pomeh);

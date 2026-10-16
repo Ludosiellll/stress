@@ -8,6 +8,8 @@ import {
   diagnosticSeriesSchedule,
   diagnosticSeriesSeed,
   isReactionId,
+  nextSeriesForm,
+  seriesFormOf,
   parseResults,
   planDiagnostic,
   type DiagnosticResults,
@@ -114,6 +116,19 @@ describe('diagnosticSeriesSeed (F12)', () => {
     expect(new Set(Array.from({ length: 20 }, (_, i) => diagnosticSeriesSeed(2, i + 1))).size).toBe(20);
   });
 
+  it('the next diagnostic plays the form after the last one stored; without one, the form of its seed index (T-R73)', () => {
+    expect([1, 2, 6, 7, 13, 0, -5].map(seriesFormOf)).toEqual([0, 1, 5, 0, 0, 5, 0]);
+    const played = (seriesFormIndex: number | null) => ({ seriesFormIndex });
+    // A restart played form 3 of diagnostic seed index 3 (form 2): the next one plays form 4, never 3 again.
+    expect(nextSeriesForm([played(1), played(3)], 4)).toBe(4);
+    expect(nextSeriesForm([played(5)], 2)).toBe(0);
+    // The last diagnostic that stored a form counts; one without it (the series not played) is passed over.
+    expect(nextSeriesForm([played(2), played(null)], 9)).toBe(3);
+    // Rows stored before T-R73 (or none at all): the form of the seed index, as before.
+    expect(nextSeriesForm([played(null), played(null)], 3)).toBe(2);
+    expect(nextSeriesForm([], 8)).toBe(1);
+  });
+
   it('an item that would repeat an earlier one of its form takes its next seed (T-R72)', () => {
     expect(diagnosticSeriesSeed(2, 13, 0)).toBe(diagnosticSeriesSeed(2, 13));
     expect(diagnosticSeriesSeed(2, 13, 1)).toBe(hashString('series-form:1:13:1'));
@@ -173,6 +188,7 @@ describe('parseResults', () => {
       // A row before 0.3.0 played Горбов on three tables (F10) and the old number series (F12).
       gorbovOneTable: false,
       seriesForm: null,
+      seriesFormIndex: null,
     });
   });
 
@@ -214,7 +230,7 @@ describe('parseResults', () => {
   });
 
   it('EMPTY_RESULTS: every metric missing, nothing unreliable, no restarts, three Горбов tables, the old series; frozen', () => {
-    expect(EMPTY_RESULTS).toEqual({ ...EMPTY_METRICS, unreliable: [], restarts: {}, gorbovOneTable: false, seriesForm: null });
+    expect(EMPTY_RESULTS).toEqual({ ...EMPTY_METRICS, unreliable: [], restarts: {}, gorbovOneTable: false, seriesForm: null, seriesFormIndex: null });
     expect(Object.isFrozen(EMPTY_RESULTS)).toBe(true);
     expect(Object.isFrozen(EMPTY_RESULTS.unreliable)).toBe(true);
     expect(Object.isFrozen(EMPTY_RESULTS.restarts)).toBe(true);
@@ -272,6 +288,16 @@ describe('parseResults', () => {
   it('a damaged seriesForm reads null (T-R22)', () => {
     for (const bad of ['v1', 'V2', 'v3', 2, true, null, [], {}, ['v2']]) {
       expect(parseResults({ resultsJson: JSON.stringify({ ...EMPTY, seriesForm: bad }) })?.seriesForm, JSON.stringify(bad)).toBeNull();
+    }
+  });
+
+  it('seriesFormIndex: the form played, 0…5; a row without it or a damaged one reads null (T-R73, T-R22)', () => {
+    for (const f of [0, 3, 5]) expect(parseResults({ resultsJson: JSON.stringify({ ...EMPTY, seriesFormIndex: f }) })?.seriesFormIndex).toBe(f);
+    const old = Object.fromEntries(Object.entries({ ...EMPTY, seriesForm: 'v2' }).filter(([k]) => k !== 'seriesFormIndex'));
+    expect(old).not.toHaveProperty('seriesFormIndex');
+    expect(parseResults({ resultsJson: JSON.stringify(old) })?.seriesFormIndex).toBeNull();
+    for (const bad of [6, -1, 2.5, '2', null, true, [], {}]) {
+      expect(parseResults({ resultsJson: JSON.stringify({ ...EMPTY, seriesFormIndex: bad }) })?.seriesFormIndex, JSON.stringify(bad)).toBeNull();
     }
   });
 

@@ -5,7 +5,7 @@ import { detectFatigue, nextLevel, stabilityHold, startLevel, type DeltaInput } 
 import { daysBetween, localDayIso } from '../engine/dates';
 import { dayForm } from '../engine/dayForm';
 import { deriveModuleStates, isCleanBlock, isCountedSession, movesLevel } from '../engine/derive';
-import { parseResults, type DiagnosticResults, type ModuleRestarts } from '../engine/diagnostic';
+import { SERIES_FORMS, nextSeriesForm, parseResults, type DiagnosticResults, type ModuleRestarts } from '../engine/diagnostic';
 import type { Rating } from '../engine/elo';
 import { CALIBRATION_BLOCKS } from '../engine/phases';
 import { OVERLOAD_LEVEL_STEP, isTestFormat, warmupLevel, type ModuleState, type Segment, type SessionPlan } from '../engine/planner';
@@ -590,6 +590,8 @@ export class SessionController {
     const limits = outcomes.flatMap((o) => (o.item.timeLimitMs === null ? [] : [o.item.timeLimitMs]));
     const shortestLimitMs = limits.length > 0 ? Math.min(...limits) : null;
     const skipped = outcomes.filter((o) => o.answer.skipped === true).length;
+    // The form a diagnostic played (T-R73), taken before the block is stored: storing it resets the attempt.
+    const form = this.counted ? null : this.seriesFormAt(this.segment().attempt);
     const items = outcomes.map((o) => ({
       itemId: o.item.id,
       answer: o.item.answer,
@@ -610,7 +612,7 @@ export class SessionController {
       ...(discardedAt === undefined ? {} : { discardedAt }),
       onCommit: () => {
         if (ratings !== null) this.ratings = ratings;
-        else this.diagParts.push({ module: 'numseries', correct: successes, total });
+        else if (form !== null) this.diagParts.push({ module: 'numseries', correct: successes, total, form });
       },
       extraWrites: ratings === null ? [] : [{ label: 'saveRatings', run: () => this.repo.saveRatings(ratings) }],
     });
@@ -1025,12 +1027,13 @@ export class SessionController {
 
   /**
    * Builds the block from its seed. A Горбов series block deals the table of block 0's counted attempt (F10). A
-   * diagnostic plays the number-series form of its seed index, and each restart of the task the next form (F12): the
-   * items already seen never come again at once.
+   * diagnostic's number series plays the form after the one the latest stored diagnostic played (nextSeriesForm), and
+   * each restart of the task the form after the one it abandons (T-R73): no form comes twice in a row, within a
+   * diagnostic or into the next one.
    */
   private startBlock(plan: BlockPlan): void {
     const seg = this.segment();
-    const seedIndex = this.counted ? null : (this.plan.diagnosticSeedIndex ?? this.diagnosticNumber());
+    const seedIndex = this.counted ? null : this.diagnosticSeedIndex();
     const seed =
       seedIndex === null
         ? trainingBlockSeed(this.plan.seed, seg.index, seg.blocksDone, seg.attempt)
@@ -1039,7 +1042,7 @@ export class SessionController {
     if (series && seg.blocksDone === 0) seg.tableSeed = seed;
     const { step, paramsJson } = buildBlock(plan, seed, this.blockLayout(seg.segment), this.ratings, {
       ...(series ? { tableSeed: seg.tableSeed ?? seed } : {}),
-      ...(seedIndex === null ? {} : { seriesSeedIndex: seedIndex + seg.attempt }),
+      ...(seedIndex === null ? {} : { seriesForm: this.seriesFormAt(seg.attempt) }),
     });
     this.next = null;
     this.active = { plan, startedAt: this.now().toISOString(), paramsJson };
@@ -1378,6 +1381,20 @@ export class SessionController {
     const n = this.plan.diagnosticNumber;
     if (n === undefined) throw new Error('SessionController: diagnostic plan without diagnosticNumber');
     return n;
+  }
+
+  /** The seed index a diagnostic's blocks come from: the plan's, else its number (I5). */
+  private diagnosticSeedIndex(): number {
+    return this.plan.diagnosticSeedIndex ?? this.diagnosticNumber();
+  }
+
+  /**
+   * The number-series form attempt `attempt` of a diagnostic plays (T-R73): nextSeriesForm of the stored diagnostics
+   * (none when they could not be read: the seed index's form), then one form on per restart.
+   */
+  private seriesFormAt(attempt: number): number {
+    const stored = (this.earlierDiagnostics ?? []).map((d) => d.metrics);
+    return (nextSeriesForm(stored, this.diagnosticSeedIndex()) + attempt) % SERIES_FORMS;
   }
 }
 
