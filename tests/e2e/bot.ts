@@ -321,18 +321,26 @@ export async function chooseExportFile(page: Page, text: string): Promise<void> 
 }
 
 /**
- * An export file with a training history: each session at local noon `daysAgo` local calendar days before today
- * (Playwright's Chromium runs in this process's time zone, so these are the page's local days), ended 10 minutes
+ * An export file with a training history: each session at local noon `daysAgo` local calendar days before the page's
+ * today, in the page's time zone (the app counts days there, whatever this process's zone is), ended 10 minutes
  * later, with its blocks a minute apart. A block takes the given fields over a ПЗМР block at level 0. Written by the
  * app's own exportBundle, so a restore reads it as a real file.
  */
-export async function historyBundle(o: { sessions: { daysAgo: number; blocks?: Partial<BlockRow>[] }[] }): Promise<string> {
+export async function historyBundle(page: Page, o: { sessions: { daysAgo: number; blocks?: Partial<BlockRow>[] }[] }): Promise<string> {
+  const noons = await page.evaluate(
+    (days) =>
+      days.map((n) => {
+        const d = new Date();
+        d.setDate(d.getDate() - n);
+        d.setHours(12, 0, 0, 0);
+        return d.getTime();
+      }),
+    o.sessions.map((s) => s.daysAgo),
+  );
   const repo = new MemoryRepository();
   for (const [i, s] of o.sessions.entries()) {
-    const start = new Date();
-    start.setDate(start.getDate() - s.daysAgo);
-    start.setHours(12, 0, 0, 0);
-    const at = (minutes: number): string => new Date(start.getTime() + minutes * 60_000).toISOString();
+    const start = noons[i] as number;
+    const at = (minutes: number): string => new Date(start + minutes * 60_000).toISOString();
     const sessionId = `e2e-session-${String(i)}`;
     await repo.createSession({ id: sessionId, startedAt: at(0), endedAt: at(10), kind: 'training', phase: 'base', appVersion: '0.2.0' });
     for (const [k, over] of (s.blocks ?? []).entries()) {

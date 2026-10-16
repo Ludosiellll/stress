@@ -112,6 +112,12 @@ export function ruDate(iso: string): string {
   return `${two(d.getDate())}.${two(d.getMonth() + 1)}.${String(d.getFullYear())}`;
 }
 
+/** Local date, dd.mm. */
+function dayMonth(iso: string): string {
+  const d = new Date(iso);
+  return `${two(d.getDate())}.${two(d.getMonth() + 1)}`;
+}
+
 /** Whole minutes; «не завершена» while the session has no end. */
 export function durationText(startedAt: string, endedAt: string | null): string {
   if (endedAt === null) return 'не завершена';
@@ -134,20 +140,16 @@ function count<T>(keys: readonly T[]): Map<T, number> {
  */
 function diagnosticLabels(rows: readonly DiagnosticRow[]): string[] {
   const numbers = count(rows.map((r) => r.number));
-  const day = (iso: string): string => {
-    const d = new Date(iso);
-    return `${two(d.getDate())}.${two(d.getMonth() + 1)}`;
-  };
   const time = (iso: string): string => {
     const d = new Date(iso);
     return `${two(d.getHours())}:${two(d.getMinutes())}`;
   };
-  const days = count(rows.map((r) => `${String(r.number)} ${day(r.at)}`));
+  const days = count(rows.map((r) => `${String(r.number)} ${dayMonth(r.at)}`));
   return rows.map((r) => {
     const n = `№${String(r.number)}`;
     if ((numbers.get(r.number) ?? 0) < 2) return n;
-    const sameDay = (days.get(`${String(r.number)} ${day(r.at)}`) ?? 0) > 1;
-    return `${n} (${day(r.at)}${sameDay ? ` ${time(r.at)}` : ''})`;
+    const sameDay = (days.get(`${String(r.number)} ${dayMonth(r.at)}`) ?? 0) > 1;
+    return `${n} (${dayMonth(r.at)}${sameDay ? ` ${time(r.at)}` : ''})`;
   });
 }
 
@@ -255,12 +257,6 @@ export function formOfDayPoints(days: readonly FormDay[], today: string): ChartP
   return [...byDay.entries()]
     .sort(([a], [b]) => (a < b ? -1 : 1))
     .map(([day, rts]) => ({ x: `${day.slice(8, 10)}.${day.slice(5, 7)}`, y: median(rts) }));
-}
-
-/** Local date, dd.mm. */
-function dayMonth(iso: string): string {
-  const d = new Date(iso);
-  return `${two(d.getDate())}.${two(d.getMonth() + 1)}`;
 }
 
 /** Each format with stored runs (testFormatRunsAt): the points of its two charts, its best and its runs. */

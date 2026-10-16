@@ -307,6 +307,19 @@ describe('Progress edge cases', () => {
     expect(table.nextElementSibling?.textContent).toBe('У РДО в колонке «Среднее» — среднее отклонение от отметки.');
   });
 
+  it('the РДО note under «Лучшие результаты» shows only when there is an РДО row (T-R54)', async () => {
+    const repo = new MemoryRepository();
+    const at = new Date(Date.now() - 86_400_000).toISOString();
+    await repo.createSession(session('a', at, { endedAt: at }));
+    const summaryJson = JSON.stringify({ testFormat: { mean: 262, sd: 31, errors: 1, falseStarts: 0, thirds: [262, 262, 262] } });
+    await repo.addBlock(block('a', 'a', at, { module: 'pzmr', flags: ['test_format'], summaryJson }), [], []);
+    await renderProgress(repo);
+    const table = screen.getByRole('table', { name: 'Лучшие результаты' });
+    expect(within(table).getAllByRole('row')).toHaveLength(2);
+    expect(table.nextElementSibling).toBeNull();
+    expect(screen.queryByText('У РДО в колонке «Среднее» — среднее отклонение от отметки.')).toBeNull();
+  });
+
   it('«Прогоны в формате теста» without runs says when they start', async () => {
     await renderProgress();
     const note = screen.getByText('Прогонов пока не было. Они начнутся с 15-го дня.');

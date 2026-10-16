@@ -100,7 +100,7 @@ test('on day 21 the session starts with a test-format run that shows the persona
     flags: ['test_format'],
     summaryJson: JSON.stringify({ testFormat: { mean, sd: 30, errors: 1, falseStarts: 0, thirds: [mean, mean, mean] } }),
   });
-  const text = await historyBundle({
+  const text = await historyBundle(page, {
     sessions: [
       { daysAgo: 20, blocks: [run('pzmr', 250)] },
       { daysAgo: 16, blocks: [run('szmr', 400)] },
@@ -121,7 +121,8 @@ test('on day 21 the session starts with a test-format run that shows the persona
   await expect(summary.locator('h2')).toHaveText('Прогон в формате теста · ПЗМР');
   const lines = summary.getByRole('list', { name: 'Показатели' }).getByRole('listitem');
   // A unit follows its number after a no-break space (A-R22): \s matches it.
-  await expect(lines.first()).toHaveText(/^Среднее \d+\sмс \(лучшее 250\) · SD /);
+  // At scale 0.02 all scored trials can drop their onset frames: then there is no clean hit and the mean is a dash.
+  await expect(lines.first()).toHaveText(/^Среднее (\d+\sмс|—) \(лучшее 250\) · SD /);
   await expect(summary.getByText('Прогон в формате теста: на сохранённый уровень не влияет')).toBeVisible();
   await pauseWithEscape(page);
   await page.getByRole('button', { name: 'Завершить сессию' }).click();

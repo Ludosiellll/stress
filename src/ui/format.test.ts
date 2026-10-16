@@ -14,6 +14,12 @@ describe('noBreakUnits', () => {
     expect(noBreakUnits('+2,0 с, хуже')).toBe(`+2,0${NB}с, хуже`);
   });
 
+  it('keeps minutes with their number too: «(около 2 мин)», «3,5 мин.» (T-R26)', () => {
+    expect(noBreakUnits('Прогон в формате теста: ПЗМР, 50 сигналов (около 2 мин)')).toBe(`Прогон в формате теста: ПЗМР, 50 сигналов (около 2${NB}мин)`);
+    expect(noBreakUnits('Красно-чёрные таблицы Горбова — 3,5 мин.')).toBe(`Красно-чёрные таблицы Горбова — 3,5${NB}мин.`);
+    expect(noBreakUnits('через 5 минут')).toBe('через 5 минут');
+  });
+
   it('keeps «39 → 29 с» together, but not an arrow between words', () => {
     expect(noBreakUnits('Там: лимит времени: 39 → 29 с; перемешивание: нет → каждые 9 верных')).toBe(
       `Там: лимит времени: 39${NB}→${NB}29${NB}с; перемешивание: нет → каждые 9 верных`,

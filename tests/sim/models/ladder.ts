@@ -306,10 +306,12 @@ export function runLadder(id: BandModuleId, learner: LadderLearner, seed: number
     let prev: number | null = null;
     for (let k = 0; k < BLOCKS_PER_SESSION; k++) {
       // The block's own band at L with the window the app plays (withFloor), as the session's bandBlock builds it.
-      const blockL = L;
-      const band = bandIndex(m, blockL);
+      const band = bandIndex(m, L);
       const floor = bandFloors(hits, bands)(band);
-      const own = withFloor(m.params(blockL), floor);
+      const own = withFloor(m.params(L), floor);
+      // The overload probe after this block plays the next band's load at this block's L and window (the floor of its
+      // own band), as the session plans an overload block: window and trials from the same L, taken before L moves.
+      const over = k === OVERLOAD_AFTER ? withFloor(m.params(L, band + 1), floor) : null;
       const block = play(loadOf(band), own.windowMs, m.trials(own), practice);
       practice += block.n;
       course.below.push(L <= lSaved - 1);
@@ -334,10 +336,8 @@ export function runLadder(id: BandModuleId, learner: LadderLearner, seed: number
       );
       prev = block.s;
       lifetime++;
-      if (k === OVERLOAD_AFTER) {
-        // The next band's load with the finisher sound at this block's level and window (the floor of its own band),
-        // as the session plans an overload block: window and trials from the same L. The level and the floors stay.
-        const over = withFloor(m.params(blockL, band + 1), floor);
+      if (over !== null) {
+        // The next band's load with the finisher sound. The level and the floors stay.
         const next = loadOf(band + 1);
         const loud = { ...next, mu: next.mu * OVERLOAD_SOUND.mu, tau: next.tau * OVERLOAD_SOUND.tau, wrong: next.wrong + OVERLOAD_SOUND.wrong };
         course.overload.push(play(loud, over.windowMs, m.trials(over), practice).s);

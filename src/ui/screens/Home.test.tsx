@@ -24,10 +24,10 @@ function daysFromNow(n: number): Date {
   return d;
 }
 
-const planLines = (): (string | null)[] =>
-  within(screen.getByRole('list', { name: 'План на сегодня' }))
-    .getAllByRole('listitem')
-    .map((li) => li.textContent);
+const planItems = (): HTMLElement[] => within(screen.getByRole('list', { name: 'План на сегодня' })).getAllByRole('listitem');
+
+/** The plan lines with their no-break spaces read as plain ones; the T-R26 test checks the no-break spaces. */
+const planLines = (): string[] => planItems().map((li) => li.textContent.replace(/\u00a0/g, ' '));
 
 async function renderHome(repo = new MemoryRepository()) {
   const handlers = { onStart: vi.fn(), onFree: vi.fn(), onProgress: vi.fn(), onSettings: vi.fn() };
@@ -59,6 +59,11 @@ describe('Home without history', () => {
     expect(screen.getByText('Фаза: база')).toBeTruthy();
     expect(screen.getByText('День 1 из 14: калибровка уровней и стартовая диагностика.')).toBeTruthy();
     expect(screen.queryByRole('list', { name: 'Напоминания' })).toBeNull();
+  });
+
+  it('a plan line keeps its minutes with the number (T-R26)', async () => {
+    await renderHome();
+    expect(planItems()[0]?.textContent).toBe('ПЗМР — 2\u00a0мин');
   });
 
   it('asks for the first diagnostic and shows the due banner', async () => {

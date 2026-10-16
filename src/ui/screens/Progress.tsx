@@ -178,7 +178,7 @@ function TestFormats({ model }: { model: ProgressModel }) {
               ))}
             </tbody>
           </table>
-          <p className="muted">У РДО в колонке «Среднее» — среднее отклонение от отметки.</p>
+          {model.testFormats.some((f) => f.format === 'rdo') && <p className="muted">У РДО в колонке «Среднее» — среднее отклонение от отметки.</p>}
         </>
       )}
     </section>

@@ -18,12 +18,12 @@ export function thousands(n: number): string {
 const NBSP = '\u00a0';
 
 /**
- * A number keeps its unit on its line: the space between a number and «мс», «с» or «%» becomes a no-break space, and
- * so do the spaces around an arrow before a number («39 → 29 с»). For rendering only (A-R22): the strings the
- * session builds keep plain spaces.
+ * A number keeps its unit on its line: the space between a number and «мс», «с», «%» or «мин» becomes a no-break
+ * space, and so do the spaces around an arrow before a number («39 → 29 с»). For rendering only (A-R22): the strings
+ * the session builds keep plain spaces.
  */
 export function noBreakUnits(text: string): string {
-  return text.replace(/(\d) (?=(?:мс|с|%)(?!\p{L}))/gu, `$1${NBSP}`).replace(/ → (?=[+−]?\d)/g, `${NBSP}→${NBSP}`);
+  return text.replace(/(\d) (?=(?:мс|с|%|мин)(?!\p{L}))/gu, `$1${NBSP}`).replace(/ → (?=[+−]?\d)/g, `${NBSP}→${NBSP}`);
 }
 
 /** Number with a decimal comma, as the Russian UI writes it. */

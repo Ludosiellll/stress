@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { SessionPlan } from '../../engine/planner';
 import { useApp } from '../AppContext';
 import { logEvent } from '../errorLog';
-import { localDate } from '../format';
+import { localDate, noBreakUnits } from '../format';
 import { loadHomeModel, planLine, type HomeModel } from '../homeModel';
 import ReadinessBlock from '../views/ReadinessBlock';
 
@@ -119,7 +119,7 @@ export default function Home({ onStart, onFree, onProgress, onSettings }: HomePr
         </div>
         <ol aria-label="План на сегодня" className="plan">
           {model.plan.segments.map((s, i) => (
-            <li key={i}>{planLine(s)}</li>
+            <li key={i}>{noBreakUnits(planLine(s))}</li>
           ))}
         </ol>
         <div className="actions">
