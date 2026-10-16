@@ -35,7 +35,7 @@ import { pzmr } from '../modules/reaction/pzmr';
 import { rdoCyclePeriod, rdoPeriod } from '../modules/reaction/rdo';
 import { szmr, type SzmrParams } from '../modules/reaction/szmr';
 import { reactionModules } from '../modules/registry';
-import { generateGorbovTable, gorbovMetrics } from '../modules/tables/gorbov';
+import { generateGorbovTable, gorbovMetrics, gorbovParams } from '../modules/tables/gorbov';
 import {
   perfectMemoryAnswers,
   perfectPlayer,
@@ -2543,6 +2543,41 @@ describe('SessionController — tables', () => {
       ['series', tableSeed],
       ['own', trainingBlockSeed(4, 0, 3, 0)],
     ]);
+  });
+
+  it('a counted Esc on block 0 keeps its table: block 1 plays it and stores its seed (T-R62)', async () => {
+    const h = await begin(planFree('gorbov', 4));
+    h.c.ackInstruction();
+    const first = expectStep(h.c, 'table_block');
+    const tableSeed = trainingBlockSeed(4, 0, 0, 0);
+    expect(first.cells).toEqual(generateGorbovTable(createRng(tableSeed)));
+    expect(await h.c.discardBlock('user', 0.5)).toMatchObject({ kind: 'counted' });
+    if (h.c.step.kind === 'instruction') h.c.ackInstruction();
+    const second = expectStep(h.c, 'table_block');
+    expect(second).toMatchObject({ task: 'red_down', seed: trainingBlockSeed(4, 0, 1, 0), cells: first.cells });
+    await h.c.submitTable(perfectTableRun(second));
+    const rows = await h.repo.listBlocks();
+    expect(rows.map((b) => b.flags.includes('discarded'))).toEqual([true, false]);
+    expect(rows.map((b) => (JSON.parse(b.paramsJson) as { tableSeed: number }).tableSeed)).toEqual([tableSeed, tableSeed]);
+  });
+
+  it('«what changed» after a normal series block names no reshuffle: the series never reshuffles (T-R62)', async () => {
+    // L_saved 15: the segment starts at 14, below the reshuffle (from L 15), and a perfect run lifts it above.
+    const repo = await calibratedRepo(stateWith('gorbov', { lSaved: 15, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    const h = await begin(planFree('gorbov', 4), { repo });
+    h.c.ackInstruction();
+    const step = expectStep(h.c, 'table_block');
+    expect(step.params.reshuffleEvery).toBeNull();
+    await h.c.submitTable(perfectTableRun(step));
+    const { view } = expectStep(h.c, 'summary');
+    expect(view.lBefore).toBe(14);
+    expect(view.lAfter).toBeGreaterThanOrEqual(15);
+    expect(gorbovParams(view.lAfter, 'black_up').reshuffleEvery).not.toBeNull();
+    expect(view.changes.map((ch) => ch.label)).toEqual(['Лимит времени']);
+    // The next block of the series plays as the summary says: no reshuffle.
+    await h.c.continueAfterSummary();
+    if (h.c.step.kind === 'instruction') h.c.ackInstruction();
+    expect(expectStep(h.c, 'table_block').params.reshuffleEvery).toBeNull();
   });
 
   it('a run of another task or time limit is rejected', async () => {

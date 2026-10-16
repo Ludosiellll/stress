@@ -211,6 +211,8 @@ function dayOf(iso: string): number | null {
 }
 
 export const NO_TREND = 'Полоса шума и тренд появятся после 3 точек.';
+/** The Горбов chart's NO_TREND: its trends count the diagnostics on one table only (F10, T-R62). */
+const GORBOV_NO_TREND = 'Полоса шума и тренд появятся после 3 диагностик на одной таблице.';
 
 const VERDICTS: Record<Trend['verdict'], string> = { better: 'лучше', worse: 'хуже', noise: 'в пределах шума' };
 
@@ -218,8 +220,8 @@ const VERDICTS: Record<Trend['verdict'], string> = { better: 'лучше', worse
  * «Тренд: −12 мс за 5 недель — лучше (шум ±3 мс)» (F7): the change and 2σ̂ in whole units, seconds with one decimal;
  * the period in weeks from 14 days on, else in days. With a series name: «V: тренд …». Without a trend: NO_TREND.
  */
-export function trendText(t: Trend | null, unit: TrendUnit, seriesName?: string): string {
-  if (t === null) return NO_TREND;
+export function trendText(t: Trend | null, unit: TrendUnit, seriesName?: string, noTrend = NO_TREND): string {
+  if (t === null) return noTrend;
   const size = (v: number): string => (unit === 'с' ? decimal(Math.abs(v), 1) : String(Math.round(Math.abs(v))));
   const withUnit = (text: string): string => (unit === '' ? text : `${text} ${unit}`);
   const change = size(t.change);
@@ -242,7 +244,13 @@ interface TimedPoint {
  * The trend of a series and its band: the line ± 2σ̂ at the x of the same last ≤ 6 points by date (Р19). `points` are
  * the series' points in slot order: each band point keeps its point's index as its slot (T-R56).
  */
-export function trendView(points: readonly TimedPoint[], lowerIsBetter: boolean, unit: TrendUnit, seriesName?: string): TrendView {
+export function trendView(
+  points: readonly TimedPoint[],
+  lowerIsBetter: boolean,
+  unit: TrendUnit,
+  seriesName?: string,
+  noTrend = NO_TREND,
+): TrendView {
   const window = trendWindow(
     points.flatMap((p, slot) => (p.y === null || p.t === null ? [] : [{ x: p.x, slot, t: p.t, y: p.y }])),
   );
@@ -254,11 +262,20 @@ export function trendView(points: readonly TimedPoint[], lowerIsBetter: boolean,
           const mid = t.intercept + t.slope * p.t;
           return { x: p.x, slot: p.slot, lo: mid - 2 * t.sigma, hi: mid + 2 * t.sigma };
         });
-  return { text: trendText(t, unit, seriesName), band };
+  return { text: trendText(t, unit, seriesName, noTrend), band };
 }
 
-/** One trend per series, the point at index i taken at time ts[i]; named by its series when the chart has several. */
-function seriesTrends(series: readonly ChartSeries[], ts: readonly (number | null)[], lowerIsBetter: boolean, unit: TrendUnit): TrendView[] {
+/**
+ * One trend per series, the point at index i taken at time ts[i]; named by its series when the chart has several.
+ * `noTrend`: the line of a series without a trend.
+ */
+function seriesTrends(
+  series: readonly ChartSeries[],
+  ts: readonly (number | null)[],
+  lowerIsBetter: boolean,
+  unit: TrendUnit,
+  noTrend = NO_TREND,
+): TrendView[] {
   const several = series.length > 1;
   return series.map((s) =>
     trendView(
@@ -266,6 +283,7 @@ function seriesTrends(series: readonly ChartSeries[], ts: readonly (number | nul
       lowerIsBetter,
       unit,
       several ? s.name : undefined,
+      noTrend,
     ),
   );
 }
@@ -298,33 +316,39 @@ function gorbovOf(r: DiagnosticResults | null): { V: number | null; P: number | 
 }
 
 const UNRELIABLE_NOTE = 'замер ненадёжен';
-/** A Горбов point of a diagnostic on three tables, once later ones play one (F10, Р25). */
-const THREE_TABLES_NOTE = '3 разные таблицы, до 0.3.0';
+/**
+ * A Горбов value of a diagnostic on three tables, once later ones play one (F10, Р25): the note of its point here,
+ * and in parentheses after the previous value on the results of a diagnostic (Done).
+ */
+export const THREE_TABLES = '3 разные таблицы, до 0.3.0';
 
 /**
  * The Горбов chart (F10): once the latest Горбов result is of one table, the points of three tables carry a note, the
  * footnote names them, and the trends and bands use the one-table points only, so the change of format does not read
  * as a trend. Without a one-table result the chart is as before.
  */
-function gorbovChart(parsed: readonly { x: string; r: DiagnosticResults | null }[]): Pick<ChartSpec, 'series' | 'footnote'> & { trendSeries: ChartSeries[] } {
+function gorbovChart(
+  parsed: readonly { x: string; r: DiagnosticResults | null }[],
+): Pick<ChartSpec, 'series' | 'footnote'> & { trendSeries: ChartSeries[]; noTrend: string } {
   const latest = [...parsed].reverse().find(({ r }) => gorbovOf(r).V !== null)?.r;
   const split = latest?.gorbovOneTable === true;
   const old = (r: DiagnosticResults | null): boolean => split && r !== null && !r.gorbovOneTable;
   const line = (name: string, pick: (g: ReturnType<typeof gorbovOf>) => number | null) => {
     const points = parsed.map<ChartPoint>(({ x, r }) => {
       const y = pick(gorbovOf(r));
-      return y !== null && old(r) ? { x, y, note: THREE_TABLES_NOTE } : { x, y };
+      return y !== null && old(r) ? { x, y, note: THREE_TABLES } : { x, y };
     });
     return { series: { name, points }, trend: { name, points: points.map((p) => (p.note === undefined ? p : { x: p.x, y: null })) } };
   };
   const lines = [line('V', (g) => g.V), line('P', (g) => g.P), line('Π', (g) => g.Pi)];
   const series = lines.map((l) => l.series);
   const marked = (series[0]?.points ?? []).flatMap((p) => (p.note === undefined ? [] : [p.x]));
+  const which = `${marked.length === 1 ? 'Диагностика' : 'Диагностики'} ${marked.join(', ')}`;
   const footnote =
     marked.length === 0
       ? {}
-      : { footnote: `На трёх разных таблицах (до 0.3.0): ${marked.join(', ')}. Тренд и полоса шума — только по диагностикам на одной таблице.` };
-  return { series, trendSeries: lines.map((l) => l.trend), ...footnote };
+      : { footnote: `${which} — на трёх разных таблицах (до 0.3.0). Тренд и полоса шума — только по диагностикам на одной таблице.` };
+  return { series, trendSeries: lines.map((l) => l.trend), noTrend: GORBOV_NO_TREND, ...footnote };
 }
 
 /** The numeric metrics of DiagnosticResults (gorbov is an object). */
@@ -353,7 +377,7 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
   const cost = (fast: NumericMetric, slow: NumericMetric, stored: NumericMetric) => (r: DiagnosticResults | null): number | null =>
     shownCost(metric(r, fast), metric(r, slow), metric(r, stored));
   /** A chart before its trends; the unit of its trend lines is its y label, or none for counts; trendSeries: what the trends use. */
-  type Draft = Omit<ChartSpec, 'trends'> & { unit: TrendUnit; trendSeries?: ChartSeries[] };
+  type Draft = Omit<ChartSpec, 'trends'> & { unit: TrendUnit; trendSeries?: ChartSeries[]; noTrend?: string };
   const reaction = (
     id: ReactionModuleId,
     title: string,
@@ -410,7 +434,10 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
       whole: true,
     },
   ];
-  return drafts.map(({ unit, trendSeries, ...c }) => ({ ...c, trends: seriesTrends(trendSeries ?? c.series, ts, c.lowerIsBetter, unit) }));
+  return drafts.map(({ unit, trendSeries, noTrend, ...c }) => ({
+    ...c,
+    trends: seriesTrends(trendSeries ?? c.series, ts, c.lowerIsBetter, unit, noTrend),
+  }));
 }
 
 /**

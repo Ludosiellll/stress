@@ -13,7 +13,7 @@ import {
 } from '../../session/diagnosticCompare';
 import { whole, type BlockSummaryView, type DiagnosticComparison } from '../../session/steps';
 import { decimal, noBreakUnits } from '../format';
-import { ruDate } from '../progressModel';
+import { ruDate, THREE_TABLES } from '../progressModel';
 import { DEFERRED_NOTE } from './ReadinessBlock';
 
 export interface DoneProps {
@@ -35,8 +35,6 @@ const NO_DATA = 'нет данных';
 const NONE = '—';
 /** Added to a value whose block kept dropping frames after its replay (I1). */
 const UNRELIABLE = 'замер ненадёжен';
-/** Added to a previous Горбов value played on three tables, before 0.3.0 (F10, Р25). */
-const THREE_TABLES = '(3 разные таблицы, до 0.3.0)';
 /** The change of a row whose two values were measured differently (Р25). */
 const INCOMPARABLE = 'несравнимо: формат изменён в 0.3.0';
 /** Under the table of the first diagnostic on one table after one on three (F10). */
@@ -102,7 +100,7 @@ function cellText(d: DiagnosticResults, id: DiagnosticRowId, seriesTotal: number
 function previousCellText(d: DiagnosticResults, previous: DiagnosticResults, id: DiagnosticRowId, seriesTotal: number | null): string {
   const text = cellText(previous, id, seriesTotal);
   const threeTables = d.gorbovOneTable && !diagnosticComparable(id, d, previous) && diagnosticValue(previous, id) !== null;
-  return threeTables ? `${text} ${THREE_TABLES}` : text;
+  return threeTables ? `${text} (${THREE_TABLES})` : text;
 }
 
 function changeText(id: DiagnosticRowId, d: DiagnosticResults, previous: DiagnosticResults): string {

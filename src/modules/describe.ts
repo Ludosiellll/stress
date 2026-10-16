@@ -2,7 +2,7 @@ import { isBandModule, isReactionModule, type ModuleId, type ReactionModuleId } 
 import { describeMemoryParams, memoryParams } from './memory/params';
 import { withFloor } from './reaction/common';
 import { bandModules, reactionModules } from './registry';
-import { gorbovParams, type TableTaskId } from './tables/gorbov';
+import { gorbovParams, type TableParams, type TableTaskId } from './tables/gorbov';
 import { schulteParams } from './tables/schulte';
 import { describeTableParams } from './tables/score';
 
@@ -73,15 +73,20 @@ export function describeChanges(module: ModuleId, lBefore: number, lAfter: numbe
   switch (module) {
     case 'gorbov': {
       if (task === undefined) throw new RangeError('describeChanges: gorbov needs the run task');
-      return changed(describeTableParams(gorbovParams(lBefore, task)), describeTableParams(gorbovParams(lAfter, task)));
+      return describeTableChanges(gorbovParams(lBefore, task), gorbovParams(lAfter, task));
     }
     case 'schulte':
-      return changed(describeTableParams(schulteParams(lBefore)), describeTableParams(schulteParams(lAfter)));
+      return describeTableChanges(schulteParams(lBefore), schulteParams(lAfter));
     case 'memory':
       return changed(describeMemoryParams(memoryParams(lBefore)), describeMemoryParams(memoryParams(lAfter)));
     case 'numseries':
       return [];
   }
+}
+
+/** What changed between two parameter sets of a table. */
+export function describeTableChanges(before: TableParams, after: TableParams): ParamChange[] {
+  return changed(describeTableParams(before), describeTableParams(after));
 }
 
 /**

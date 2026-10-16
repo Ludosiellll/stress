@@ -21,7 +21,6 @@ import {
   ruDate,
   sessionLines,
   SESSION_LINES,
-  NO_TREND,
   trendText,
   trendView,
 } from './progressModel';
@@ -654,8 +653,11 @@ describe('noise band and trend (F7, Р19)', () => {
     // Go/No-Go in %, the series and the span as counts.
     expect(charts.find((c) => c.id === 'gonogo')?.trends[0]?.text).toBe('Тренд: 0 % за 5 недель — в пределах шума (шум ±0 %)');
     expect(charts.find((c) => c.id === 'memory')?.trends[0]?.text).toBe('Тренд: 0 за 5 недель — в пределах шума (шум ±0)');
-    // Fewer than 3 points: the line that says when they come, no band.
+    // Fewer than 3 points: the line that says when they come, no band; on the Горбов chart in diagnostics on one table.
     expect(diagnosticCharts(rows.slice(0, 2))[0]?.trends).toEqual([{ text: 'Полоса шума и тренд появятся после 3 точек.', band: [] }]);
+    expect(diagnosticCharts(rows.slice(0, 2)).find((c) => c.id === 'gorbov')?.trends.map((t) => t.text)).toEqual(
+      Array(3).fill('Полоса шума и тренд появятся после 3 диагностик на одной таблице.'),
+    );
   });
 
   it('Горбов of old diagnostics: points with a note, the trend from the one-table ones only (F10)', () => {
@@ -677,9 +679,9 @@ describe('noise band and trend (F7, Р19)', () => {
       { x: '№5', y: 40 },
     ]);
     expect(gorbov?.unreliable).toEqual([]);
-    // Two one-table points: no trend yet, though five points are drawn.
-    expect(gorbov?.trends.map((t) => t.text)).toEqual([NO_TREND, NO_TREND, NO_TREND]);
-    expect(gorbov?.footnote).toBe('На трёх разных таблицах (до 0.3.0): №1, №2, №3. Тренд и полоса шума — только по диагностикам на одной таблице.');
+    // Two one-table points: no trend yet, though five points are drawn; the line counts diagnostics on one table (T-R62).
+    expect(gorbov?.trends.map((t) => t.text)).toEqual(Array(3).fill('Полоса шума и тренд появятся после 3 диагностик на одной таблице.'));
+    expect(gorbov?.footnote).toBe('Диагностики №1, №2, №3 — на трёх разных таблицах (до 0.3.0). Тренд и полоса шума — только по диагностикам на одной таблице.');
     // A third one-table point: the trend and the band from №4–№6.
     const more = [...rows, ...weeklyRows([{ ...one, gorbov: { V: 40, P: 80, Pi: 0 } }]).map((r) => ({ ...r, id: 'd6', number: 6, at: new Date(2026, 6, 36, 10).toISOString() }))];
     const later = diagnosticCharts(more).find((c) => c.id === 'gorbov');

@@ -18,7 +18,6 @@ import { memorySpan, scoreMemoryTrial, type MemoryAnswer } from '../modules/memo
 import { bandIndex } from '../modules/reaction/common';
 import type { RdoParams } from '../modules/reaction/rdo';
 import { moduleTitles, reactionModules } from '../modules/registry';
-import type { TableTaskId } from '../modules/tables/gorbov';
 import { scoreTableRun, type TableRun } from '../modules/tables/score';
 import { assessBlock, meanFamilyRating, type BlockAssessment } from './assessment';
 import { appendBlock, type BlockHistory } from './blockHistory';
@@ -210,7 +209,6 @@ interface FinishedBlock {
   lines: string[];
   /** The summary's heading; default: the module's title. */
   title?: string;
-  task?: TableTaskId;
   /** Number series in training and free sessions: meanFamilyRating after the block (the step by rating). */
   meanRating?: number;
   rows: (blockId: string) => { trials: TrialRow[]; items: LogicItemRow[] };
@@ -545,7 +543,6 @@ export class SessionController {
         hitRts: [],
         summary: { ...result, task: run.task, startTs: run.startTs, clicks: run.clicks },
         lines: tableLines(result),
-        task: step.task,
         rows: () => ({ trials: [], items: [] }),
         onCommit: () => {
           if (!this.counted && module === 'gorbov') {
@@ -1103,7 +1100,7 @@ export class SessionController {
       title: b.title ?? moduleTitles[b.module],
       lBefore: b.L,
       lAfter,
-      changes: levelChanges(b.module, b.L, lAfter, b.task, context, floorsAfter),
+      changes: levelChanges(b.module, b.L, lAfter, this.block().plan, context, floorsAfter),
       score: b.viewScore ?? b.score,
       lines,
       flags: row.flags,

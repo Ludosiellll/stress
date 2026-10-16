@@ -49,9 +49,9 @@ describe('Progress: Горбов on one table after three (F10)', () => {
     await seedDiagnostic(repo, 1, {});
     await seedDiagnostic(repo, 2, { gorbovOneTable: true, gorbov: { V: 40, P: 80, Pi: 20 } });
     await renderProgress(repo);
-    const note = 'На трёх разных таблицах (до 0.3.0): №1. Тренд и полоса шума — только по диагностикам на одной таблице.';
+    const note = 'Диагностика №1 — на трёх разных таблицах (до 0.3.0). Тренд и полоса шума — только по диагностикам на одной таблице.';
     expect(within(chartOf('Таблица Горбова: V, P, Π, с')).getByText(note)).toBeTruthy();
-    expect(within(chartOf('ПЗМР, медиана, мс')).queryByText(/На трёх разных таблицах/)).toBeNull();
+    expect(within(chartOf('ПЗМР, медиана, мс')).queryByText(/на трёх разных таблицах/)).toBeNull();
   });
 });
 
@@ -525,8 +525,10 @@ describe('Progress: noise band and trend (F7)', () => {
     expect([...chartOf('ПЗМР, медиана, мс').querySelectorAll('p.chart-trend')].map((p) => p.textContent)).toEqual([
       'Полоса шума и тренд появятся после 3 точек.',
     ]);
-    // Three short series, one line.
-    expect(chartOf('Таблица Горбова: V, P, Π, с').querySelectorAll('p.chart-trend')).toHaveLength(1);
+    // Three short series, one line, which counts diagnostics on one table (T-R62).
+    expect([...chartOf('Таблица Горбова: V, P, Π, с').querySelectorAll('p.chart-trend')].map((p) => p.textContent)).toEqual([
+      'Полоса шума и тренд появятся после 3 диагностик на одной таблице.',
+    ]);
     expect(chartOf('ПЗМР, медиана, мс').querySelector('polygon')).toBeNull();
     // No warm-ups: «Нет данных», no trend line.
     expect(chartOf('Разминка ПЗМР: медиана по дням, мс').querySelector('p.chart-trend')).toBeNull();

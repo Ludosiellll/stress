@@ -33,7 +33,7 @@ import {
   type MemoryMode,
   type MemoryParams,
 } from '../modules/memory/params';
-import { describeChanges, describeParamChanges, type ParamChange } from '../modules/describe';
+import { describeChanges, describeParamChanges, describeTableChanges, type ParamChange } from '../modules/describe';
 import { generateBlockItems, generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
 import { bandIndex, stressorsOf, withFloor, type BandFields, type BlockStressors, type ReactionModule } from '../modules/reaction/common';
 import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
@@ -377,17 +377,22 @@ function bandBlock(module: BandModuleId, L: number, overload: boolean, ctx: Plan
  * describes its training parameters at both levels, so a swapped Go/No-Go segment names its swapped colours (T-R41),
  * and a band module's window is the one its blocks play (the floor of the band when that is larger, F3): at lBefore
  * the window the block played (ctx.floors), at lAfter the one the next block plays, on `floorsAfter`, the floors with
- * the block just played (T-R50).
+ * the block just played (T-R50). `played` is the block's plan: a table's task, and a normal block of a Горбов series
+ * never reshuffles, at either level (F10, T-R62).
  */
 export function levelChanges(
   module: ModuleId,
   lBefore: number,
   lAfter: number,
-  task: TableTaskId | undefined,
+  played: BlockPlan,
   ctx: PlanContext,
   floorsAfter: WindowFloors | null,
 ): ParamChange[] {
-  if (!isBandModule(module)) return describeChanges(module, lBefore, lAfter, task);
+  if (played.kind === 'table' && played.module === 'gorbov' && played.table === 'series' && !played.overload) {
+    const series = (L: number): TableParams => ({ ...gorbovParams(L, played.task), reshuffleEvery: null });
+    return describeTableChanges(series(lBefore), series(lAfter));
+  }
+  if (!isBandModule(module)) return describeChanges(module, lBefore, lAfter, played.kind === 'table' ? played.task : undefined);
   const at = (L: number, floors: WindowFloors | null): BandFields => bandBlock(module, L, false, { ...ctx, floors }).params;
   return describeParamChanges(module, at(lBefore, ctx.floors), at(lAfter, floorsAfter));
 }
