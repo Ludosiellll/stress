@@ -1,7 +1,20 @@
 import type { JSHandle, Page } from '@playwright/test';
-import { chooseExportFile, exportedFile, openApp, pageDate, playSession, setPressDelay, type Screen } from './bot';
+import type { BlockRow } from '../../src/data/rows';
+import type { ModuleId } from '../../src/engine/types';
+import {
+  cancelPendingPresses,
+  chooseExportFile,
+  exportedFile,
+  historyBundle,
+  openApp,
+  pageDate,
+  playSession,
+  restoreBundle,
+  setPressDelay,
+  type Screen,
+} from './bot';
 import { NORM_HINTS } from '../../src/engine/norms';
-import { E2E_URL, expect, expectFitsWidth, freshPage, lineCount, pauseWithEscape, shot, test } from './fixtures';
+import { E2E_URL, escapeUntil, expect, expectFitsWidth, freshPage, lineCount, pauseWithEscape, shot, test } from './fixtures';
 
 /**
  * Screenshots of every screen at 1280×800 into test-results/screens/<name>.png for the visual check
@@ -30,9 +43,9 @@ async function shootStimulus(page: Page, module: string, name: string): Promise<
  * Starts blocks from their instructions until the instruction of `title` is on screen (and, with `text`,
  * its instruction contains `text`: memory blocks share the title and differ by mode).
  */
-async function untilInstruction(page: Page, title: string, text?: string): Promise<void> {
+async function untilInstruction(page: Page, title: string, text?: string, onScreen?: (kind: Screen) => Promise<void>): Promise<void> {
   for (;;) {
-    await playSession(page, { stopAt: 'instruction' });
+    await playSession(page, { stopAt: 'instruction', ...(onScreen === undefined ? {} : { onScreen }) });
     const heading = await page.locator('.instruction h2').innerText();
     if (heading === title && (text === undefined || (await page.locator('.instruction').innerText()).includes(text))) return;
     await page.getByRole('button', { name: 'Начать (Enter)' }).click();
@@ -294,6 +307,17 @@ test('screens: home, settings, free, a diagnostic with every block view, progres
   await setPressDelay(page, 800);
   await page.getByRole('button', { name: 'Начать (Enter)' }).click();
   await shootStimulus(page, 'pzmr', 'reaction-pzmr');
+  // Escape restarts the task once (F11): the notice, then a second Escape shows the hint at the top of the running block.
+  await cancelPendingPresses(page);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('heading', { name: 'Повтор блока' })).toBeVisible();
+  await shot(page, 'notice-diagnostic-restart');
+  await page.getByRole('button', { name: 'Дальше (Enter)' }).click();
+  await expect(page.locator('.reaction canvas')).toBeVisible();
+  await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => { requestAnimationFrame(() => { r(); }); })));
+  const hint = page.getByText('Перезапуск уже использован — доведи задание до конца.');
+  await escapeUntil(page, hint);
+  await shootStimulus(page, 'pzmr', 'reaction-restart-used-hint');
   await setPressDelay(page, 280);
 
   let summaryShot = false;
@@ -351,8 +375,18 @@ test('screens: home, settings, free, a diagnostic with every block view, progres
   await playSession(page, {
     onScreen: async (kind) => {
       if (kind !== 'done') return;
-      await expect(page.getByRole('table', { name: 'Результаты диагностики' }).locator('tbody tr')).toHaveCount(12);
+      const results = page.getByRole('table', { name: 'Результаты диагностики' });
+      await expect(results.locator('tbody tr')).toHaveCount(12);
+      // The restart by Escape is in its row; the details lines under the table; the table fits without a scroll.
+      await expect(results.locator('tbody tr').first().locator('td').last()).toHaveText('да');
+      await expectFitsWidth(page.locator('.screen-center.done'), '«Сессия завершена»');
       await shot(page, 'done-diagnostic');
+      await results.evaluate((el) => { el.scrollIntoView({ block: 'start' }); });
+      await shot(page, 'done-diagnostic-table');
+      const details = page.getByRole('list', { name: 'Подробности диагностики' });
+      await expect(details.getByRole('listitem')).toHaveCount(4);
+      await details.evaluate((el) => { el.scrollIntoView({ block: 'center' }); });
+      await shot(page, 'done-diagnostic-details');
     },
   });
   await expect(page.getByRole('table', { name: 'Результаты диагностики' })).toBeVisible();
@@ -470,6 +504,236 @@ test('screens: a training session with pause, wellbeing and done; schulte', asyn
   await shot(page, 'progress-assessment', true);
 });
 
+declare global {
+  interface Window {
+    __markInk?: () => { at: number; ink: number } | null;
+  }
+}
+
+/**
+ * Installs `window.__markInk` (once per page): the pixels of the mark's colour (MARK_COLOR #bdbdbd of
+ * src/runtime/canvasRenderer.ts) in the rows around 5/6 of the reaction canvas's height, where the mark after a trial
+ * is drawn (F15, Р23), with the time of the read; null without a canvas.
+ */
+async function installMarkInk(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    window.__markInk = () => {
+      const canvas = document.querySelector<HTMLCanvasElement>('.reaction canvas');
+      const ctx = canvas?.getContext('2d') ?? null;
+      if (canvas === null || ctx === null || canvas.width === 0 || canvas.height === 0) return null;
+      const { width: w, height: h } = canvas;
+      const side = Math.min(w, h);
+      const data = ctx.getImageData(0, Math.round((5 * h) / 6 - 0.04 * side), w, Math.round(0.08 * side)).data;
+      let ink = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i] === 0xbd && data[i + 1] === 0xbd && data[i + 2] === 0xbd) ink++;
+      }
+      return { at: performance.now(), ink };
+    };
+  });
+}
+
+/**
+ * Shoots the mark after a trial (F15): it is on screen 150 ms. The shot counts when the mark is there before and after
+ * it, less than its 150 ms apart, so it was on screen throughout; otherwise the next trial's mark is tried.
+ */
+async function shootMark(page: Page, name: string): Promise<void> {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const before = await waitValue(
+      page,
+      () => {
+        const m = window.__markInk?.() ?? null;
+        return m !== null && m.ink > 50 ? m : null;
+      },
+      null,
+      30_000,
+    );
+    await shot(page, name);
+    const after = await page.evaluate(() => window.__markInk?.() ?? null);
+    if (after !== null && after.ink > 50 && after.at - before.at < 150) return;
+  }
+  throw new Error(`${name}: no mark stayed on screen through the screenshot`);
+}
+
+/**
+ * Shoots the next stimulus of `module` that stays on screen through the shot (the bot answers it `delay` ms after its
+ * onset); otherwise the next one is tried.
+ */
+async function shootStimulusRetry(page: Page, module: string, name: string): Promise<void> {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const seen = await page.evaluate((m) => window.__bot?.stimuli.filter((s) => s.module === m).length ?? 0, module);
+    await page.waitForFunction(
+      ({ m, n }) => (window.__bot?.stimuli.filter((s) => s.module === m).length ?? 0) > n,
+      { m: module, n: seen },
+      { polling: 'raf' },
+    );
+    await shot(page, name);
+    const onScreen = await page.evaluate((m) => {
+      const last = window.__bot?.stimuli.filter((s) => s.module === m).at(-1);
+      return last?.answerAt != null && performance.now() < last.answerAt;
+    }, module);
+    if (onScreen) return;
+  }
+  throw new Error(`${name}: no stimulus stayed on screen through the screenshot`);
+}
+
+/** 20 clean hit RTs around `median` (±30 ms), as a stored block keeps them. */
+const hitsAround = (median: number): number[] => Array.from({ length: 20 }, (_, i) => median - 30 + 3 * i + (i % 2));
+
+/**
+ * The history of a user on day 23 of the course (eight training days, so today plays the primary layout): ПЗМР at level
+ * 14 on load band 3 since the first day of 0.3.0 (the day before had a 0.2.0 block without a band, so the level chart
+ * has its break), a warm-up on every day (the form of the day and the window floor of band 3, about 1.2 × 440 ms), five
+ * test-format runs (today's is СЗМР), РДО at each speed, a block counted as 0 and two restarts, one overload block.
+ */
+function trainingHistory(): { daysAgo: number; blocks: Partial<BlockRow>[] }[] {
+  const band3 = JSON.stringify({ band: 3, bandLabel: 'интервал 0,3–3 с, помехи', layout: 'keyboard' });
+  const warmup = (median: number): Partial<BlockRow> => ({
+    module: 'pzmr',
+    lBefore: 13,
+    lAfter: 13,
+    flags: ['warmup'],
+    paramsJson: band3,
+    summaryJson: JSON.stringify({ cleanHitRts: hitsAround(median) }),
+  });
+  const pzmrBlock = (median: number, summary: Record<string, unknown> = {}): Partial<BlockRow> => ({
+    module: 'pzmr',
+    lBefore: 13,
+    lAfter: 14,
+    paramsJson: band3,
+    summaryJson: JSON.stringify({ cleanHitRts: hitsAround(median), ...summary }),
+  });
+  const run = (module: ModuleId, mean: number): Partial<BlockRow> => ({
+    module,
+    flags: ['test_format'],
+    summaryJson: JSON.stringify({ testFormat: { mean, sd: 30 + (mean % 7), errors: 1, falseStarts: 0, thirds: [mean, mean, mean] } }),
+  });
+  const rdo = (periodMs: number, bias: number): Partial<BlockRow> => ({
+    module: 'rdo',
+    lBefore: 5,
+    lAfter: 5,
+    paramsJson: JSON.stringify({ periodMs, layout: 'keyboard' }),
+    summaryJson: JSON.stringify({ meanSignedErrorMs: bias, meanAbsErrorMs: Math.abs(bias) + 20 }),
+  });
+  const counts = { hit: 14, wrong: 2, miss: 2, late: 1, false_start: 1, commission: 0, correct_reject: 0, early: 0, timing_late: 0 };
+  return [
+    { daysAgo: 22, blocks: [{ module: 'pzmr', lBefore: 10, lAfter: 12 }] },
+    { daysAgo: 20, blocks: [run('pzmr', 262), warmup(450), pzmrBlock(445)] },
+    { daysAgo: 16, blocks: [run('szmr', 400), warmup(440), pzmrBlock(440)] },
+    { daysAgo: 12, blocks: [run('pzmr', 255), warmup(430), pzmrBlock(435), rdo(1500, -14)] },
+    { daysAgo: 10, blocks: [warmup(445), pzmrBlock(440), rdo(2000, -6)] },
+    {
+      daysAgo: 8,
+      blocks: [run('gonogo', 330), warmup(425), { module: 'gonogo', lBefore: 3, lAfter: 1, flags: ['discarded'], summaryJson: JSON.stringify({ discarded: { reason: 'user', progress: 0.45 } }) }, pzmrBlock(430), rdo(3000, 3)],
+    },
+    {
+      daysAgo: 4,
+      blocks: [
+        run('pzmr', 248),
+        warmup(435),
+        { module: 'szmr', lBefore: 6, lAfter: 6, flags: ['overload'], paramsJson: JSON.stringify({ band: 1, loadBand: 2 }), summaryJson: JSON.stringify({ counts }) },
+        pzmrBlock(430, { restarts: [{ reason: 'user', progress: 0.1 }, { reason: 'focus_lost', progress: 0.5 }] }),
+        rdo(4000, 11),
+      ],
+    },
+    { daysAgo: 2, blocks: [warmup(440), pzmrBlock(435)] },
+  ];
+}
+
+test('screens: the 0.3.0 training screens: run, warm-up, errors and floor, marks, counted Esc, Progress', async ({ page }) => {
+  // A run, a warm-up, two free sessions and «Прогресс» at scale 0.3 (ПЗМР blocks of 5 signals).
+  test.setTimeout(360_000);
+  await openApp(page, '/?e2e=1&scale=0.3');
+  await installMarkInk(page);
+  await restoreBundle(page, await historyBundle(page, { sessions: trainingHistory() }));
+  const plan = page.getByRole('list', { name: 'План на сегодня' }).getByRole('listitem');
+  await expect(plan.first()).toHaveText(/^Прогон в формате теста: СЗМР, \d+\sсигналов \(около 3\sмин\)$/);
+  await shot(page, 'home-test-format-day');
+
+  // The run opens the session: its instruction, its block, its summary with the bests of the one earlier СЗМР run.
+  await page.getByRole('button', { name: 'Начать тренировку' }).click();
+  await playSession(page, { stopAt: 'instruction' });
+  await expect(page.locator('.instruction')).toContainText('Прогон в формате теста:');
+  await shot(page, 'instruction-test-format');
+  await playSession(page, { stopAt: 'summary' });
+  const summary = page.locator('.summary');
+  await expect(summary.locator('h2')).toHaveText('Прогон в формате теста · СЗМР');
+  await expect(summary.getByRole('list', { name: 'Показатели' }).getByRole('listitem').first()).toContainText('(лучшее 400)');
+  await shot(page, 'summary-test-format');
+  await page.getByRole('button', { name: 'Дальше' }).click();
+
+  // The warm-up at L_saved − 1 = 13 (band 3): the form of the day against the usual one, the window on its floor.
+  await playSession(page, { stopAt: 'summary' });
+  await expect(summary.locator('h2')).toHaveText('ПЗМР');
+  const lines = summary.getByRole('list', { name: 'Показатели' });
+  await expect(lines).toContainText(/Форма дня: медиана \d+\sмс \(обычно \d+\) · разброс \d+\sмс \(обычно \d+\) — /);
+  await expect(lines).toContainText(/Окно ответа: \d+\sмс — твой минимум для этой нагрузки \(по уровню — 219\sмс\)\./);
+  await shot(page, 'summary-warmup');
+  await endSessionFromSummary(page);
+
+  // Free ПЗМР at L 13: far distractors and the jittered circle; one false start («рано»), then hits on the floor.
+  await page.getByRole('button', { name: 'Свободная тренировка' }).click();
+  await page.getByRole('button', { name: 'ПЗМР', exact: true }).click();
+  await playSession(page, { stopAt: 'instruction' });
+  await setPressDelay(page, 40);
+  await begin(page);
+  await shootMark(page, 'reaction-mark-early');
+  // The circle answered 450 ms after onset, inside the floor window: on screen long enough for the shot.
+  await setPressDelay(page, 450);
+  await shootStimulusRetry(page, 'pzmr', 'reaction-pzmr-jitter-noise');
+  await setPressDelay(page, 280);
+  await playSession(page, { stopAt: 'summary' });
+  await expect(lines.getByRole('listitem').first()).toHaveText(/^Ошибки: фальстарты — [1-9]\. Штраф −\d+ из \d+, балл \d,\d\d\.$/);
+  await expect(lines).toContainText('твой минимум для этой нагрузки');
+  await shot(page, 'summary-errors-floor');
+
+  // The next block, stopped after 2 of its 5 signals: counted as 0, the level drops.
+  const shown = await page.evaluate(() => window.__bot?.stimuli.length ?? 0);
+  await page.getByRole('button', { name: 'Дальше' }).click();
+  await playSession(page, { stopAt: 'reaction' });
+  await page.waitForFunction((n) => (window.__bot?.stimuli.length ?? 0) >= n, shown + 2);
+  await cancelPendingPresses(page);
+  await pauseWithEscape(page);
+  await expect(page.getByText(/^Блок прерван на \d+\s% — засчитан как 0, уровень [\d,]+\s→\s[\d,]+\.$/)).toBeVisible();
+  await shot(page, 'pause-counted');
+  await page.getByRole('button', { name: 'Завершить сессию' }).click();
+  await expect(page.getByRole('button', { name: 'Начать тренировку' })).toBeVisible();
+
+  // Free Струп at L 0, with the key legend: every press 40 ms after the word is early, and «рано» clears the legend.
+  await page.getByRole('button', { name: 'Свободная тренировка' }).click();
+  await page.getByRole('button', { name: 'Струп' }).click();
+  await playSession(page, { stopAt: 'instruction' });
+  await setPressDelay(page, 40);
+  await begin(page);
+  await expect(page.locator('.reaction-legend')).toBeVisible();
+  await shootMark(page, 'reaction-mark-legend');
+  const legendTop = await page.locator('.reaction-legend').evaluate((el) => el.getBoundingClientRect().top);
+  // The mark: bold text 0.06 of the shorter side high, centred at 5/6 of the height.
+  expect((5 * 800) / 6 + 0.03 * 800, 'the mark ends above the key legend').toBeLessThan(legendTop);
+  await cancelPendingPresses(page);
+  await setPressDelay(page, 280);
+  await pauseWithEscape(page);
+  await page.getByRole('button', { name: 'Завершить сессию' }).click();
+  await expect(page.getByRole('button', { name: 'Начать тренировку' })).toBeVisible();
+
+  // «Прогресс»: each new section on its own, then the page; nothing sticks out sideways.
+  await page.getByRole('button', { name: 'Прогресс' }).click();
+  await expect(page.locator('.chart-point').first()).toBeVisible();
+  await expectFitsWidth(page.locator('html'), 'the page');
+  const section = (heading: string) => page.locator('section').filter({ has: page.getByRole('heading', { name: heading, exact: true }) }).last();
+  await expect(section('Форма дня').locator('.chart-band')).not.toHaveCount(0);
+  await section('Форма дня').screenshot({ path: 'test-results/screens/progress-form-of-day.png' });
+  await expect(section('Прогоны в формате теста').locator('.chart-band')).not.toHaveCount(0);
+  await section('Прогоны в формате теста').screenshot({ path: 'test-results/screens/progress-test-format.png' });
+  const levels = section('Уровни по модулям');
+  await expect(levels.getByText(/^1,5\sс: −14\sмс \(1\sблок\) · 2\sс: −6\sмс \(1\sблок\) · 3\sс: \+3\sмс \(1\sблок\) · 4\sс: \+11\sмс \(1\sблок\)$/)).toBeVisible();
+  await expect(levels.locator('.chart-marker')).not.toHaveCount(0);
+  await levels.screenshot({ path: 'test-results/screens/progress-levels.png' });
+  const discards = section('Прерванные блоки по неделям');
+  await discards.screenshot({ path: 'test-results/screens/progress-discards.png' });
+  await shot(page, 'progress-0.3.0-full', true);
+});
+
 test('screens: the overload phase on Home; memory grid, card and grid answer', async ({ page }) => {
   // Scale 0.3: a 90 s memory budget reaches the third block (digits → positions → card).
   await openApp(page, '/?e2e=1&scale=0.3');
@@ -487,7 +751,15 @@ test('screens: the overload phase on Home; memory grid, card and grid answer', a
   await shootMemoryTrial(page, { row: 'memory-grid' });
   await answerMemoryTrial(page, 'memory-answer-grid');
 
-  await untilInstruction(page, 'Память', 'На карточке');
+  // The lesson comes once, before the first 3×3 card (F13).
+  let lessonShot = false;
+  await untilInstruction(page, 'Память', 'На карточке', async (kind) => {
+    if (kind !== 'lesson') return;
+    lessonShot = true;
+    await shot(page, 'memory-lesson');
+  });
+  expect(lessonShot).toBe(true);
+  await shot(page, 'instruction-memory-card');
   await begin(page);
   await shootMemoryTrial(page, { row: 'memory-card' });
   await pauseWithEscape(page);
