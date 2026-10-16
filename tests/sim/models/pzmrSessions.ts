@@ -5,6 +5,7 @@ import { planFree, planTraining, taperBudget, type Segment, type SessionPlan } f
 import { createRng } from '../../../src/engine/rng';
 import { mean } from '../../../src/engine/stats';
 import { FLOOR_FACTOR } from '../../../src/engine/windowFloor';
+import { withFloor } from '../../../src/modules/reaction/common';
 import { pzmr } from '../../../src/modules/reaction/pzmr';
 import { SessionController } from '../../../src/session/controller';
 import { playTimeline, type Respond } from '../../../src/testing/sessionPlayers';
@@ -86,7 +87,7 @@ function floorWindow(p: Player): number {
 }
 
 function expectedScore(p: Player, L: number): number {
-  const window = Math.max(pzmr.params(L).windowMs, Math.round(floorWindow(p)));
+  const window = withFloor(pzmr.params(L), floorWindow(p)).windowMs;
   const inWindow = rtCdf(p, window) - rtCdf(p, 100);
   return tryChance(p, L) * inWindow;
 }

@@ -3,6 +3,7 @@ import { CALIBRATION_BLOCKS } from '../../../src/engine/phases';
 import { penalizedScore } from '../../../src/engine/reaction/summary';
 import type { Outcome } from '../../../src/engine/reaction/types';
 import { FLOOR_HITS, bandFloors } from '../../../src/engine/windowFloor';
+import { withFloor } from '../../../src/modules/reaction/common';
 import { szmr } from '../../../src/modules/reaction/szmr';
 import { Rand, buildDdm, countLe, learn, nearestIdx, type DdmCell } from './learner';
 
@@ -147,7 +148,7 @@ function playBlock(r: Rand, cell: DdmCell, terS: number, windowMs: number, n: nu
 }
 
 /**
- * The course of one learner. `floors`: the window is max(szmr.params(L).windowMs, round(floor of its band)) (spec
+ * The course of one learner. `floors`: the window is withFloor(szmr.params(L), floor of its band) (spec
  * §3.1.2), the floors from the clean hits of every block so far; otherwise the nominal window.
  */
 export function runSzmrCourse(seed: number, o: { floors: boolean; policy: BoundaryPolicy }): SzmrCourse {
@@ -170,7 +171,7 @@ export function runSzmrCourse(seed: number, o: { floors: boolean; policy: Bounda
     for (let k = 0; k < BLOCKS_PER_SESSION; k++) {
       const load = loadOf(L);
       const floor = o.floors ? bandFloors(hitsByBand, bands)(load.band) : null;
-      const windowMs = floor === null ? load.windowMs : Math.max(load.windowMs, Math.round(floor));
+      const { windowMs } = withFloor(szmr.params(L), floor);
       const drift = learn(0.3, 0.42, trials, PRACTICE_SCALE) * load.drift;
       const terS = learn(0.31, 0.28, trials, PRACTICE_SCALE) + load.ter;
       const cell = pickCell(cells[nearestIdx(VS, drift)] as DdmCell[], o.policy, terS, windowMs / 1000);

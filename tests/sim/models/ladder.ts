@@ -6,14 +6,14 @@ import type { Outcome } from '../../../src/engine/reaction/types';
 import { mean, median, sd } from '../../../src/engine/stats';
 import type { BandModuleId } from '../../../src/engine/types';
 import { FLOOR_HITS, bandFloors } from '../../../src/engine/windowFloor';
-import { bandIndex } from '../../../src/modules/reaction/common';
+import { bandIndex, withFloor } from '../../../src/modules/reaction/common';
 import { bandModules } from '../../../src/modules/registry';
 import { Rand, learn } from './learner';
 
 /**
  * The load ladders over 90 days (spec §8.4; ported from the fixes simulation ladder.ts). Ex-Gaussian learners play
  * every band module's blocks; the load of each band changes their μ, τ and error rates. The rules are the app's: the
- * window is max(params(L).windowMs, round(floor)) with the floors of bandFloors over the clean hits of each band, the
+ * window is withFloor(params(L), floor) with the floors of bandFloors over the clean hits of each band, the
  * band is bandIndex, the level moves by levelDelta (the penalised s, the first block of a session's segment, the
  * first CALIBRATION_BLOCKS blocks ever, the previous s, CV_all and lapses of the model with the module's cvMax), the
  * session starts at startLevel and L_saved is savedLevel. Parameters are expert judgement, labelled where they are.
@@ -305,10 +305,12 @@ export function runLadder(id: BandModuleId, learner: LadderLearner, seed: number
     lastDay = day;
     let prev: number | null = null;
     for (let k = 0; k < BLOCKS_PER_SESSION; k++) {
-      const band = bandIndex(m, L);
+      // The block's own band at L with the window the app plays (withFloor), as the session's bandBlock builds it.
+      const blockL = L;
+      const band = bandIndex(m, blockL);
       const floor = bandFloors(hits, bands)(band);
-      const W = Math.max(m.params(L).windowMs, floor === null ? 0 : Math.round(floor));
-      const block = play(loadOf(band), W, m.trials(m.params(L)), practice);
+      const own = withFloor(m.params(blockL), floor);
+      const block = play(loadOf(band), own.windowMs, m.trials(own), practice);
       practice += block.n;
       course.below.push(L <= lSaved - 1);
       course.scores.push(block.s);
@@ -333,10 +335,12 @@ export function runLadder(id: BandModuleId, learner: LadderLearner, seed: number
       prev = block.s;
       lifetime++;
       if (k === OVERLOAD_AFTER) {
-        // The next band's load with the finisher sound, at this block's window; the level and the floors stay.
+        // The next band's load with the finisher sound at this block's level and window (the floor of its own band),
+        // as the session plans an overload block: window and trials from the same L. The level and the floors stay.
+        const over = withFloor(m.params(blockL, band + 1), floor);
         const next = loadOf(band + 1);
         const loud = { ...next, mu: next.mu * OVERLOAD_SOUND.mu, tau: next.tau * OVERLOAD_SOUND.tau, wrong: next.wrong + OVERLOAD_SOUND.wrong };
-        course.overload.push(play(loud, W, m.trials(m.params(L, band + 1)), practice).s);
+        course.overload.push(play(loud, over.windowMs, m.trials(over), practice).s);
       }
     }
     ends.push(L);
