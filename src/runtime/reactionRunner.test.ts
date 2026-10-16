@@ -1,7 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { FALSE_START_MS, resolveBlock } from '../engine/reaction/resolve';
-import type { BlockTimeline, Stimulus, TrialSpec } from '../engine/reaction/types';
+import type { BlockTimeline, Stimulus, TrialResult, TrialSpec } from '../engine/reaction/types';
 import {
   FEEDBACK_MS,
   LATE_GRACE_MS,
@@ -720,18 +720,53 @@ describe('ReactionBlockRunner: the mark after a trial (F15)', () => {
     const [onset] = (await timelineOf(h)).onsets as [number];
     const markAt = h.clock.firstFrameAtOrAfter(onset + 200);
     expect(h.at('mark')).toEqual([markAt]);
-    // In the frame after the press: the mark, then the trial ends.
-    expect(h.calls.filter((c) => c.at === markAt).map((c) => c.op)).toEqual(['mark', 'hide']);
+    // In the frame after the press: the trial ends, then the mark (after the frame's transitions).
+    expect(h.calls.filter((c) => c.at === markAt).map((c) => c.op)).toEqual(['hide', 'mark']);
     expect(h.at('clearMark')).toEqual([h.clock.firstFrameAtOrAfter(markAt + FEEDBACK_MS)]);
 
-    // The next stimulus is due 50 ms after the press: the mark goes in its frame, just before the stimulus.
+    // The next stimulus is due 50 ms after the press: showing it takes the mark away, in one draw (T-R59).
     const soon = pressesAfterOnsets([marked(pressTrial(500, 1000)), pressTrial(50, 1000)], [[[200, 'KeyF']]]);
     soon.clock.runOut();
     const next = (await timelineOf(soon)).onsets[1] as number;
     expect(next - (soon.at('mark')[0] as number)).toBeLessThan(FEEDBACK_MS);
-    expect(soon.at('clearMark')).toEqual([next]);
-    const ops = soon.calls.filter((c) => c.at === next).map((c) => c.op);
-    expect(ops.slice(ops.indexOf('clearMark'), ops.indexOf('clearMark') + 2)).toEqual(['clearMark', 'show']);
+    expect(soon.at('clearMark')).toEqual([]);
+    expect(soon.calls.filter((c) => c.at === next).map((c) => c.op)).toEqual(['show']);
+  });
+
+  it('an onset frame draws once: a mark due there is not drawn, one on screen goes with the stimulus (T-R59)', async () => {
+    // A 5 ms frame grid from t0 = 5: trial 0 shows at 55 and is answered at 177 (hidden at 180), trial 1 is due at 227
+    // and shows in the frame at 230.
+    const specs = [pressTrial(50, 150), marked(pressTrial(50, 300))];
+    const drawsAt = (h: Harness, ts: number): string[] => h.calls.filter((c) => c.at === ts && c.op !== 'tick').map((c) => c.op);
+    // A false start of trial 1 at 228: its mark would be due in the onset frame. It is not drawn there, nor later.
+    const due = pressesAfterOnsets(specs, [[[122, 'Space'], [173, 'Space']]], { frameMs: 5 });
+    due.clock.runOut();
+    const dueTl = await timelineOf(due);
+    expect(dueTl.onsets).toEqual([55, 230]);
+    expect(resolveBlock(specs, dueTl).map((r) => r.outcome)).toEqual(['hit', 'false_start']);
+    expect(due.at('mark')).toEqual([]);
+    expect(drawsAt(due, 230)).toEqual(['show']);
+    // A false start at 218: the mark shows at 220 and goes with the stimulus at 230, without a clearMark draw.
+    const shown = pressesAfterOnsets(specs, [[[122, 'Space'], [163, 'Space']]], { frameMs: 5 });
+    shown.clock.runOut();
+    expect((await timelineOf(shown)).onsets).toEqual([55, 230]);
+    expect(shown.at('mark')).toEqual([220]);
+    expect(shown.at('clearMark')).toEqual([]);
+    expect(drawsAt(shown, 230)).toEqual(['show']);
+    // The onsets are those of the same presses without marks.
+    const plain = pressesAfterOnsets([pressTrial(50, 150), pressTrial(50, 300)], [[[122, 'Space'], [173, 'Space']]], { frameMs: 5 });
+    plain.clock.runOut();
+    expect(await timelineOf(due)).toEqual(await timelineOf(plain));
+  });
+
+  it('two marks in one frame: the earlier trial’s wins (T-R59)', async () => {
+    // Trial 0 shows at 55 with a 132 ms window (deadline 187): a wrong key at 186, then a press at 188, a false start
+    // of trial 1; both land between the frames at 185 and 190.
+    const specs = [marked(pressTrial(50, 132)), marked(pressTrial(200, 300))];
+    const h = pressesAfterOnsets(specs, [[[131, 'KeyF'], [133, 'Space']]], { frameMs: 5 });
+    h.clock.runOut();
+    expect(resolveBlock(specs, await timelineOf(h)).map((r) => r.outcome)).toEqual(['wrong', 'false_start']);
+    expect(h.calls.filter((c) => c.op === 'mark')).toEqual([{ op: 'mark', at: 190, text: 'ошибка' }]);
   });
 
   it('an abort clears a mark on screen, without another frame', () => {
@@ -822,18 +857,19 @@ describe('ReactionBlockRunner: the mark after a trial (F15)', () => {
     expect(marksOf(a)).toEqual(['рано']);
   });
 
-  it('the mark agrees with resolveBlock: marked ⇔ feedback and false_start, wrong or commission; «рано» ⇔ false_start', async () => {
-    // A 5 ms frame grid; trial times are multiples of 5 and press times are not, so every press lands between frames,
-    // at most one between two frames.
+  it('the mark agrees with resolveBlock frame by frame: the earliest trial marked since the last frame, none at an onset', async () => {
+    // A 5 ms frame grid; trial times are multiples of 5 and press times k·5 + 2 or k·5 + 4, so every press lands
+    // between frames, up to two between the same two frames (T-R59).
     const FRAME_MS = 5;
     const grid = (min: number, max: number) => fc.integer({ min, max }).map((k) => k * FRAME_MS);
-    const between = (max: number) => fc.integer({ min: 0, max }).map((k) => k * FRAME_MS + 2);
+    const between = (max: number) => fc.tuple(fc.integer({ min: 0, max }), fc.constantFrom(2, 4)).map(([k, d]) => k * FRAME_MS + d);
     const key = fc.constantFrom('Space', 'KeyF');
     const trial = fc
       .record({ isiMs: grid(0, 80), windowMs: grid(10, 80), withhold: fc.boolean(), feedback: fc.boolean() })
       .map(({ isiMs, windowMs, withhold, feedback }) => ({ ...(withhold ? withholdTrial(isiMs, windowMs) : pressTrial(isiMs, windowMs)), feedback }));
-    const presses = fc.array(fc.tuple(between(179), key), { maxLength: 3 });
+    const presses = fc.array(fc.tuple(between(179), key), { maxLength: 4 });
     const before = fc.array(fc.tuple(between(40), key), { maxLength: 2 });
+    const MARKS: Partial<Record<string, FeedbackMark>> = { false_start: 'рано', wrong: 'ошибка', commission: 'ошибка' };
     await fc.assert(
       fc.asyncProperty(fc.array(fc.tuple(trial, presses), { minLength: 1, maxLength: 6 }), before, async (block, early) => {
         const specs = block.map(([t]) => t);
@@ -842,12 +878,12 @@ describe('ReactionBlockRunner: the mark after a trial (F15)', () => {
           block.map(([, p]) => [...p].sort((a, b) => a[0] - b[0])),
           { frameMs: FRAME_MS, before: early },
         );
-        // A stimulus never appears with a mark on screen.
+        // Showing a stimulus takes the mark away (T-R59).
         let visible = false;
         const { renderer } = h.runner as unknown as { renderer: StimulusRenderer };
         const show = renderer.show.bind(renderer);
         renderer.show = (s) => {
-          expect(visible, 'a mark on screen at an onset').toBe(false);
+          visible = false;
           show(s);
         };
         const mark = renderer.mark?.bind(renderer);
@@ -861,13 +897,27 @@ describe('ReactionBlockRunner: the mark after a trial (F15)', () => {
           clear?.();
         };
         h.clock.runOut();
-        const results = resolveBlock(specs, await timelineOf(h));
-        const expected = results.flatMap((r, i) => {
-          if (specs[i]?.feedback !== true) return [];
-          if (r.outcome === 'false_start') return ['рано'];
-          return r.outcome === 'wrong' || r.outcome === 'commission' ? ['ошибка'] : [];
+        const tl = await timelineOf(h);
+        // The press that marks a trial: the first whose prefix of presses gives the trial false_start, wrong or
+        // commission. Its mark is due in the first frame after it; a frame shows the earliest trial due there.
+        const due = new Map<number, { trial: number; text: FeedbackMark }>();
+        let prev = resolveBlock(specs, { ...tl, presses: [] });
+        tl.presses.forEach((p, j) => {
+          const next = resolveBlock(specs, { ...tl, presses: tl.presses.slice(0, j + 1) });
+          next.forEach((r, i) => {
+            const text = MARKS[r.outcome];
+            if (text === undefined || specs[i]?.feedback !== true || MARKS[(prev[i] as TrialResult).outcome] !== undefined) return;
+            const frame = h.clock.frames.find((ts) => ts > p.ts) as number;
+            const held = due.get(frame);
+            if (held === undefined || i < held.trial) due.set(frame, { trial: i, text });
+          });
+          prev = next;
         });
-        expect(marksOf(h)).toEqual(expected);
+        const expected = [...due]
+          .filter(([frame]) => !tl.onsets.includes(frame))
+          .sort((a, b) => a[0] - b[0])
+          .map(([at, { text }]) => ({ op: 'mark', at, text }));
+        expect(h.calls.filter((c) => c.op === 'mark')).toEqual(expected);
         expect(visible, 'a mark left on screen').toBe(false);
       }),
       { numRuns: 1000 },

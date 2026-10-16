@@ -6,11 +6,11 @@ import { MemoryRepository } from '../data/memoryRepository';
 import { block, session } from '../data/repository.contract';
 import type { DiagnosticRow } from '../data/rows';
 import { EMPTY_RESULTS, diagnosticSegmentSeed, type DiagnosticResults } from '../engine/diagnostic';
-import type { PhaseInfo } from '../engine/phases';
+import { currentPhase, firstSessionAt, type PhaseInfo } from '../engine/phases';
 import type { Segment, SessionPlan } from '../engine/planner';
 import { readiness } from '../engine/readiness';
 import { MODULE_IDS, type ModuleId } from '../engine/types';
-import { loadHomeModel, phaseTexts, planLine, readinessOf } from './homeModel';
+import { loadHomeModel, phaseOfDay, phaseTexts, planLine, readinessOf } from './homeModel';
 
 const EMPTY: DiagnosticResults = EMPTY_RESULTS;
 
@@ -188,6 +188,24 @@ describe('loadHomeModel', () => {
     // A diagnostic yesterday: the next rehearsal is not due yet.
     await repo.addDiagnostic({ id: 'dd', sessionId: 'd', number: 1, at: '2026-10-13T18:00:00', resultsJson: '{}' });
     expect((await loadHomeModel(repo, TODAY)).rehearsalDue).toBe(false);
+  });
+});
+
+describe('phaseOfDay (T-R59)', () => {
+  const TODAY = '2026-10-14';
+  it('is the phase of the day from the first session and the test date, as Home and free training compute it', async () => {
+    const repo = new MemoryRepository();
+    await repo.createSession(session('d', '2026-09-24T23:30:00', { kind: 'diagnostic' }));
+    await repo.createSession(session('t', '2026-10-11T10:00:00'));
+    const states = await repo.getModuleStates();
+    const sessions = await repo.listSessions();
+    for (const testDate of [null, '2026-11-03', '2026-10-19']) {
+      const phase = phaseOfDay(states, sessions, { testDate }, TODAY);
+      expect(phase).toEqual(currentPhase({ firstSessionAt: firstSessionAt(sessions), today: TODAY, testDate, states }));
+      await repo.saveSettings({ testDate });
+      expect((await loadHomeModel(repo, TODAY)).phase).toEqual(phase);
+    }
+    expect(phaseOfDay(states, sessions, { testDate: '2026-10-19' }, TODAY)).toMatchObject({ phase: 'taper', dayNumber: 21 });
   });
 });
 

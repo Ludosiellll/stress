@@ -8,7 +8,7 @@ import { L_NORM, OLD_L_NORM, TEST_FORMAT_ORDER, type TestFormatId } from '../eng
 import { readinessOfLatest } from '../engine/readiness';
 import { mean, median } from '../engine/stats';
 import { trend, trendWindow, type Trend } from '../engine/trend';
-import { isBandModule, MODULE_IDS, type ModuleId, type ReactionModuleId, type SessionKind } from '../engine/types';
+import { isBandModule, MODULE_IDS, type BlockFlag, type ModuleId, type ReactionModuleId, type SessionKind } from '../engine/types';
 import { RDO_PERIODS } from '../modules/reaction/rdo';
 import { moduleTitles } from '../modules/registry';
 import { assessModules, meanFamilyRating, type ModuleAssessment } from '../session/assessment';
@@ -481,11 +481,15 @@ export function overload28d(blocks: readonly Pick<BlockRow, 'module' | 'flags' |
   return scores.length === 0 ? null : { mean: mean(scores), blocks: scores.length };
 }
 
+/** РДО blocks that do not measure the bias: counted as 0 after Esc, or with dropped frames. */
+const BIAS_OUT: readonly BlockFlag[] = ['discarded', 'timing_unreliable'];
+
 /**
  * «РДО: смещение по скоростям за 28 дней» (F14): the mean summaryJson.meanSignedErrorMs of the РДО blocks started in
  * [now − OVERLOAD_DAYS days, now] at each speed of RDO_PERIODS, by paramsJson.periodMs, whatever the session (a block
- * at a speed measures the bias there); a block counted as 0 after Esc (T-R10), a period that is no speed (0.2.0) and
- * an unreadable bias are left out.
+ * at a speed measures the bias there, a diagnostic or test-format one at 3000 ms too); a block counted as 0 after Esc
+ * (T-R10), one with dropped frames (their errorMs is off, T-R60), a period that is no speed (0.2.0) and an unreadable
+ * bias are left out.
  */
 export function rdoBias(blocks: readonly Pick<BlockRow, 'module' | 'flags' | 'startedAt' | 'paramsJson' | 'summaryJson'>[], now: Date): RdoBias[] {
   const end = now.getTime();
@@ -493,7 +497,7 @@ export function rdoBias(blocks: readonly Pick<BlockRow, 'module' | 'flags' | 'st
   const bySpeed = new Map<number, number[]>(RDO_PERIODS.map((v) => [v, []]));
   for (const b of blocks) {
     const t = Date.parse(b.startedAt);
-    if (b.module !== 'rdo' || b.flags.includes('discarded') || !(t >= start && t <= end)) continue;
+    if (b.module !== 'rdo' || b.flags.some((f) => BIAS_OUT.includes(f)) || !(t >= start && t <= end)) continue;
     const periodMs = num(parseObject(b.paramsJson)?.['periodMs']);
     const errors = periodMs === null ? undefined : bySpeed.get(periodMs);
     const e = num(parseObject(b.summaryJson)?.['meanSignedErrorMs']);

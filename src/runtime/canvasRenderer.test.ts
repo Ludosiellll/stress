@@ -254,6 +254,15 @@ describe('createCanvasRenderer', () => {
     renderer.clearMark();
     expect(named(calls, 'fillText')).toEqual([]);
     expect(named(calls, 'fillRect')).toHaveLength(1);
+    // Showing a stimulus takes the mark away in its own draw (T-R59): one draw, no mark.
+    renderer.mark('рано');
+    calls.length = 0;
+    renderer.show({ kind: 'shape', shape: 'circle', color: 'red' });
+    expect(named(calls, 'fillText')).toEqual([]);
+    expect(named(calls, 'fillRect')).toHaveLength(1);
+    calls.length = 0;
+    renderer.hide();
+    expect(named(calls, 'fillText')).toEqual([]);
   });
 
   it('the word is bold, centred, 12% of the shorter side', () => {

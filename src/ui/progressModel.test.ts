@@ -310,6 +310,18 @@ describe('the РДО bias by speed (F14)', () => {
     expect(rdoBias([], now).map((s) => s.blocks)).toEqual([0, 0, 0, 0]);
   });
 
+  it('a timing_unreliable block is left out: dropped frames distort errorMs (T-R60)', () => {
+    const rows = [
+      rdo('a', '2026-10-25T10:00:00.000Z', 3000, -10),
+      rdo('b', '2026-10-25T10:00:00.000Z', 3000, 90, ['timing_unreliable']),
+      rdo('c', '2026-10-25T10:00:00.000Z', 3000, 90, ['test_format', 'timing_unreliable']),
+      // A test-format run and a diagnostic block (no flag) play 3000 ms: the same measure, they stay in.
+      rdo('d', '2026-10-25T10:00:00.000Z', 3000, 4, ['test_format']),
+      rdo('e', '2026-10-25T10:00:00.000Z', 3000, 0),
+    ];
+    expect(rdoBias(rows, now)[2]).toEqual({ periodMs: 3000, meanMs: -2, blocks: 3 });
+  });
+
   it('loadProgressModel reads it from the block history', async () => {
     const repo = new MemoryRepository();
     const at = new Date(2026, 9, 14, 10).toISOString();

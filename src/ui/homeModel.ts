@@ -1,5 +1,5 @@
 import type { Repository } from '../data/repository';
-import type { DiagnosticRow } from '../data/rows';
+import type { DiagnosticRow, SessionRow, Settings } from '../data/rows';
 import { signedDaysBetween } from '../engine/dates';
 import { MODULE_IDS } from '../engine/derive';
 import { parseResults, planDiagnostic } from '../engine/diagnostic';
@@ -12,6 +12,7 @@ import {
   isRehearsalDue,
   isTestFormat,
   planTraining,
+  type ModuleState,
   type Segment,
   type SessionPlan,
 } from '../engine/planner';
@@ -58,6 +59,19 @@ export function readinessOf(diagnostics: readonly DiagnosticRow[]): HomeModel['r
   if (latest === null) return { abilities: NO_ABILITIES, overall: null, unreliable: [], deferred: false };
   const earlier = diagnostics.slice(0, -1).flatMap((d) => parseResults(d) ?? []);
   return { ...readinessOfLatest(earlier, latest), unreliable: [...latest.unreliable] };
+}
+
+/**
+ * The phase of the day `today` (local YYYY-MM-DD): from the first session of any kind, the test date and the module
+ * states. Home and free training both take it from here (F15, Р10).
+ */
+export function phaseOfDay(
+  states: Record<ModuleId, ModuleState>,
+  sessions: readonly Pick<SessionRow, 'startedAt'>[],
+  settings: Pick<Settings, 'testDate'>,
+  today: string,
+): PhaseInfo {
+  return currentPhase({ firstSessionAt: firstSessionAt(sessions), today, testDate: settings.testDate, states });
 }
 
 const PHASE_TITLES: Record<PhaseId, string> = {
@@ -171,7 +185,7 @@ export async function loadHomeModel(repo: Repository, today: string): Promise<Ho
   );
   // Seeds count every diagnostic ever started, so an abandoned one is not replayed with the same tables (I5).
   const diagnosticsStarted = sessions.filter((s) => s.kind === 'diagnostic').length;
-  const phase = currentPhase({ firstSessionAt: firstSessionAt(sessions), today, testDate: settings.testDate, states });
+  const phase = phaseOfDay(states, sessions, settings, today);
   // The test-format runs (F4) by their flag, whatever the session; the planner needs their dates and their number.
   const testFormatRuns = blockLevels
     .flat()

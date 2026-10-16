@@ -27,8 +27,9 @@ export interface StimulusRenderer {
   /** Called once per frame of the block, after that frame's transitions (background animation: visual noise). */
   frame?(ts: number): void;
   /**
-   * Draws the mark after a trial (F15) over whatever is on screen, until `clearMark`; a new mark replaces it. Showing
-   * or hiding a stimulus keeps it. Renderers without marks leave both out.
+   * Draws the mark after a trial (F15) over whatever is on screen, until `clearMark`; a new mark replaces it. Hiding a
+   * stimulus keeps it; `show` takes it away in the same draw, as a mark never shares a frame with a stimulus (T-R59).
+   * Renderers without marks leave both out.
    */
   mark?(text: FeedbackMark): void;
   /** Takes the mark away; the rest of the screen stays. */
@@ -156,9 +157,11 @@ function validate(o: RunnerOptions): void {
  * - Marks (F15): a press of a trial with `feedback` that resolveBlock scores false_start («рано»: a press before the
  *   onset that answers no earlier trial, or under FALSE_START_MS after it) or wrong / commission («ошибка»: a wrong key
  *   in the window, a press on a `withhold` trial) leaves a mark, one per trial, by its first event; late answers and
- *   misses have none. `press()` only notes it; the next frame draws it, before its transitions, and the first frame at
- *   or after that frame + FEEDBACK_MS clears it, or the frame of the next onset does, before the stimulus. Onsets,
- *   deadlines and frame requests never depend on a mark.
+ *   misses have none. `press()` only notes it; the next frame draws it after its transitions, and the first frame at
+ *   or after that frame + FEEDBACK_MS clears it, or the next onset takes it away with the stimulus (`show`). A frame
+ *   that shows a stimulus draws no mark: one due there is dropped, so an onset frame draws once (T-R59). When two
+ *   trials earn a mark between the same two frames, the earlier trial's is drawn. Onsets, deadlines and frame
+ *   requests never depend on a mark.
  * - Background layers (visual noise): `onTrial(i)` when the wait for trial i begins, `renderer.beginFrame(ts)` in
  *   every frame before its transitions and `renderer.frame(ts)` after them. None changes an onset or a press time.
  * - `abort()` stops the loop and hides the stimulus; if the renderer throws, `start()` rejects with that error.
@@ -192,7 +195,7 @@ export class ReactionBlockRunner {
   private readonly answered: boolean[] = [];
   /** The trials that got their mark (F15). */
   private readonly marked = new Set<number>();
-  /** A mark decided since the last frame, drawn in the next one. */
+  /** A mark decided since the last frame, drawn in the next one; the first one noted wins (the earlier trial's). */
   private pendingMark: FeedbackMark | null = null;
   /** The frame timestamp the mark on screen was drawn in; null: none on screen. */
   private markAt: number | null = null;
@@ -267,7 +270,7 @@ export class ReactionBlockRunner {
     if (mark === null || a.kind === 'none' || this.marked.has(a.trial)) return;
     if ((this.specs[a.trial] as TrialSpec).feedback !== true) return;
     this.marked.add(a.trial);
-    this.pendingMark = mark;
+    this.pendingMark ??= mark;
   }
 
   /** «рано» for a false start (before the onset, or a response under FALSE_START_MS); «ошибка» for wrong and commission. */
@@ -303,8 +306,12 @@ export class ReactionBlockRunner {
     this.measureFrame(ts);
     try {
       this.renderer.beginFrame?.(ts);
-      this.updateMark(ts);
+      // The mark noted before this frame; one noted by a renderer callback during it waits for the next frame.
+      const mark = this.pendingMark;
+      this.pendingMark = null;
+      const shown = this.onsets.length;
       this.advance(ts);
+      if (this.onsets.length === shown && this.phase.kind !== 'finished') this.updateMark(ts, mark);
       this.renderer.frame?.(ts);
     } catch (err) {
       this.phase = { kind: 'finished' };
@@ -314,11 +321,12 @@ export class ReactionBlockRunner {
     if (this.phase.kind !== 'finished') this.frameId = this.clock.request(this.onFrame);
   };
 
-  /** F15: the mark noted since the last frame appears in this one; the one on screen goes FEEDBACK_MS after its frame. */
-  private updateMark(ts: number): void {
-    const mark = this.pendingMark;
+  /**
+   * F15, after the transitions of a frame without an onset: the mark noted since the last frame appears in this one;
+   * the one on screen goes FEEDBACK_MS after its frame.
+   */
+  private updateMark(ts: number, mark: FeedbackMark | null): void {
     if (mark !== null) {
-      this.pendingMark = null;
       this.markAt = ts;
       this.renderer.mark?.(mark);
     } else if (this.markAt !== null && ts >= this.markAt + FEEDBACK_MS) {
@@ -394,8 +402,8 @@ export class ReactionBlockRunner {
 
   private show(i: number, ts: number): void {
     const spec = this.specs[i] as TrialSpec;
-    // A mark never shares a frame with a stimulus (F15).
-    if (this.markAt !== null) this.clearMark();
+    // A mark never shares a frame with a stimulus (F15): renderer.show takes it away in the same draw (T-R59).
+    this.markAt = null;
     this.onsets.push(ts);
     this.onsetDeltas.push(this.frameDelta);
     this.answered.push(false);

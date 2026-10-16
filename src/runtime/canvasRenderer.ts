@@ -284,7 +284,7 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement, o: CanvasRendere
   let noiseMs = 0;
   /** The noise as the last draw painted it. */
   let drawnLook: NoiseLook | null = null;
-  /** The mark after a trial on screen (F15); showing or hiding a stimulus keeps it. */
+  /** The mark after a trial on screen (F15); hiding a stimulus keeps it, showing one takes it away (T-R59). */
   let markText: FeedbackMark | null = null;
 
   const setNoiseTime = (ts: number): void => {
@@ -344,6 +344,8 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement, o: CanvasRendere
       current = s;
       cueRule = null;
       elapsedMs = 0;
+      // A mark never shares a frame with a stimulus: it goes in this draw (T-R59).
+      markText = null;
       draw();
     },
     hide() {

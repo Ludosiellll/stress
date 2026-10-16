@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { currentPhase, firstSessionAt, type PhaseInfo } from '../../engine/phases';
+import type { PhaseInfo } from '../../engine/phases';
 import { planFree, type SessionPlan } from '../../engine/planner';
 import { hashString } from '../../engine/rng';
 import { MODULE_IDS, type ModuleId } from '../../engine/types';
 import { moduleTitles } from '../../modules/registry';
 import { useApp } from '../AppContext';
+import { phaseOfDay } from '../homeModel';
 import { logEvent } from '../errorLog';
 import { localDate } from '../format';
 import { useKeyDown } from '../keys';
@@ -33,7 +34,7 @@ export default function Free({ onStart, onBack }: FreeProps) {
     let live = true;
     Promise.all([repo.getModuleStates(), repo.listSessions(), repo.getSettings()]).then(
       ([states, list, settings]) => {
-        const phase = currentPhase({ firstSessionAt: firstSessionAt(list), today: localDate(), testDate: settings.testDate, states });
+        const phase = phaseOfDay(states, list, settings, localDate());
         if (live) setContext({ sessions: list.length, phase });
       },
       (e: unknown) => {

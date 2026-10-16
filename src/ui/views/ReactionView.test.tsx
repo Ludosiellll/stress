@@ -561,7 +561,7 @@ describe('ReactionView', () => {
     expect(frames.pending()).toBe(0);
   });
 
-  it('a block whose trials carry feedback gets the marks of the runner; a diagnostic block, none (F15)', async () => {
+  it('trials with feedback get the marks of the runner; the same block without feedback, none (F15)', async () => {
     mockCanvas();
     for (const feedback of [true, false]) {
       const spec: TrialSpec = feedback ? { ...TRIAL, feedback } : TRIAL;
