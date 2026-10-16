@@ -28,6 +28,8 @@ import {
 } from './generate';
 
 const family = fc.constantFrom(...ALL_FAMILIES);
+/** R − targetDifficulty(R): the rating gap that gives P = 0.75. */
+const targetGap = R0 - targetDifficulty(R0);
 /** The 8 families of 0.1.0 and their predictors. */
 const OLD_FAMILIES: readonly FamilyId[] = ALL_FAMILIES.slice(0, 8);
 
@@ -425,7 +427,10 @@ describe('the new families (F12)', () => {
   }, 120_000);
 
   it('held-out families never appear in training', () => {
-    const items = generateBlockItems(new Map(), 10_000, createRng(20));
+    // Which families come up depends on the weights only. Ratings that put each family's structural target 50 above its
+    // base keep the targets reachable: from R0 most families would search all 200 attempts for each item (120 s on CI).
+    const reachable = new Map<FamilyId, number>(TRAINING_FAMILIES.map((f) => [f, 2 * (BASE_DIFFICULTY[f] + 50 - 417) + targetGap]));
+    const items = generateBlockItems(reachable, 10_000, createRng(20));
     expect(items).toHaveLength(10_000);
     const families = new Set(items.map((it) => it.family));
     for (const f of HELD_OUT_FAMILIES) expect(families.has(f), f).toBe(false);
