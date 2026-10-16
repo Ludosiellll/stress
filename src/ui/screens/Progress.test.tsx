@@ -52,6 +52,8 @@ describe('Progress: Горбов on one table after three (F10)', () => {
     const note = 'Диагностика №1 — на трёх разных таблицах (до 0.3.0). Тренд и полоса шума — только по диагностикам на одной таблице.';
     expect(within(chartOf('Таблица Горбова: V, P, Π, с')).getByText(note)).toBeTruthy();
     expect(within(chartOf('ПЗМР, медиана, мс')).queryByText(/на трёх разных таблицах/)).toBeNull();
+    // One table for the three tasks: V, P and Π are named by the tasks.
+    expect(screen.getByText('V — среднее время первых двух заданий, P — время третьего, Π — разница между третьим и суммой первых двух.')).toBeTruthy();
   });
 });
 

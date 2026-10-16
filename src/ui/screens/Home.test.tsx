@@ -300,7 +300,7 @@ describe('Home with history', () => {
     // 0.1.0 diagnostics have no memory span: no data, and the index stays the 0.1.0 one.
     expect(value('Память')).toBe('нет данных');
     expect(screen.getByText('Общий индекс: 97')).toBeTruthy();
-    expect(screen.getByText('Для большинства показателей 60 — уровень первой диагностики; время первых двух таблиц Горбова (V) оценивается по бумажной шкале, это ориентир.')).toBeTruthy();
+    expect(screen.getByText('Для большинства показателей 60 — уровень первой диагностики; время первых двух заданий Горбова (V) оценивается по бумажной шкале, это ориентир.')).toBeTruthy();
     expect(screen.queryByText('Пройди диагностику, чтобы увидеть индекс')).toBeNull();
     expect(screen.queryByText(DEFERRED_NOTE)).toBeNull();
   });
