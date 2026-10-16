@@ -5,13 +5,11 @@ import type { FormDay } from '../engine/dayForm';
 import { sessionEndPoints, type LevelPoint } from '../engine/derive';
 import { parseResults, type DiagnosticMetrics, type DiagnosticResults } from '../engine/diagnostic';
 import { L_NORM, OLD_L_NORM, TEST_FORMAT_ORDER, type TestFormatId } from '../engine/planner';
-import { penalizedScore } from '../engine/reaction/summary';
-import type { Outcome } from '../engine/reaction/types';
 import { mean, median } from '../engine/stats';
 import { isBandModule, MODULE_IDS, type ModuleId, type ReactionModuleId, type SessionKind } from '../engine/types';
 import { moduleTitles } from '../modules/registry';
 import { assessModules, meanFamilyRating, type ModuleAssessment } from '../session/assessment';
-import { buildBlockHistory, parseObject } from '../session/blockHistory';
+import { buildBlockHistory, scoreFromCounts } from '../session/blockHistory';
 import { pastBlocks, testFormatRunsAt, warmupDays, type PastBlocks } from '../session/pastBlocks';
 import { shownCost } from '../session/steps';
 import { TEST_FORMAT_NAMES, testFormatBest, type TestFormatBest } from '../session/testFormat';
@@ -297,27 +295,6 @@ export function levelChart(module: ModuleId, points: readonly LevelPoint[]): Lev
     series: [{ name: 'Уровень', points: points.map((p, i) => ({ x: String(i + 1), y: p.level })) }],
     marker: first > 0 ? { x: String(first + 1), normBefore: OLD_L_NORM[module] } : null,
   };
-}
-
-const OUTCOMES: readonly Outcome[] = ['hit', 'wrong', 'miss', 'late', 'false_start', 'commission', 'correct_reject', 'early', 'timing_late'];
-
-/**
- * The penalised score of a stored reaction block, recomputed from summaryJson.counts (T-R31): blocks stored before F1
- * keep the plain share of successes as their score, so the stored score cannot be averaged with later ones. Every
- * summary since 0.1.0 stores all nine counts, one per non-practice trial, so n is their sum. null: counts missing,
- * damaged or all zero.
- */
-function scoreFromCounts(summaryJson: string): number | null {
-  const raw = parseObject(summaryJson)?.['counts'];
-  if (typeof raw !== 'object' || raw === null) return null;
-  const counts = {} as Record<Outcome, number>;
-  for (const o of OUTCOMES) {
-    const v = (raw as Partial<Record<Outcome, unknown>>)[o];
-    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) return null;
-    counts[o] = v;
-  }
-  const n = OUTCOMES.reduce((sum, o) => sum + counts[o], 0);
-  return n === 0 ? null : penalizedScore(counts, n);
 }
 
 /** Overload blocks of the band modules started in [now − OVERLOAD_DAYS days, now], scored by scoreFromCounts. */

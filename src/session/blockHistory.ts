@@ -1,6 +1,8 @@
 import { isCountedSession, storedBand } from '../engine/derive';
 import type { NormId } from '../engine/norms';
 import { COND_PAIRS } from '../engine/reaction/conditions';
+import { penalizedScore } from '../engine/reaction/summary';
+import type { Outcome } from '../engine/reaction/types';
 import { isBandModule, type BlockFlag, type ModuleId, type SessionKind } from '../engine/types';
 import type { BlockRow } from '../data/rows';
 import { MEMORY_TRIALS } from '../modules/memory/params';
@@ -119,6 +121,39 @@ const wholeFromZero = (o: Json | null, key: string): number | null => shown(o, k
 function oneOf<T extends string>(o: Json | null, key: string, values: readonly T[]): T | null {
   const v = o?.[key];
   return typeof v === 'string' && (values as readonly string[]).includes(v) ? (v as T) : null;
+}
+
+/** Every outcome once: a Record, so a new Outcome fails to compile until it is listed here. */
+const OUTCOME_SET: Readonly<Record<Outcome, true>> = {
+  hit: true,
+  wrong: true,
+  miss: true,
+  late: true,
+  false_start: true,
+  commission: true,
+  correct_reject: true,
+  early: true,
+  timing_late: true,
+};
+const OUTCOMES = Object.keys(OUTCOME_SET) as Outcome[];
+
+/**
+ * The penalised score of a stored reaction block, recomputed from summaryJson.counts (T-R31): blocks stored before F1
+ * keep the plain share of successes as their score, so the stored score cannot be averaged with later ones. Every
+ * summary since 0.1.0 stores all nine counts, one per non-practice trial, so n is their sum. null: counts missing,
+ * damaged or all zero.
+ */
+export function scoreFromCounts(summaryJson: string): number | null {
+  const raw = objectField(parseObject(summaryJson), 'counts');
+  if (raw === null) return null;
+  const counts = {} as Record<Outcome, number>;
+  for (const o of OUTCOMES) {
+    const v = raw[o];
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) return null;
+    counts[o] = v;
+  }
+  const n = OUTCOMES.reduce((sum, o) => sum + counts[o], 0);
+  return n === 0 ? null : penalizedScore(counts, n);
 }
 
 export type GorbovTask = (typeof GORBOV_TASKS)[number];

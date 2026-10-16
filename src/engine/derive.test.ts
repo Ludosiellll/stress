@@ -14,6 +14,7 @@ import {
 } from './derive';
 import { R0, updateRating, type Rating } from './elo';
 import { effectiveDifficulty } from './itemLimit';
+import { L_NORM } from './planner';
 import type { BlockFlag, FamilyId, ModuleId, SessionKind } from './types';
 
 interface S {
@@ -336,12 +337,29 @@ describe('old levels after the load bands (F3, Р9, spec §3.1.6)', () => {
     const freshBlocks = fresh.map((s) => blk(s.id, 'pzmr', 8, s.startedAt));
     // The upgrade day: one load-rule session.
     expect(deriveModuleStates([...old, ...fresh.slice(0, 1)], [...oldBlocks, ...freshBlocks.slice(0, 1)]).pzmr.plateau).toBe(false);
-    // Five load-rule sessions after the first one without a new maximum: a plateau again.
+    // Five load-rule sessions are the first maximum and four after it: no plateau yet. The sixth is the fifth without
+    // a new maximum: a plateau again.
     expect(deriveModuleStates([...old, ...fresh.slice(0, 5)], [...oldBlocks, ...freshBlocks.slice(0, 5)]).pzmr.plateau).toBe(false);
     expect(deriveModuleStates([...old, ...fresh], [...oldBlocks, ...freshBlocks]).pzmr.plateau).toBe(true);
     // Modules without bands keep the plateau over every session (old params or not).
     const gorbov = old.slice(0, 6).map((s) => blk(s.id, 'gorbov', 5, s.startedAt, [], OLD));
     expect(deriveModuleStates(old.slice(0, 6), gorbov).gorbov.plateau).toBe(true);
+  });
+
+  it('property: the plateau is isPlateau of the saved levels at the load-rule points, old points mixed in (T-R13)', () => {
+    const pointArb = fc.record({ level: fc.integer({ min: 0, max: 30 }), loadRule: fc.boolean() });
+    fc.assert(
+      fc.property(fc.array(pointArb, { maxLength: 15 }), (plan) => {
+        const sessions = plan.map((_, i) => ses(`s${String(i)}`, day(1 + i)));
+        const blocks = plan.map((p, i) => blk(`s${String(i)}`, 'pzmr', p.level, day(1 + i), [], p.loadRule ? '{"band":0}' : OLD));
+        const ends = plan.map((p) => (p.loadRule ? p.level : Math.min(p.level, L_NORM.pzmr)));
+        const saved = ends.map((_, i) => savedLevel(ends.slice(0, i + 1)));
+        const st = deriveModuleStates(sessions, blocks).pzmr;
+        expect(st.savedHistory).toEqual(saved);
+        expect(st.plateau).toBe(isPlateau(saved.filter((_, i) => plan[i]?.loadRule)));
+      }),
+      { numRuns: 1000 },
+    );
   });
 
   it('storedBand: a whole number from 0, else null', () => {

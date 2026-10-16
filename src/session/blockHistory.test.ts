@@ -16,6 +16,7 @@ import {
   mainVariant,
   normSamples,
   schulteSize,
+  scoreFromCounts,
   variantOf,
   type BlockHistory,
   type HistoryEntry,
@@ -491,5 +492,20 @@ describe('mainVariant', () => {
     expect(mainVariant('schulte', h)).toBe('schulte:7');
     expect(mainVariant('schulte', new Map([['schulte:10', [entry]], ['schulte:9', [entry]]]))).toBe('schulte:10');
     expect(mainVariant('schulte', new Map([['schulte:abc', [entry]]]))).toBeNull();
+  });
+});
+
+describe('scoreFromCounts (T-R31, shared reader)', () => {
+  const zero = { hit: 0, wrong: 0, miss: 0, late: 0, false_start: 0, commission: 0, correct_reject: 0, early: 0, timing_late: 0 };
+  it('the penalised score from all nine stored counts; n is their sum', () => {
+    expect(scoreFromCounts(JSON.stringify({ score: 0.85, counts: { ...zero, hit: 17, wrong: 2, false_start: 1 } }))).toBeCloseTo(0.65, 12);
+    expect(scoreFromCounts(JSON.stringify({ counts: { ...zero, hit: 9, correct_reject: 3, commission: 1, early: 1 } }))).toBeCloseTo(10 / 14, 12);
+  });
+  it('null for missing, damaged or all-zero counts', () => {
+    for (const text of ['not json', '{"score":0.9}', '{"counts":[1,2]}', JSON.stringify({ counts: zero })]) expect(scoreFromCounts(text), text).toBeNull();
+    const eight = Object.fromEntries(Object.entries({ ...zero, hit: 5 }).filter(([k]) => k !== 'timing_late'));
+    expect(scoreFromCounts(JSON.stringify({ counts: eight }))).toBeNull();
+    expect(scoreFromCounts(JSON.stringify({ counts: { ...zero, hit: 5, wrong: 1.5 } }))).toBeNull();
+    expect(scoreFromCounts(JSON.stringify({ counts: { ...zero, hit: 5, miss: -1 } }))).toBeNull();
   });
 });

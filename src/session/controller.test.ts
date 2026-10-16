@@ -205,13 +205,13 @@ function stateWith(module: ModuleId, over: Partial<ModuleState>): ModuleState {
   return { ...defaultModuleState(module), ...over };
 }
 
+/** Params of a block of the load bands at level L (Р9: its level counts as played, not as an old window level). */
+const bandParams = (L: number): string => JSON.stringify({ band: Math.floor(L / 4) });
+
 /**
  * A repository with `state` saved and `n` level-moving blocks of its module at its lSaved, in a training session 30
  * days before T0: calibration counts the stored level-moving blocks, not lifetimeBlocks (T-R38).
  */
-/** Params of a block of the load bands at level L (Р9: its level counts as played, not as an old window level). */
-const bandParams = (L: number): string => JSON.stringify({ band: Math.floor(L / 4) });
-
 async function calibratedRepo(state: ModuleState, n = 3): Promise<MemoryRepository> {
   const repo = new MemoryRepository();
   const at = new Date(new Date(T0).getTime() - 30 * DAY).toISOString();
