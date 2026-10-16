@@ -482,9 +482,10 @@ describe('Settings sound', () => {
 
     let release: () => void = () => undefined;
     const written = new Promise<void>((resolve) => { release = resolve; });
-    platform.exportFile = async () => {
+    // Each file has its own path, as on a real disk: the saved paths are listed by path.
+    platform.exportFile = async (name) => {
       await written;
-      return 'C:\\Downloads\\x';
+      return `C:\\Downloads\\${name}`;
     };
     fireEvent.click(screen.getByRole('button', { name: 'Экспорт данных (JSON и CSV)' }));
     await waitFor(() => { expect(isDisabled('Проверить звук')).toBe(true); });
