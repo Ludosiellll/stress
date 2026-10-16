@@ -22,6 +22,7 @@ import {
   seriesDiagnosticInstruction,
   seriesLines,
   spanLines,
+  speedLine,
   stabilityLine,
   tableLines,
   WARMUP_LEVEL_NOTE,
@@ -200,18 +201,48 @@ describe('reactionLines', () => {
     ]);
   });
 
-  it('rdo: the error by modulus (what the history compares), the signed bias in words, exact hits, early and late answers (FW1)', () => {
+  it('rdo: the error by modulus (what the history compares), the speed line, the misses (Р24, T-R2, T-R6)', () => {
     const counts = { hit: 6, early: 3, timing_late: 1 };
-    const rdo = (signed: number | null, abs: number | null): string[] =>
+    const rdo = (signed: number | null, abs: number | null, periodMs = 3000): string[] =>
       reactionLines(
         'rdo',
         summary({ n: 10, medianRt: null, meanRt: null, sdRt: null, cvRt: null, meanSignedErrorMs: signed, meanAbsErrorMs: abs }, counts),
+        null,
+        periodMs,
       );
-    const tail = ['Точных попаданий: 6 из 10', 'Опережений: 3, запаздываний: 1', 'Пропуски: 0'];
-    expect(rdo(5, 25.4)).toEqual(['Ошибок нет.', 'Средняя ошибка по модулю: 25 мс', 'Смещение: +5 мс (запаздываешь)', ...tail]);
-    expect(rdo(-30.4, 31)).toEqual(['Ошибок нет.', 'Средняя ошибка по модулю: 31 мс', 'Смещение: −30 мс (торопишься)', ...tail]);
-    expect(rdo(-0.4, 12)).toEqual(['Ошибок нет.', 'Средняя ошибка по модулю: 12 мс', 'Смещение: 0 мс', ...tail]);
-    expect(rdo(null, null)).toEqual(['Ошибок нет.', ...tail]);
+    expect(rdo(5, 25.4)).toEqual([
+      'Ошибок нет.',
+      'Средняя ошибка по модулю: 25 мс',
+      'Скорость: оборот за 3 с · смещение +5 мс (позже отметки) · точно 6 из 10 · рано 3, поздно 1.',
+      'Пропуски: 0',
+    ]);
+    expect(rdo(-30.4, 31, 2000)).toEqual([
+      'Ошибок нет.',
+      'Средняя ошибка по модулю: 31 мс',
+      'Скорость: оборот за 2 с · смещение −30 мс (раньше отметки) · точно 6 из 10 · рано 3, поздно 1.',
+      'Пропуски: 0',
+    ]);
+    // No answer with an error at all: the speed line has no bias.
+    expect(rdo(null, null)).toEqual(['Ошибок нет.', 'Скорость: оборот за 3 с · точно 6 из 10 · рано 3, поздно 1.', 'Пропуски: 0']);
+  });
+
+  it('rdo: reactionLines needs the period the block played', () => {
+    expect(() => reactionLines('rdo', summary())).toThrow(RangeError);
+  });
+});
+
+describe('speedLine (F14)', () => {
+  const rdo = (meanSignedErrorMs: number | null): ReactionSummary =>
+    summary({ n: 20, meanSignedErrorMs }, { hit: 12, early: 5, timing_late: 3 });
+
+  it('the speed, the signed bias in words, exact hits, early and late answers', () => {
+    expect(speedLine(rdo(-18.2), 1500)).toBe('Скорость: оборот за 1,5 с · смещение −18 мс (раньше отметки) · точно 12 из 20 · рано 5, поздно 3.');
+    expect(speedLine(rdo(11), 4000)).toBe('Скорость: оборот за 4 с · смещение +11 мс (позже отметки) · точно 12 из 20 · рано 5, поздно 3.');
+  });
+
+  it('a bias that rounds to 0 has no side', () => {
+    expect(speedLine(rdo(0.3), 3000)).toBe('Скорость: оборот за 3 с · смещение 0 мс · точно 12 из 20 · рано 5, поздно 3.');
+    expect(speedLine(rdo(-0.4), 2000)).toBe('Скорость: оборот за 2 с · смещение 0 мс · точно 12 из 20 · рано 5, поздно 3.');
   });
 });
 

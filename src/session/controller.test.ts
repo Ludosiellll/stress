@@ -31,6 +31,7 @@ import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
 import { pomeh } from '../modules/reaction/pomeh';
 import { isSwappedSegment } from '../modules/reaction/gonogo';
 import { pzmr } from '../modules/reaction/pzmr';
+import { rdoPeriod } from '../modules/reaction/rdo';
 import { szmr } from '../modules/reaction/szmr';
 import { reactionModules } from '../modules/registry';
 import { gorbovMetrics } from '../modules/tables/gorbov';
@@ -1573,20 +1574,43 @@ describe('SessionController — the personal window floor and the load bands (F3
 });
 
 describe('SessionController — assessment', () => {
-  it('the next block of the variant compares with the one before it', async () => {
+  it('the next block of the variant compares with the one before it: РДО at the same speed (F14, T-R9)', async () => {
     const h = await begin(planFree('rdo', 1));
     const first = await playReaction(h);
     expect(first.view.assessment?.history).toBe('Первый такой блок — будет с чем сравнивать');
+    // Blocks 1–3 play the other three speeds: each is the first of its variant.
+    for (let i = 1; i < 4; i++) {
+      await h.c.continueAfterSummary();
+      expect((await playReaction(h)).view.assessment?.history, `block ${String(i)}`).toBe('Первый такой блок — будет с чем сравнивать');
+    }
     await h.c.continueAfterSummary();
-    const second = await playReaction(h);
-    expect(second.view.assessment?.history).toMatch(/^Раньше в этом блоке: прошлый раз \d+ мс \(ур\. 0\) · лучший \d+ мс · в среднем за 7 дней \d+ мс/);
+    const fifth = await playReaction(h);
+    expect(fifth.view.assessment?.history).toMatch(/^Раньше в этом блоке: прошлый раз \d+ мс \(ур\. [\d,]+\) · лучший \d+ мс · в среднем за 7 дней \d+ мс/);
+  });
+
+  it('an РДО block plays the speed of its slot, stores it and names it in the speed line (F14)', async () => {
+    const h = await begin(planFree('rdo', 1));
+    for (let i = 0; i < 4; i++) {
+      if (i > 0) await h.c.continueAfterSummary();
+      const { view } = await playReaction(h);
+      const periodMs = rdoPeriod(1, 0, i);
+      const seconds = String(periodMs / 1000).replace('.', ',');
+      expect(view.lines.filter((l) => l.startsWith('Скорость: ')), `block ${String(i)}`).toEqual([
+        expect.stringMatching(new RegExp(`^Скорость: оборот за ${seconds} с · (смещение [^·]+ · )?точно \\d+ из 20 · рано \\d+, поздно \\d+\\.$`)),
+      ]);
+      expect(view.lines.some((l) => l.startsWith('Средняя ошибка по модулю: ') || l === 'Ошибок нет.')).toBe(true);
+    }
+    const stored = (await h.repo.listBlocks()).map((b) => (JSON.parse(b.paramsJson) as { periodMs: number }).periodMs);
+    expect(stored).toEqual([0, 1, 2, 3].map((i) => rdoPeriod(1, 0, i)));
   });
 
   it('history from earlier sessions is read at session start', async () => {
     const repo = new MemoryRepository();
     const yesterday = new Date(new Date(T0).getTime() - DAY).toISOString();
     await repo.createSession(session('s0', yesterday, { kind: 'free' }));
-    await repo.addBlock(block('b0', 's0', yesterday, { module: 'rdo', lBefore: 3, summaryJson: '{"meanAbsErrorMs":25}' }), [], []);
+    // The block before played the speed this session's first block plays (F14, T-R9).
+    const paramsJson = JSON.stringify({ periodMs: rdoPeriod(1, 0, 0) });
+    await repo.addBlock(block('b0', 's0', yesterday, { module: 'rdo', lBefore: 3, paramsJson, summaryJson: '{"meanAbsErrorMs":25}' }), [], []);
     const h = await begin(planFree('rdo', 1), { repo });
     const { view } = await playReaction(h);
     expect(view.assessment?.history?.startsWith('Раньше в этом блоке: прошлый раз 25 мс (ур. 3) · лучший 25 мс')).toBe(true);

@@ -273,31 +273,47 @@ export function errorLine(module: ReactionModuleId, s: ReactionSummary): string 
   return `Ошибки: ${list}. Штраф −${String(penaltyPoints(s.counts))} из ${String(s.n)}, балл ${decimal(s.penalizedScore, 2)}.`;
 }
 
-/** РДО: the signed mean error, «−» early and «+» late. */
-function biasLine(meanSignedErrorMs: number): string {
-  const e = whole(meanSignedErrorMs);
-  if (e > 0) return `Смещение: +${String(e)} мс (запаздываешь)`;
-  if (e < 0) return `Смещение: −${String(-e)} мс (торопишься)`;
-  return 'Смещение: 0 мс';
+/** A period in seconds as the texts write it: 1500 → «1,5», 2000 → «2» (F14). */
+export function periodSeconds(periodMs: number): string {
+  return String(periodMs / 1000).replace('.', ',');
+}
+
+/**
+ * РДО (F14, Р24): «Скорость: оборот за 1,5 с · смещение −18 мс (раньше отметки) · точно 12 из 20 · рано 5, поздно 3.»
+ * The bias is the signed mean error in whole ms, «0 мс» without a side; a block without any timed answer has none.
+ */
+export function speedLine(s: ReactionSummary, periodMs: number): string {
+  const parts = [`Скорость: оборот за ${periodSeconds(periodMs)} с`];
+  if (s.meanSignedErrorMs !== null) {
+    const e = whole(s.meanSignedErrorMs);
+    parts.push(e === 0 ? 'смещение 0 мс' : `смещение ${signedMs(e)} мс (${e < 0 ? 'раньше' : 'позже'} отметки)`);
+  }
+  parts.push(`точно ${String(s.counts.hit)} из ${String(s.n)}`, `рано ${String(s.counts.early)}, поздно ${String(s.counts.timing_late)}`);
+  return `${parts.join(' · ')}.`;
 }
 
 /**
  * Errors first; then the times, the РДО lines, and the misses last (Р5, T-R6). «Стабильность (CV)» is CV_all, what the
- * stability rule sees, when the block's `stability` is given; otherwise the CV of the hits (Р6).
+ * stability rule sees, when the block's `stability` is given; otherwise the CV of the hits (Р6). РДО keeps «Средняя
+ * ошибка по модулю», the number its history and the diagnostic compare (FW1, T-R2), and its speed line takes the place
+ * of the bias and count lines (Р24): it needs the period the block played. RangeError for РДО without one.
  */
-export function reactionLines(module: ReactionModuleId, s: ReactionSummary, stability: Pick<Stability, 'cvAll'> | null = null): string[] {
+export function reactionLines(
+  module: ReactionModuleId,
+  s: ReactionSummary,
+  stability: Pick<Stability, 'cvAll'> | null = null,
+  periodMs: number | null = null,
+): string[] {
   const lines = [errorLine(module, s)];
   if (s.medianRt !== null) lines.push(`Медиана: ${String(whole(s.medianRt))} мс`);
   if (s.meanRt !== null) lines.push(`Среднее: ${String(whole(s.meanRt))} мс`);
   if (s.sdRt !== null) lines.push(`Разброс (SD): ${String(whole(s.sdRt))} мс`);
   const cv = stability === null ? s.cvRt : stability.cvAll;
   if (cv !== null) lines.push(`Стабильность (CV): ${decimal(cv, 2)}`);
-  // The error by modulus is the РДО number the history and the diagnostic compare (FW1).
   if (s.meanAbsErrorMs !== null) lines.push(`Средняя ошибка по модулю: ${String(whole(s.meanAbsErrorMs))} мс`);
-  if (s.meanSignedErrorMs !== null) lines.push(biasLine(s.meanSignedErrorMs));
   if (module === 'rdo') {
-    lines.push(`Точных попаданий: ${String(s.counts.hit)} из ${String(s.n)}`);
-    lines.push(`Опережений: ${String(s.counts.early)}, запаздываний: ${String(s.counts.timing_late)}`);
+    if (periodMs === null) throw new RangeError('reactionLines: an РДО block needs the period it played');
+    lines.push(speedLine(s, periodMs));
   }
   // A miss is no answer inside the window (spec §5), so late answers count too.
   lines.push(`Пропуски: ${String(s.counts.miss + s.counts.late)}`);

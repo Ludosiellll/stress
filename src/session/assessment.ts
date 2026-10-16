@@ -255,8 +255,12 @@ const UNTRAINED = 'ещё не тренировался';
 const VARIANT_TITLES: ReadonlyMap<VariantKey, string> = new Map([
   ['gorbov:alternate', 'чередование'],
   ['memory:digits', 'цифры'],
+  ['rdo:3000', 'оборот за 3 с'],
 ]);
-/** «Красно-чёрные таблицы Горбова — чередование», «Таблицы Шульте — 6×6»; Шульте without a finished grid: the bare title. */
+/**
+ * «Красно-чёрные таблицы Горбова — чередование», «Таблицы Шульте — 6×6», «Реакция на движущийся объект — оборот за 3 с»;
+ * Шульте without a finished grid: the bare title.
+ */
 function moduleTitle(module: ModuleId, variant: VariantKey | null): string {
   const title = moduleTitles[module];
   if (variant === null) return title;

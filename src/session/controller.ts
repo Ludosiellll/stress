@@ -16,6 +16,7 @@ import { isBandModule, isReactionModule, type BlockFlag, type FamilyId, type Lay
 import type { MemoryTrial } from '../modules/memory/generate';
 import { memorySpan, scoreMemoryTrial, type MemoryAnswer } from '../modules/memory/score';
 import { bandIndex } from '../modules/reaction/common';
+import type { RdoParams } from '../modules/reaction/rdo';
 import { moduleTitles, reactionModules } from '../modules/registry';
 import type { TableTaskId } from '../modules/tables/gorbov';
 import { scoreTableRun, type TableRun } from '../modules/tables/score';
@@ -227,6 +228,11 @@ function floorLines(plan: BlockPlan): string[] {
   if (plan.kind !== 'reaction' || plan.load === null) return [];
   const { floorMs, nominalWindowMs } = plan.load;
   return floorMs !== null && floorMs > nominalWindowMs ? [floorLine(floorMs, nominalWindowMs)] : [];
+}
+
+/** The period an РДО block played (F14), for its speed line; null for the other blocks. */
+function rdoPeriodOf(plan: BlockPlan): number | null {
+  return plan.kind === 'reaction' && plan.module === 'rdo' ? (plan.params as RdoParams).periodMs : null;
 }
 
 /**
@@ -484,7 +490,7 @@ export class SessionController {
           ...(run === null ? {} : { testFormat: run.metrics }),
         },
         lines: run?.lines ?? [
-          ...reactionLines(module, summary, stability),
+          ...reactionLines(module, summary, stability, rdoPeriodOf(plan)),
           ...floorLines(plan),
           ...conditionLines(module, conditions, plan.kind === 'reaction' && plan.overload),
           ...(tl.audioPlayed === false ? [AUDIO_NOT_PLAYED] : []),

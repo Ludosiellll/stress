@@ -68,7 +68,8 @@ export const DIAGNOSTIC_PARAMS: DeepReadonly<DiagnosticParams> = deepFreeze<Diag
     noise: null,
     audio: null,
   },
-  rdo: { periodMs: 3000, toleranceMs: 60, isiMin: 800, isiMax: 1500 },
+  // F14: the 0.2.0 block size; the diagnostic plays its own volume.
+  rdo: { periodMs: 3000, toleranceMs: 60, isiMin: 800, isiMax: 1500, trials: 10 },
   pomeh: {
     windowMs: 456,
     mode: 'simple',

@@ -10,9 +10,11 @@ import {
   type ChartSpec,
   type OverloadMean,
   type ProgressModel,
+  type RdoBias,
   type TestFormatProgress,
   type TrendView,
 } from '../progressModel';
+import { periodSeconds, plural, signedMs } from '../../session/steps';
 import ReadinessBlock from '../views/ReadinessBlock';
 
 export interface ProgressProps {
@@ -240,12 +242,27 @@ function overloadLine(o: OverloadMean | null): string {
   return o === null ? 'Блоков перегрузки за 28 дней не было.' : `Средний балл блоков перегрузки за 28 дней: ${decimal(o.mean, 2)} (блоков: ${String(o.blocks)})`;
 }
 
+/**
+ * «1,5 с: −14 мс (5 блоков) · 2 с: — · 3 с: +3 мс (4 блока) · 4 с: +11 мс (1 блок)» (F14): the mean bias at each speed in
+ * whole ms with its blocks; a dash at a speed without blocks.
+ */
+function rdoBiasLine(speeds: readonly RdoBias[]): string {
+  return speeds
+    .map(({ periodMs, meanMs, blocks }) => {
+      const value = meanMs === null ? '—' : `${signedMs(meanMs)} мс (${String(blocks)} ${plural(blocks, 'блок', 'блока', 'блоков')})`;
+      return `${periodSeconds(periodMs)} с: ${value}`;
+    })
+    .join(' · ');
+}
+
 function Levels({ model }: { model: ProgressModel }) {
   return (
     <section aria-labelledby="levels-title">
       <h2 id="levels-title">Уровни по модулям</h2>
       <p className="muted">Уровень на конец каждой сессии. Пунктир — уровень, при котором модуль примерно соответствует формату теста.</p>
       <p>{overloadLine(model.overload28d)}</p>
+      <h3>РДО: смещение по скоростям за 28 дней</h3>
+      <p>{noBreakUnits(rdoBiasLine(model.rdoBias))}</p>
       <div className="chart-grid">
         {model.levels.map((l) => (
           <ChartCard

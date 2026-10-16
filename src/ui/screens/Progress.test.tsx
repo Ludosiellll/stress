@@ -169,6 +169,30 @@ describe('Progress after the load bands (F3, spec §3.1.6)', () => {
     expect(rows.map((r) => r.slice(1))).toEqual([['2', '1', '1'], ...Array<string[]>(7).fill(['0', '0', '0'])]);
   });
 
+  it('«РДО: смещение по скоростям за 28 дней»: the mean bias at each speed with its blocks (F14)', async () => {
+    const repo = new MemoryRepository();
+    const at = (h: number): string => new Date(Date.now() - h * 60 * 60 * 1000).toISOString();
+    await repo.createSession(session('s', at(30), { endedAt: at(1) }));
+    const rdo = (id: string, h: number, periodMs: number, meanSignedErrorMs: number): Promise<void> =>
+      repo.addBlock(block(id, 's', at(h), { module: 'rdo', paramsJson: JSON.stringify({ periodMs }), summaryJson: JSON.stringify({ meanSignedErrorMs }) }), [], []);
+    for (const [i, e] of [-20, -16, -12, -12, -10].entries()) await rdo(`a${String(i)}`, 20 - i, 1500, e);
+    for (const [i, e] of [2, 4, 3, 3.4].entries()) await rdo(`b${String(i)}`, 10 - i, 3000, e);
+    await rdo('c', 2, 4000, 11);
+    await renderProgress(repo);
+    const heading = screen.getByRole('heading', { name: 'РДО: смещение по скоростям за 28 дней' });
+    expect(heading.closest('section')?.getAttribute('aria-labelledby')).toBe('levels-title');
+    // Units stay with their numbers (T-R26).
+    const NB = '\u00a0';
+    expect(heading.nextElementSibling?.textContent).toBe(`1,5${NB}с: −14${NB}мс (5 блоков) · 2${NB}с: — · 3${NB}с: +3${NB}мс (4 блока) · 4${NB}с: +11${NB}мс (1 блок)`);
+  });
+
+  it('«РДО: смещение по скоростям» without РДО blocks: a dash at every speed', async () => {
+    await renderProgress();
+    const NB = '\u00a0';
+    const heading = screen.getByRole('heading', { name: 'РДО: смещение по скоростям за 28 дней' });
+    expect(heading.nextElementSibling?.textContent).toBe(`1,5${NB}с: — · 2${NB}с: — · 3${NB}с: — · 4${NB}с: —`);
+  });
+
   it('says there were no overload blocks', async () => {
     await renderProgress();
     expect(screen.getByText('Блоков перегрузки за 28 дней не было.').closest('section')?.getAttribute('aria-labelledby')).toBe('levels-title');

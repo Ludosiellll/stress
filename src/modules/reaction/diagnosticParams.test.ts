@@ -43,7 +43,7 @@ describe('DIAGNOSTIC_PARAMS', () => {
       noise: null,
       audio: null,
     });
-    expect(DIAGNOSTIC_PARAMS.rdo).toEqual({ periodMs: 3000, toleranceMs: 60, isiMin: 800, isiMax: 1500 });
+    expect(DIAGNOSTIC_PARAMS.rdo).toEqual({ periodMs: 3000, toleranceMs: 60, isiMin: 800, isiMax: 1500, trials: 10 });
     expect(DIAGNOSTIC_PARAMS.pomeh).toEqual({
       windowMs: 456,
       mode: 'simple',

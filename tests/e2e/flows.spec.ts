@@ -193,10 +193,11 @@ test('free training of rdo shows the assessment and compares with the previous s
   test.setTimeout(360_000);
   await openApp(page, E2E_URL);
   /**
-   * Every block summary of both sessions in order: its «Оценка» lines and whether it was marked «Замер ненадёжен»
-   * (headless Chromium can drop frames; such a block stays out of the history).
+   * Every block summary of both sessions in order: its «Оценка» lines, the speed it played (F14: the history is kept
+   * by speed) and whether it was marked «Замер ненадёжен» (headless Chromium can drop frames; such a block stays out
+   * of the history).
    */
-  const blocks: { session: number; lines: string[]; unreliable: boolean }[] = [];
+  const blocks: { session: number; lines: string[]; speed: string; unreliable: boolean }[] = [];
   for (let session = 0; session < 2; session++) {
     await page.getByRole('button', { name: 'Свободная тренировка' }).click();
     await page.getByRole('button', { name: 'Реакция на движущийся объект' }).click();
@@ -207,8 +208,11 @@ test('free training of rdo shows the assessment and compares with the previous s
         await summaries(kind);
         if (kind !== 'summary') return;
         const lines = await page.getByRole('list', { name: 'Оценка' }).getByRole('listitem').allInnerTexts();
+        const metrics = await page.getByRole('list', { name: 'Показатели' }).getByRole('listitem').allInnerTexts();
+        const speed = metrics.map((l) => /^Скорость: оборот за ([\d,]+)\sс · /.exec(l)?.[1]).find((v) => v !== undefined);
+        expect(speed, 'the speed line').toMatch(/^(1,5|2|3|4)$/);
         const unreliable = (await page.locator('.summary .warning').filter({ hasText: /^Замер ненадёжен/ }).count()) > 0;
-        blocks.push({ session, lines, unreliable });
+        blocks.push({ session, lines, speed: speed ?? '', unreliable });
       },
     });
     expect(blocks.filter((b) => b.session === session).length, `session ${String(session + 1)}: block summaries`).toBeGreaterThan(0);
@@ -226,9 +230,9 @@ test('free training of rdo shows the assessment and compares with the previous s
   const [first] = blocks;
   expect(first?.lines[0]).toMatch(/^Ступень 1 из 5\+ — начальная \(уровень [\d,]+; формат теста — 10\)$/);
   expect(first?.lines.at(-1)).toBe(first?.unreliable === true ? 'Первый такой блок' : 'Первый такой блок — будет с чем сравнивать');
-  // Every later block, the second session's included, is compared with the reliable blocks before it.
+  // Every later block, the second session's included, is compared with the reliable blocks before it at its speed.
   blocks.forEach((b, i) => {
-    const kept = blocks.slice(0, i).some((x) => !x.unreliable);
+    const kept = blocks.slice(0, i).some((x) => !x.unreliable && x.speed === b.speed);
     const history = kept ? /^Раньше в этом блоке: прошлый раз \d+\sмс \(ур\. [\d,]+\) · лучший \d+\sмс/ : /^Первый такой блок/;
     expect(b.lines.at(-1), `block ${String(i + 1)} (session ${String(b.session + 1)})`).toMatch(history);
   });

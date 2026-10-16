@@ -15,6 +15,7 @@ import {
   indexChart,
   loadProgressModel,
   overload28d,
+  rdoBias,
   ruDate,
   sessionLines,
   SESSION_LINES,
@@ -265,6 +266,56 @@ describe('the level charts after the load bands (F3, Р9, spec §3.1.6)', () => 
     await repo.addBlock(block('o', 's', at(14), { module: 'gonogo', flags: ['overload'], summaryJson }), [], []);
     expect((await loadProgressModel(repo, now)).overload28d).toEqual({ mean: 0.75, blocks: 1 });
     expect((await loadProgressModel(new MemoryRepository(), now)).overload28d).toBeNull();
+  });
+});
+
+describe('the РДО bias by speed (F14)', () => {
+  const now = new Date('2026-10-30T12:00:00.000Z');
+  const rdo = (id: string, startedAt: string, periodMs: number | null, meanSignedErrorMs: unknown, flags: BlockFlag[] = []) =>
+    block(id, 's', startedAt, {
+      module: 'rdo',
+      flags,
+      paramsJson: periodMs === null ? '{}' : JSON.stringify({ periodMs, toleranceMs: 32 }),
+      summaryJson: JSON.stringify({ meanSignedErrorMs }),
+    });
+
+  it('the mean signed error of the РДО blocks of the last 28 days at each speed, in RDO_PERIODS order', () => {
+    const rows = [
+      rdo('a', '2026-10-29T10:00:00.000Z', 1500, -20),
+      rdo('b', '2026-10-20T10:00:00.000Z', 1500, -9),
+      rdo('c', '2026-10-02T12:00:00.000Z', 3000, 3.5),
+      // An overload block, a test-format run, a diagnostic: blocks at their speed all the same.
+      rdo('d', '2026-10-25T10:00:00.000Z', 4000, 11, ['overload']),
+      rdo('e', '2026-10-25T10:00:00.000Z', 3000, 1, ['test_format']),
+      // Out: older than 28 days, in the future, counted as 0 after Esc (T-R10), another module, a 0.2.0 period, no
+      // period, no bias, a damaged bias.
+      rdo('f', '2026-10-02T11:59:59.000Z', 1500, 50),
+      rdo('g', '2026-10-30T12:00:01.000Z', 1500, 50),
+      rdo('h', '2026-10-25T10:00:00.000Z', 2000, 50, ['discarded']),
+      { ...rdo('i', '2026-10-25T10:00:00.000Z', 2000, 50), module: 'pzmr' as const },
+      rdo('j', '2026-10-25T10:00:00.000Z', 1679, 50),
+      rdo('k', '2026-10-25T10:00:00.000Z', null, 50),
+      rdo('l', '2026-10-25T10:00:00.000Z', 2000, null),
+      rdo('m', '2026-10-25T10:00:00.000Z', 2000, '12'),
+      { ...rdo('n', '2026-10-25T10:00:00.000Z', 2000, 5), paramsJson: 'not json' },
+      { ...rdo('o', '2026-10-25T10:00:00.000Z', 2000, 5), summaryJson: 'not json' },
+      rdo('p', 'not a date', 2000, 5),
+    ];
+    expect(rdoBias(rows, now)).toEqual([
+      { periodMs: 1500, meanMs: -14.5, blocks: 2 },
+      { periodMs: 2000, meanMs: null, blocks: 0 },
+      { periodMs: 3000, meanMs: 2.25, blocks: 2 },
+      { periodMs: 4000, meanMs: 11, blocks: 1 },
+    ]);
+    expect(rdoBias([], now).map((s) => s.blocks)).toEqual([0, 0, 0, 0]);
+  });
+
+  it('loadProgressModel reads it from the block history', async () => {
+    const repo = new MemoryRepository();
+    const at = new Date(2026, 9, 14, 10).toISOString();
+    await repo.createSession(session('s', at, { endedAt: at }));
+    await repo.addBlock(rdo('r', at, 2000, -6), [], []);
+    expect((await loadProgressModel(repo, new Date(2026, 9, 15, 12))).rdoBias[1]).toEqual({ periodMs: 2000, meanMs: -6, blocks: 1 });
   });
 });
 

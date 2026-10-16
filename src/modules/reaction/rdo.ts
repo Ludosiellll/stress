@@ -1,17 +1,34 @@
 import { L_NORM } from '../../engine/planner';
 import type { TrialSpec } from '../../engine/reaction/types';
+import { createRng, deriveSeed } from '../../engine/rng';
 import { blockLength, keysFor, ms, singleKeyLabel, type ReactionModule } from './common';
 
 export interface RdoParams {
-  /** Time for the marker to go once around the circle. */
+  /**
+   * Time for the marker to go once around the circle. params(L) gives the test speed; a training or free block plays
+   * the speed of its slot (rdoPeriod, F14).
+   */
   periodMs: number;
-  /** Allowed |press − target| for a hit. */
+  /** Allowed |press − target| for a hit: the level's one lever (F14). */
   toleranceMs: number;
   isiMin: number;
   isiMax: number;
+  trials: number;
 }
 
-const BLOCK_SIZE = 10;
+/** The speeds a segment's blocks take in turn (F14); the test plays TEST_PERIOD_MS. */
+export const RDO_PERIODS = [1500, 2000, 3000, 4000] as const;
+const TEST_PERIOD_MS = 3000;
+const BLOCK_SIZE = 20;
+
+/**
+ * The period of block `blockIndex` of segment `segmentIndex` (F14): element blockIndex mod 4 of the segment's shuffle
+ * of RDO_PERIODS from deriveSeed(planSeed, 'rdo:' + segmentIndex). Any four blocks in a row play each speed once.
+ */
+export function rdoPeriod(planSeed: number, segmentIndex: number, blockIndex: number): number {
+  const order = createRng(deriveSeed(planSeed, 'rdo:' + String(segmentIndex))).shuffle(RDO_PERIODS);
+  return order[blockIndex % order.length] as number;
+}
 
 /** РДО: press exactly when the moving marker reaches the target mark. */
 export const rdo: ReactionModule<RdoParams> = {
@@ -21,13 +38,14 @@ export const rdo: ReactionModule<RdoParams> = {
   blockSize: BLOCK_SIZE,
 
   params: (L) => ({
-    periodMs: Math.round(Math.max(600, 3000 * 0.93 ** L)),
+    periodMs: TEST_PERIOD_MS,
     toleranceMs: Math.round(Math.max(10, 60 * 0.94 ** L)),
     isiMin: 800,
     isiMax: 1500,
+    trials: BLOCK_SIZE,
   }),
 
-  trials: () => BLOCK_SIZE,
+  trials: (p) => p.trials,
 
   cvMax: null,
 
@@ -54,8 +72,6 @@ export const rdo: ReactionModule<RdoParams> = {
     `Метка бежит по кругу. Нажми ${singleKeyLabel(layout)} точно в момент, когда она дойдёт до отметки. ` +
     'Важна точность, а не скорость.',
 
-  describeParams: (p) => [
-    { label: 'Период обхода', value: ms(p.periodMs) },
-    { label: 'Допуск', value: ms(p.toleranceMs) },
-  ],
+  // The period turns with the block, not with the level (F14): the level changes only the tolerance.
+  describeParams: (p) => [{ label: 'Допуск', value: ms(p.toleranceMs) }],
 };

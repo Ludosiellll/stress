@@ -78,6 +78,7 @@ describe('band variants (Р29, T-R7)', () => {
     }
     // Modules without bands keep their variants.
     expect(variantOf(row({ module: 'rdo', paramsJson: '{"band":2}' }))).toBe('rdo');
+    expect(variantOf(row({ module: 'rdo', paramsJson: '{"band":2,"periodMs":2000}' }))).toBe('rdo:2000');
     expect(variantOf(row({ module: 'schulte', paramsJson: '{"band":2,"size":6}' }))).toBe('schulte:6');
   });
 
@@ -91,6 +92,37 @@ describe('band variants (Р29, T-R7)', () => {
       ['pzmr:b2', [280, 270]],
       ['pzmr:b3', [290]],
     ]);
+  });
+});
+
+describe('РДО speed variants (F14, T-R9)', () => {
+  const rdoRow = (paramsJson: string, meanAbsErrorMs: number, startedAt = ago(1)): BlockRow =>
+    row({ module: 'rdo', paramsJson, summaryJson: JSON.stringify({ meanAbsErrorMs }), startedAt });
+
+  it('a block is a variant of the speed it played; a row from before the speeds keeps the bare key', () => {
+    for (const periodMs of [1500, 2000, 3000, 4000]) {
+      expect(variantOf(rdoRow(JSON.stringify({ periodMs, toleranceMs: 44, trials: 20 }), 20))).toBe(`rdo:${String(periodMs)}`);
+    }
+    // 0.2.0 shrank the period with the level: 1679 ms at L 8 is no speed of the rotation.
+    expect(variantOf(rdoRow('{"periodMs":1679,"toleranceMs":37}', 20))).toBe('rdo');
+    for (const paramsJson of ['not json', '{}', '{"periodMs":"3000"}', '{"periodMs":null}', '[3000]']) {
+      expect(variantOf(rdoRow(paramsJson, 20)), paramsJson).toBe('rdo');
+    }
+    // A test-format run stays its own variant, a warm-up flag means nothing to РДО.
+    expect(variantOf({ ...rdoRow('{"periodMs":3000}', 20), flags: ['test_format'] })).toBe('rdo:test');
+  });
+
+  it('the history is kept by speed; «Прогресс» shows the test speed', () => {
+    const h = buildBlockHistory(
+      [rdoRow('{"periodMs":1679}', 40, ago(5)), rdoRow('{"periodMs":3000}', 30, ago(4)), rdoRow('{"periodMs":1500}', 20, ago(3)), rdoRow('{"periodMs":3000}', 25, ago(2))],
+      [session('t', ago(9))],
+    );
+    expect([...h].map(([k, v]) => [k, v.map((x) => x.value)])).toEqual([
+      ['rdo', [40]],
+      ['rdo:3000', [30, 25]],
+      ['rdo:1500', [20]],
+    ]);
+    expect(mainVariant('rdo', h)).toBe('rdo:3000');
   });
 });
 
@@ -381,7 +413,7 @@ describe('buildBlockHistory', () => {
     expect(h.get('rdo:test')?.map((e) => e.value)).toEqual([20]);
     // The run is later, the main variant stays the band's.
     expect(mainVariant('szmr', h)).toBe('szmr:b0');
-    expect(mainVariant('rdo', h)).toBe('rdo');
+    expect(mainVariant('rdo', h)).toBe('rdo:3000');
   });
 
   it('a warm-up block goes to its own variant pzmr:warmup (F5, Р29): never the main ПЗМР variant or its «лучший»', () => {
@@ -487,8 +519,8 @@ describe('mainVariant', () => {
     expect(mainVariant('szmr', new Map([['szmr:b1', [at(3)]], ['szmr', [at(1)]]]))).toBe('szmr');
     // An unreadable date is the earliest.
     expect(mainVariant('szmr', new Map([['szmr:b2', [{ ...entry, at: 'yesterday' }]], ['szmr:b1', [at(30)]]]))).toBe('szmr:b1');
-    // РДО has no bands.
-    expect(mainVariant('rdo', new Map([['rdo:b1', [at(1)]]]))).toBe('rdo');
+    // РДО has no bands: its main variant is the test speed (T-R9).
+    expect(mainVariant('rdo', new Map([['rdo:b1', [at(1)]]]))).toBe('rdo:3000');
   });
 
   it('Шульте: the largest grid with entries', () => {

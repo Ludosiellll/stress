@@ -9,6 +9,7 @@ import { readinessOfLatest } from '../engine/readiness';
 import { mean, median } from '../engine/stats';
 import { trend, trendWindow, type Trend } from '../engine/trend';
 import { isBandModule, MODULE_IDS, type ModuleId, type ReactionModuleId, type SessionKind } from '../engine/types';
+import { RDO_PERIODS } from '../modules/reaction/rdo';
 import { moduleTitles } from '../modules/registry';
 import { assessModules, meanFamilyRating, type ModuleAssessment } from '../session/assessment';
 import { buildBlockHistory, parseObject, scoreFromCounts } from '../session/blockHistory';
@@ -74,6 +75,13 @@ export interface OverloadMean {
   blocks: number;
 }
 
+/** The mean signed error of the РДО blocks at one speed over OVERLOAD_DAYS days (F14); meanMs null: no block. */
+export interface RdoBias {
+  periodMs: number;
+  meanMs: number | null;
+  blocks: number;
+}
+
 /** The runs of one test format (F4): a point per run (x «дд.мм»), its best and how many runs there were. */
 export interface TestFormatProgress {
   format: TestFormatId;
@@ -122,6 +130,8 @@ export interface ProgressModel {
   levels: LevelChartSpec[];
   /** «Средний балл блоков перегрузки за 28 дней» (F3); null without such blocks. */
   overload28d: OverloadMean | null;
+  /** «РДО: смещение по скоростям за 28 дней» (F14): one per speed, in RDO_PERIODS order. */
+  rdoBias: RdoBias[];
   /** «Прерванные блоки по неделям» (F11): DISCARD_WEEKS weeks, newest first. */
   discards: DiscardWeek[];
   /** Newest first, at most SESSION_LINES. */
@@ -471,6 +481,30 @@ export function overload28d(blocks: readonly Pick<BlockRow, 'module' | 'flags' |
   return scores.length === 0 ? null : { mean: mean(scores), blocks: scores.length };
 }
 
+/**
+ * «РДО: смещение по скоростям за 28 дней» (F14): the mean summaryJson.meanSignedErrorMs of the РДО blocks started in
+ * [now − OVERLOAD_DAYS days, now] at each speed of RDO_PERIODS, by paramsJson.periodMs, whatever the session (a block
+ * at a speed measures the bias there); a block counted as 0 after Esc (T-R10), a period that is no speed (0.2.0) and
+ * an unreadable bias are left out.
+ */
+export function rdoBias(blocks: readonly Pick<BlockRow, 'module' | 'flags' | 'startedAt' | 'paramsJson' | 'summaryJson'>[], now: Date): RdoBias[] {
+  const end = now.getTime();
+  const start = end - OVERLOAD_DAYS * DAY_MS;
+  const bySpeed = new Map<number, number[]>(RDO_PERIODS.map((v) => [v, []]));
+  for (const b of blocks) {
+    const t = Date.parse(b.startedAt);
+    if (b.module !== 'rdo' || b.flags.includes('discarded') || !(t >= start && t <= end)) continue;
+    const periodMs = num(parseObject(b.paramsJson)?.['periodMs']);
+    const errors = periodMs === null ? undefined : bySpeed.get(periodMs);
+    const e = num(parseObject(b.summaryJson)?.['meanSignedErrorMs']);
+    if (errors !== undefined && e !== null) errors.push(e);
+  }
+  return RDO_PERIODS.map((periodMs) => {
+    const errors = bySpeed.get(periodMs) ?? [];
+    return { periodMs, meanMs: errors.length === 0 ? null : mean(errors), blocks: errors.length };
+  });
+}
+
 /** «дд.мм» of a day number (localDayNumber). */
 function dayLabel(day: number): string {
   const iso = new Date(day * DAY_MS).toISOString();
@@ -558,6 +592,7 @@ export async function loadProgressModel(repo: Repository, now: Date = new Date()
     testFormats: testFormatProgress(past),
     levels: LEVEL_MODULES.map((module) => levelChart(module, points[module])),
     overload28d: overload28d(blocks, now),
+    rdoBias: rdoBias(blocks, now),
     discards: discardWeeks(blocks, now),
     sessions: sessionLines(sessions, blocksBySession),
     sessionCount: sessions.length,

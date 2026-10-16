@@ -55,7 +55,7 @@ describe('registry', () => {
     expect(m.id).toBe(id);
     expect(m.title).toBe(moduleTitles[id]);
     expect(m.lNorm).toBe(L_NORM[id]);
-    expect(m.blockSize).toBe({ pzmr: 15, szmr: 20, gonogo: 20, rdo: 10, stroop: 20, taskswitch: 20, pomeh: 20 }[id]);
+    expect(m.blockSize).toBe({ pzmr: 15, szmr: 20, gonogo: 20, rdo: 20, stroop: 20, taskswitch: 20, pomeh: 20 }[id]);
   });
 
   it.each(REACTION_MODULE_IDS)('%s: works through the erased interface', (id) => {

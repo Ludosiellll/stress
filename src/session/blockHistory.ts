@@ -6,6 +6,7 @@ import type { Outcome } from '../engine/reaction/types';
 import { isBandModule, type BlockFlag, type ModuleId, type SessionKind } from '../engine/types';
 import type { BlockRow } from '../data/rows';
 import { MEMORY_TRIALS } from '../modules/memory/params';
+import { RDO_PERIODS } from '../modules/reaction/rdo';
 import { szmr } from '../modules/reaction/szmr';
 import { displayedCost, round1, whole } from './steps';
 
@@ -16,7 +17,7 @@ import { displayedCost, round1, whole } from './steps';
  * left out, never thrown on.
  */
 
-/** 'pzmr', 'pzmr:b2', 'pzmr:warmup', 'szmr:test', 'gorbov:alternate', 'schulte:6', 'memory:digits'. */
+/** 'pzmr', 'pzmr:b2', 'pzmr:warmup', 'szmr:test', 'rdo:3000', 'gorbov:alternate', 'schulte:6', 'memory:digits'. */
 export type VariantKey = string;
 
 export interface KeyMetric {
@@ -206,9 +207,21 @@ function variantFrom(module: ModuleId, flags: readonly BlockFlag[], summary: Jso
       const mode = oneOf(summary, 'mode', MEMORY_MODES);
       return mode === null ? null : `memory:${mode}`;
     }
+    case 'rdo':
+      return rdoVariant(paramsJson);
     default:
       return module;
   }
+}
+
+/**
+ * An РДО block is a variant of the speed it played (F14, T-R9): `rdo:1500` … `rdo:4000`. A block from before the speeds
+ * (0.2.0 shrank the period with the level: 1679 ms at L 8) or with unreadable parameters keeps the bare key; one at
+ * exactly one of the speeds (3000 ms at L 0) did play it.
+ */
+function rdoVariant(paramsJson: string): VariantKey {
+  const periodMs = num(parseObject(paramsJson), 'periodMs');
+  return periodMs !== null && (RDO_PERIODS as readonly number[]).includes(periodMs) ? `rdo:${String(periodMs)}` : 'rdo';
 }
 
 /** displayedCost of the module's fast and slow condition medians; null when either is unreadable. */
@@ -434,7 +447,8 @@ export function historyStats(entries: readonly HistoryEntry[], now: Date, better
   };
 }
 
-const MAIN_VARIANTS: Partial<Record<ModuleId, VariantKey>> = { gorbov: 'gorbov:alternate', memory: 'memory:digits' };
+/** РДО: the speed of the test (T-R9). */
+const MAIN_VARIANTS: Partial<Record<ModuleId, VariantKey>> = { gorbov: 'gorbov:alternate', memory: 'memory:digits', rdo: 'rdo:3000' };
 
 /** The grid size N of a Шульте variant «schulte:N»; null for any other variant. */
 export function schulteSize(variant: VariantKey): number | null {

@@ -22,7 +22,7 @@ import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
 import { gonogo, isSwappedSegment } from '../modules/reaction/gonogo';
 import { pomeh } from '../modules/reaction/pomeh';
 import { pzmr } from '../modules/reaction/pzmr';
-import { rdo } from '../modules/reaction/rdo';
+import { RDO_PERIODS, rdo, rdoPeriod } from '../modules/reaction/rdo';
 import { szmr } from '../modules/reaction/szmr';
 import { bandModules, reactionModules } from '../modules/registry';
 import { gorbovMetrics } from '../modules/tables/gorbov';
@@ -196,7 +196,7 @@ describe('scale', () => {
     expect([0, 24, 28, 32, 60].map((L) => reactionPlan(freeSegment('pzmr'), L, ctx).size)).toEqual([15, 30, 45, 60, 60]);
     expect([0, 40, 44, 48].map((L) => reactionPlan(freeSegment('szmr'), L, ctx).size)).toEqual([20, 30, 45, 60]);
     expect(reactionPlan({ ...freeSegment('pzmr'), trialCount: 50 }, 32, ctx).size).toBe(50);
-    expect(reactionPlan(freeSegment('rdo'), 40, ctx).size).toBe(10);
+    expect(reactionPlan(freeSegment('rdo'), 40, ctx).size).toBe(20);
   });
 
   it('the modules with trial conditions are exactly the ones that report their fewest trials per condition', () => {
@@ -297,6 +297,63 @@ describe('planBlock', () => {
     expect(JSON.parse(paramsJson)).toEqual({ protocol: 'span', mode: 'digits', length: 3, itemMs: 1000, gapMs: 250, trials: 20 });
     const short = buildBlock(planBlock(segment, 0, 0, { ...ctx, scale: 0.02 }), 42, 'keyboard', new Map()).step as StepOf<'memory_block'>;
     expect(short.trials).toEqual(spanProtocolTrials(createRng(42)).slice(0, 3));
+  });
+});
+
+describe('РДО speeds (F14)', () => {
+  const ctx: PlanContext = { layout: 'keyboard', scale: 1, diagnostic: false, ...PLAIN };
+  const seg = (purpose: Segment['purpose'], overload?: 'finisher' | 'mix'): Segment => ({
+    module: 'rdo',
+    budgetMs: 300_000,
+    purpose,
+    ...(overload === undefined ? {} : { overload }),
+  });
+  /** The parameters block `blockIndex` of `s` plays at L. */
+  const played = (s: Segment, L: number, blockIndex: number, c: PlanContext = ctx): unknown => {
+    const plan = planBlock(s, L, blockIndex, c);
+    if (plan.kind !== 'reaction') throw new Error('expected a reaction plan');
+    return plan.params;
+  };
+
+  it('a training or free block plays the tolerance of its level at the speed rdoPeriod gives its segment and index', () => {
+    for (const purpose of ['reaction', 'free', 'finisher'] as const) {
+      for (const blockIndex of [0, 1, 2, 3, 4, 7]) {
+        expect(played(seg(purpose), 6, blockIndex)).toEqual({ ...rdo.params(6), periodMs: rdoPeriod(ctx.planSeed, ctx.segmentIndex, blockIndex) });
+      }
+    }
+    // Four blocks in a row: each speed once; another segment draws its own order.
+    const speeds = (c: PlanContext): number[] => [0, 1, 2, 3].map((i) => (played(seg('free'), 0, i, c) as { periodMs: number }).periodMs);
+    expect([...speeds(ctx)].sort((a, b) => a - b)).toEqual([...RDO_PERIODS]);
+    expect(speeds({ ...ctx, segmentIndex: 0 })).toEqual([0, 1, 2, 3].map((i) => rdoPeriod(ctx.planSeed, 0, i)));
+  });
+
+  it('an overload block: the tolerance of L + 3 at the speed of its slot', () => {
+    expect(played(seg('reaction', 'mix'), 6, 1)).toEqual({ ...rdo.params(9), periodMs: rdoPeriod(ctx.planSeed, ctx.segmentIndex, 1) });
+    expect(played(seg('reaction', 'mix'), 6, 2)).toEqual({ ...rdo.params(6), periodMs: rdoPeriod(ctx.planSeed, ctx.segmentIndex, 2) });
+    // A finisher's level already holds the step.
+    expect(played(seg('finisher', 'finisher'), 9, 3)).toEqual({ ...rdo.params(9), periodMs: rdoPeriod(ctx.planSeed, ctx.segmentIndex, 3) });
+  });
+
+  it('the diagnostic and a test-format run stay at 3000 / 60 in every block, whatever the plan seed', () => {
+    const diagnosticSeg = planDiagnostic(1).segments.find((s) => s.module === 'rdo') as Segment;
+    for (const [planSeed, segmentIndex] of [[1, 0], [7, 3], [99, 5]] as const) {
+      for (const blockIndex of [0, 1, 2, 3]) {
+        const c = { ...ctx, planSeed, segmentIndex };
+        expect(played(diagnosticSeg, 0, blockIndex, { ...c, diagnostic: true })).toBe(DIAGNOSTIC_PARAMS.rdo);
+        expect(played(runSegment('rdo'), 12, blockIndex, c)).toBe(DIAGNOSTIC_PARAMS.rdo);
+      }
+    }
+    expect(DIAGNOSTIC_PARAMS.rdo).toMatchObject({ periodMs: 3000, toleranceMs: 60 });
+  });
+
+  it('the stored params name the speed the block played', () => {
+    const plan = planBlock(seg('free'), 4, 2, ctx);
+    expect(JSON.parse(buildBlock(plan, 5, 'keyboard', new Map()).paramsJson)).toMatchObject({ periodMs: rdoPeriod(ctx.planSeed, ctx.segmentIndex, 2) });
+    const { step } = buildBlock(plan, 5, 'keyboard', new Map());
+    if (step.kind !== 'reaction_block') throw new Error('expected a reaction block');
+    expect(new Set(step.specs.map((t) => (t.stimulus.kind === 'rdo' ? t.stimulus.periodMs : null)))).toEqual(
+      new Set([rdoPeriod(ctx.planSeed, ctx.segmentIndex, 2)]),
+    );
   });
 });
 
@@ -479,7 +536,10 @@ describe('overload blocks', () => {
     expect(OVERLOAD_LEVEL_STEP).toBe(3);
     expect(planBlock(seg('rdo', 'mix'), 10, 0, ctx)).toMatchObject({ kind: 'reaction', L: 10, overload: false, load: null });
     expect(planBlock(seg('rdo', 'mix'), 10, 1, ctx)).toEqual({ ...planBlock(seg('rdo'), 13, 1, ctx), overload: true });
-    expect(planBlock(seg('rdo', 'mix'), 10, 1, ctx)).toMatchObject({ params: rdo.params(13), load: null });
+    expect(planBlock(seg('rdo', 'mix'), 10, 1, ctx)).toMatchObject({
+      params: { ...rdo.params(13), periodMs: rdoPeriod(ctx.planSeed, ctx.segmentIndex, 1) },
+      load: null,
+    });
     expect(planBlock(seg('rdo', 'finisher'), 13, 0, ctx)).toMatchObject({ L: 13, overload: true, load: null });
     expect(planBlock(seg('rdo'), 10, 1, ctx)).toMatchObject({ L: 10, overload: false });
     expect(planBlock(seg('schulte', 'mix'), 4, 1, ctx)).toMatchObject({ kind: 'table', L: 7, overload: true });
@@ -831,9 +891,10 @@ describe('the stored block size (T-R48)', () => {
     // The e2e scale shrinks the block, and the row says so.
     expect(storedTrials(reactionPlan(diagnostic('pzmr'), 0, { ...ctx, diagnostic: true, scale: 0.02 }))).toBe(3);
     expect(storedTrials(reactionPlan(freeSegment('szmr'), 0, { ...ctx, scale: 0.02 }))).toBe(3);
-    // РДО has no block size of its own in its params: the row gets one.
-    expect(DIAGNOSTIC_PARAMS.rdo).not.toHaveProperty('trials');
-    expect(storedTrials(reactionPlan(freeSegment('rdo'), 0, ctx))).toBe(rdo.trials(rdo.params(0)));
+    // РДО: the diagnostic params keep the 0.2.0 block size, the row the size it played; training plays 20 (F14).
+    expect(DIAGNOSTIC_PARAMS.rdo.trials).toBe(10);
+    expect(storedTrials(reactionPlan(diagnostic('rdo'), 0, { ...ctx, diagnostic: true }))).toBe(50);
+    expect(storedTrials(reactionPlan(freeSegment('rdo'), 0, ctx))).toBe(20);
     // A training block at full scale keeps its params' size.
     expect(storedTrials(reactionPlan(freeSegment('pzmr'), 28, ctx))).toBe(pzmr.params(28).trials);
     expect(pzmr.params(28).trials).toBe(45);

@@ -52,11 +52,8 @@ describe('describeChanges', () => {
     ]);
   });
 
-  it('rdo: period and tolerance', () => {
-    expect(describeChanges('rdo', 0, 2)).toEqual([
-      { label: 'Период обхода', from: '3000 мс', to: '2595 мс' },
-      { label: 'Допуск', from: '60 мс', to: '53 мс' },
-    ]);
+  it('rdo: the tolerance only; the speed turns by block, not by level (F14)', () => {
+    expect(describeChanges('rdo', 0, 2)).toEqual([{ label: 'Допуск', from: '60 мс', to: '53 мс' }]);
   });
 
   it('gorbov uses the run task (alternate has ×1.6 time)', () => {

@@ -38,6 +38,7 @@ import { generateBlockItems, generateItem, type TimedSeriesItem } from '../modul
 import { bandIndex, stressorsOf, withFloor, type BandFields, type BlockStressors, type ReactionModule } from '../modules/reaction/common';
 import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
 import { gonogo, isSwappedSegment, swapColours } from '../modules/reaction/gonogo';
+import { rdo, rdoPeriod } from '../modules/reaction/rdo';
 import { bandModules, reactionModules } from '../modules/registry';
 import {
   generateGorbovTable,
@@ -221,7 +222,7 @@ export function planBlock(segment: Segment, segmentL: number, blockIndex: number
     const mod = reactionModules[module];
     const testFormat = segment.purpose === 'test_format';
     const frozen = ctx.diagnostic || testFormat;
-    const { params, load } = reactionBlock(module, L, overload, frozen, ctx);
+    const { params, load } = reactionBlock(module, L, blockIndex, overload, frozen, ctx);
     const marked = !frozen && segment.purpose !== 'warmup' && FEEDBACK_MODULES.includes(module);
     const { keys, effectiveLayout } = layoutKeys(ctx.layout, mod.keyCount(params));
     return {
@@ -270,17 +271,20 @@ export function planBlock(segment: Segment, segmentL: number, blockIndex: number
 /**
  * The parameters and the load of a reaction block at L. A diagnostic and a test-format run (`frozen`) play the frozen
  * 0.2.0 parameters, whatever params(L) becomes (training-fixes spec §2.0, F4): no floor, no Go/No-Go colour swap
- * (T-R42) and none of the training rules that come with the bands.
+ * (T-R42), no РДО speed rotation and none of the training rules that come with the bands. An РДО block plays the
+ * tolerance of its L (an overload block's L is already 3 higher) at the speed of its slot (F14).
  */
 function reactionBlock(
   module: ReactionModuleId,
   L: number,
+  blockIndex: number,
   overload: boolean,
   frozen: boolean,
   ctx: PlanContext,
 ): { params: unknown; load: BlockLoad | null } {
   if (frozen) return { params: DIAGNOSTIC_PARAMS[module], load: null };
-  return isBandModule(module) ? bandBlock(module, L, overload, ctx) : { params: reactionModules[module].params(L), load: null };
+  if (isBandModule(module)) return bandBlock(module, L, overload, ctx);
+  return { params: { ...rdo.params(L), periodMs: rdoPeriod(ctx.planSeed, ctx.segmentIndex, blockIndex) }, load: null };
 }
 
 /**

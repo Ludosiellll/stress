@@ -417,6 +417,19 @@ describe('assessModules', () => {
     });
   });
 
+  it('РДО: the test speed is the main variant, and the title says so (F14, T-R9)', () => {
+    const rdoBlock = (d: number, periodMs: number, meanAbsErrorMs: number): BlockRow =>
+      stored('rdo', d, { paramsJson: JSON.stringify({ periodMs, toleranceMs: 32 }), summaryJson: JSON.stringify({ meanAbsErrorMs }) });
+    // The faster speed and the 0.2.0 row (1679 ms) are later and better: neither is the test speed.
+    const rows = assess({ rdo: { lSaved: 10, lifetimeBlocks: 8 } }, [rdoBlock(5, 3000, 30), rdoBlock(3, 3000, 26.4), rdoBlock(2, 1679, 5), rdoBlock(1, 1500, 10)]);
+    expect(rowOf(rows, 'rdo')).toMatchObject({ title: 'Реакция на движущийся объект — оборот за 3 с', lastBest: '26 мс / 26 мс' });
+    // Only blocks at other speeds: dashes under the test speed's title.
+    expect(rowOf(assess({ rdo: { lSaved: 10, lifetimeBlocks: 1 } }, [rdoBlock(1, 1500, 10)]), 'rdo')).toMatchObject({
+      title: 'Реакция на движущийся объект — оборот за 3 с',
+      lastBest: '—',
+    });
+  });
+
   it('memory: the band grades the row length, and the cell says so next to the % (FW11)', () => {
     const memoryBlock = (d: number, length: number, exact: number): BlockRow =>
       stored('memory', d, {
