@@ -1,10 +1,4 @@
-import {
-  EMPTY_METRICS,
-  diagnosticSegmentSeed,
-  diagnosticSeriesSchedule,
-  diagnosticSeriesSeed,
-  type DiagnosticResults,
-} from '../engine/diagnostic';
+import { EMPTY_METRICS, diagnosticSegmentSeed, diagnosticSeriesSchedule, type DiagnosticResults } from '../engine/diagnostic';
 import { R0, updateRating, type Rating } from '../engine/elo';
 import { itemEffectiveDifficulty } from '../engine/itemLimit';
 import { keyLabel, layoutKeys } from '../engine/layouts';
@@ -41,7 +35,7 @@ import {
   type MemoryParams,
 } from '../modules/memory/params';
 import { describeChanges, describeParamChanges, describeTableChanges, type ParamChange } from '../modules/describe';
-import { generateBlockItems, generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
+import { diagnosticSeriesItems, generateBlockItems, type TimedSeriesItem } from '../modules/numseries/generate';
 import { bandIndex, stressorsOf, withFloor, type BandFields, type BlockStressors, type ReactionModule } from '../modules/reaction/common';
 import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
 import { gonogo, isSwappedSegment, swapColours } from '../modules/reaction/gonogo';
@@ -568,7 +562,7 @@ export function buildBlock(
     case 'numseries': {
       // Diagnostic items have no per-item limit: the total limit applies, as in 0.1.0 (R19, R36).
       const items: TimedSeriesItem[] = plan.diagnostic
-        ? diagnosticSeriesItems(plan.count, seriesSeedIndex)
+        ? diagnosticFormItems(plan.count, seriesSeedIndex)
         : generateBlockItems(new Map([...ratings].map(([f, r]) => [f, r.rating])), plan.count, createRng(seed));
       const { totalLimitMs } = plan;
       return {
@@ -580,11 +574,9 @@ export function buildBlock(
 }
 
 /** The first `count` items of the diagnostic number series in the form of `seedIndex` (F12): fixed, whatever else. */
-function diagnosticSeriesItems(count: number, seedIndex: number | undefined): TimedSeriesItem[] {
+function diagnosticFormItems(count: number, seedIndex: number | undefined): TimedSeriesItem[] {
   if (seedIndex === undefined) throw new Error('buildBlock: a diagnostic number-series block needs its seriesSeedIndex');
-  return diagnosticSeriesSchedule()
-    .slice(0, count)
-    .map((e, i) => ({ ...generateItem(e.family, e.targetD, diagnosticSeriesSeed(seedIndex, i + 1)), timeLimitMs: null }));
+  return diagnosticSeriesItems(seedIndex, count).map((it) => ({ ...it, timeLimitMs: null }));
 }
 
 /**

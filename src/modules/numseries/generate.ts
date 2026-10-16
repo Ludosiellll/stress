@@ -1,3 +1,4 @@
+import { diagnosticSeriesSchedule, diagnosticSeriesSeed } from '../../engine/diagnostic';
 import { R0, familyWeights, pickWeighted, targetDifficulty } from '../../engine/elo';
 import { itemTimeLimit, structTarget } from '../../engine/itemLimit';
 import { createRng, deriveSeed, type Rng } from '../../engine/rng';
@@ -25,6 +26,20 @@ export const STRUCT_D_MAX: Readonly<Record<FamilyId, number>> = {
   twostep: 1900,
   digitsum: 1650,
 };
+
+/**
+ * The lowest D a held-out item reaches after T-R70: digitsum its base; twostep 1400 + 100 (t₀·5! passes 100); powstep
+ * only cubes, 1300 + 100 + 300 ((m + 5s)³ passes 1000).
+ */
+export const HELD_OUT_MIN_D: Readonly<Record<'powstep' | 'twostep' | 'digitsum', number>> = {
+  powstep: 1700,
+  twostep: 1500,
+  digitsum: 1350,
+};
+/** A held-out diagnostic item is aimed this far above its family's lowest D: with ±150 it takes the whole lower band. */
+const HELD_OUT_AIM_ABOVE_MIN = 75;
+/** How many next seeds an item of a form may take before a repeat is given up as impossible. */
+const MAX_FORM_RETRIES = 100;
 
 const MAX_ABS_TERM = 100000;
 /** Constant and 2-cycle series are unique but trivial (R13). */
@@ -167,6 +182,50 @@ export function generateItem(family: FamilyId, targetD: number, seed: number): S
 export function generateTrainingItem(family: FamilyId, targetD: number, seed: number): TrainingSeriesItem {
   const item = selectCandidate((i) => attemptItem(family, seed, i), structTarget(targetD, STRUCT_D_MAX[family]), TRAINING_WINDOW);
   return { ...item, timeLimitMs: itemTimeLimit(targetD, item.difficulty) };
+}
+
+/**
+ * The D a diagnostic item of `family` is aimed at (T-R72): its scheduled targetD; a held-out family at least 75 above its
+ * lowest D. The scheduled targets of the held-out families lie mostly below what they reach, and aimed there every item
+ * would be one of the few series of the lowest D (12 pure cubes, 6 twostep series of k = 1, c = 0).
+ */
+export function diagnosticAim(family: FamilyId, targetD: number): number {
+  const lowest = family === 'powstep' || family === 'twostep' || family === 'digitsum' ? HELD_OUT_MIN_D[family] : null;
+  return lowest === null ? targetD : Math.max(targetD, lowest + HELD_OUT_AIM_ABOVE_MIN);
+}
+
+/**
+ * The first `count` items of the number-series form of the diagnostic with seed index `seedIndex` (F12): the schedule of
+ * spec §4.8, item № from diagnosticSeriesSeed(seedIndex, №), aimed at diagnosticAim. An item whose shown terms repeat
+ * those of an earlier item of the form takes the item's next seed (sub-index 1, 2, …; T-R72). Deterministic.
+ */
+export function diagnosticSeriesItems(seedIndex: number, count: number = diagnosticSeriesSchedule().length): SeriesItem[] {
+  const schedule = diagnosticSeriesSchedule().slice(0, count);
+  return withoutRepeats(schedule.length, (i, retry) => {
+    const e = schedule[i] as (typeof schedule)[number];
+    return generateItem(e.family, diagnosticAim(e.family, e.targetD), diagnosticSeriesSeed(seedIndex, i + 1, retry));
+  });
+}
+
+/**
+ * `count` items in order, item i the first of item(i, 0), item(i, 1), … whose shown terms no earlier item has (T-R72);
+ * an Error after MAX_FORM_RETRIES next seeds. Exported for tests.
+ */
+export function withoutRepeats<T extends { shown: readonly number[] }>(count: number, item: (i: number, retry: number) => T): T[] {
+  const items: T[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < count; i++) {
+    let retry = 0;
+    let next = item(i, retry);
+    while (seen.has(next.shown.join(','))) {
+      retry++;
+      if (retry > MAX_FORM_RETRIES) throw new Error(`item ${String(i + 1)} repeats an earlier one after ${String(MAX_FORM_RETRIES)} next seeds`);
+      next = item(i, retry);
+    }
+    seen.add(next.shown.join(','));
+    items.push(next);
+  }
+  return items;
 }
 
 /**

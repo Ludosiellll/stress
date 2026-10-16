@@ -237,10 +237,13 @@ export function diagnosticSeriesSchedule(): { family: FamilyId; targetD: number 
 /**
  * The seed of item `itemNumber` (1…20) of the number series of the diagnostic with seed index `seedIndex`:
  * hashString('series-form:' + form + ':' + №), form = (seedIndex − 1) mod 6 (F12). The items of a form never change.
+ * `retry` k > 0 gives the item's next seed, hashString('series-form:' + form + ':' + № + ':' + k), for an item that would
+ * repeat an earlier one of its form (T-R72).
  */
-export function diagnosticSeriesSeed(seedIndex: number, itemNumber: number): number {
+export function diagnosticSeriesSeed(seedIndex: number, itemNumber: number, retry = 0): number {
   const form = (((seedIndex - 1) % SERIES_FORMS) + SERIES_FORMS) % SERIES_FORMS;
-  return hashString('series-form:' + String(form) + ':' + String(itemNumber));
+  const base = 'series-form:' + String(form) + ':' + String(itemNumber);
+  return hashString(retry === 0 ? base : base + ':' + String(retry));
 }
 
 /**

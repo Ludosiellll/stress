@@ -29,6 +29,7 @@ import { generateMemoryTrials, spanProtocolTrials, type MemoryTrial } from '../m
 import { CARD_AUDIO, CARD_LESSON, memoryInstruction, memoryParams } from '../modules/memory/params';
 import { spanProtocolStops, type MemoryAnswer } from '../modules/memory/score';
 import { TRAINING_FAMILIES } from '../modules/numseries/families';
+import { diagnosticSeriesItems } from '../modules/numseries/generate';
 import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
 import { pomeh } from '../modules/reaction/pomeh';
 import { isSwappedSegment } from '../modules/reaction/gonogo';
@@ -3204,10 +3205,10 @@ describe('SessionController — diagnostics', () => {
         levels.push([`${s.module}:${s.task}`, s.L]);
         await h.c.submitTable(perfectTableRun(s));
       } else if (s.kind === 'numseries_block') {
-        // Form 0 of the forms v2 (F12): the schedule of spec §4.8, item seeds from diagnosticSeriesSeed.
+        // Form 0 of the forms v2 (F12, T-R72): the schedule of spec §4.8.
         const schedule = diagnosticSeriesSchedule();
         expect(s.items.map((it) => it.family)).toEqual(schedule.map((e) => e.family));
-        expect(s.items.map((it) => it.seed)).toEqual(schedule.map((_, i) => diagnosticSeriesSeed(1, i + 1)));
+        expect(s.items.map((it) => it.seed)).toEqual(diagnosticSeriesItems(1).map((it) => it.seed));
         expect(s.totalLimitMs).toBe(600_000);
         expect(s.items.every((it) => it.timeLimitMs === null)).toBe(true);
         await h.c.submitNumSeries(perfectSeriesAnswers(s.items, 20_000));
@@ -3756,15 +3757,17 @@ describe('SessionController — diagnostics', () => {
     const h = await begin({ ...plan, segments: [plan.segments[5] as Segment] });
     h.c.ackInstruction();
     const seeds = (): number[] => expectStep(h.c, 'numseries_block').items.map((it) => it.seed);
+    const form = (seedIndex: number): number[] => diagnosticSeriesItems(seedIndex).map((it) => it.seed);
     // Seed index 5: form 4.
-    expect(seeds()).toEqual(diagnosticSeriesSchedule().map((_, i) => diagnosticSeriesSeed(5, i + 1)));
+    expect(seeds()).toEqual(form(5));
+    expect(seeds()[0]).toBe(diagnosticSeriesSeed(5, 1));
     // A focus loss restarts the task with the next form: the items already seen do not come again.
     expect(await h.c.discardBlock('focus_lost', 0.2)).toEqual({ kind: 'restarted' });
-    expect(seeds()).toEqual(diagnosticSeriesSchedule().map((_, i) => diagnosticSeriesSeed(6, i + 1)));
+    expect(seeds()).toEqual(form(6));
     // The Esc restart after it: the form after that (form 0 again, 7 mod 6).
     expect(await h.c.discardBlock('user', 0.4)).toEqual({ kind: 'restarted' });
     h.c.ackNotice();
-    expect(seeds()).toEqual(diagnosticSeriesSchedule().map((_, i) => diagnosticSeriesSeed(1, i + 1)));
+    expect(seeds()).toEqual(form(1));
     // Every item comes from its scheduled family, whatever the form.
     expect(expectStep(h.c, 'numseries_block').items.map((it) => it.family)).toEqual(diagnosticSeriesSchedule().map((e) => e.family));
   });

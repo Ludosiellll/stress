@@ -8,7 +8,6 @@ import {
   SERIES_FORMS,
   diagnosticSegmentSeed,
   diagnosticSeriesSchedule,
-  diagnosticSeriesSeed,
   planDiagnostic,
 } from '../engine/diagnostic';
 import { R0, updateRating, type Rating } from '../engine/elo';
@@ -33,7 +32,7 @@ import { sdTrimmed } from '../engine/stats';
 import { generateMemoryTrials, SPAN_PROTOCOL_PARAMS, spanProtocolTrials } from '../modules/memory/generate';
 import { CARD_AUDIO, memoryModeForBlock, memoryParams } from '../modules/memory/params';
 import { TRAINING_FAMILIES } from '../modules/numseries/families';
-import { generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
+import { diagnosticSeriesItems, type TimedSeriesItem } from '../modules/numseries/generate';
 import { NO_STRESSORS, bandIndex } from '../modules/reaction/common';
 import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
 import { gonogo, isSwappedSegment } from '../modules/reaction/gonogo';
@@ -1325,9 +1324,9 @@ describe('number series', () => {
     const { step: built, paramsJson } = buildBlock(plan, seed, 'keyboard', new Map(), { seriesSeedIndex: 3 });
     if (built.kind !== 'numseries_block') throw new Error(built.kind);
     const schedule = diagnosticSeriesSchedule();
-    expect(built.items).toEqual(
-      schedule.map((e, i) => ({ ...generateItem(e.family, e.targetD, diagnosticSeriesSeed(3, i + 1)), timeLimitMs: null })),
-    );
+    // The form of seed index 3 (diagnosticSeriesItems: aimed and without repeats, T-R72), from the schedule of spec §4.8.
+    expect(built.items).toEqual(diagnosticSeriesItems(3).map((it) => ({ ...it, timeLimitMs: null })));
+    expect(built.items.map((it) => it.family)).toEqual(schedule.map((e) => e.family));
     // The block's own seed plays no part: the form is the item seeds.
     const other = buildBlock(plan, seed + 1, 'keyboard', new Map(), { seriesSeedIndex: 3 }).step;
     expect(other).toEqual(built);

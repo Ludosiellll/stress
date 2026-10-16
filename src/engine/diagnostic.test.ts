@@ -113,6 +113,12 @@ describe('diagnosticSeriesSeed (F12)', () => {
     // Every item of a form has a seed of its own.
     expect(new Set(Array.from({ length: 20 }, (_, i) => diagnosticSeriesSeed(2, i + 1))).size).toBe(20);
   });
+
+  it('an item that would repeat an earlier one of its form takes its next seed (T-R72)', () => {
+    expect(diagnosticSeriesSeed(2, 13, 0)).toBe(diagnosticSeriesSeed(2, 13));
+    expect(diagnosticSeriesSeed(2, 13, 1)).toBe(hashString('series-form:1:13:1'));
+    expect(diagnosticSeriesSeed(8, 13, 2)).toBe(hashString('series-form:1:13:2'));
+  });
 });
 
 const EMPTY: DiagnosticResults = EMPTY_RESULTS;

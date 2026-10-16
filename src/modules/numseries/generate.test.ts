@@ -2,7 +2,7 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { R0, targetDifficulty } from '../../engine/elo';
 import { ITEM_LIMIT_START_MS, itemTimeLimit, structTarget } from '../../engine/itemLimit';
-import { SERIES_FORMS, diagnosticSeriesSchedule, diagnosticSeriesSeed } from '../../engine/diagnostic';
+import { SERIES_FORMS, diagnosticSeriesSchedule } from '../../engine/diagnostic';
 import { createRng, deriveSeed } from '../../engine/rng';
 import { fitPredictions, isUnique } from './check';
 import {
@@ -17,15 +17,19 @@ import {
   type FamilyId,
 } from './families';
 import {
+  HELD_OUT_MIN_D,
   STRUCT_D_MAX,
   TRAINING_WINDOW,
   attemptItem,
+  diagnosticAim,
+  diagnosticSeriesItems,
   candidateItem,
   difficultyOf,
   generateBlockItems,
   generateItem,
   generateTrainingItem,
   selectCandidate,
+  withoutRepeats,
 } from './generate';
 
 const family = fc.constantFrom(...ALL_FAMILIES);
@@ -454,13 +458,11 @@ describe('the new families (F12)', () => {
   }, 120_000);
 
   it('the held-out items of the six diagnostic forms reduce to no training family (T-R70)', () => {
-    const schedule = diagnosticSeriesSchedule();
     for (let seedIndex = 1; seedIndex <= SERIES_FORMS; seedIndex++) {
-      schedule.forEach((e, i) => {
-        if (!HELD_OUT_FAMILIES.includes(e.family)) return;
-        const item = generateItem(e.family, e.targetD, diagnosticSeriesSeed(seedIndex, i + 1));
+      for (const [i, item] of diagnosticSeriesItems(seedIndex).entries()) {
+        if (!HELD_OUT_FAMILIES.includes(item.family)) continue;
         expect(fitPredictions(item.shown, TRAINING_FAMILIES), `form ${String(seedIndex - 1)} №${String(i + 1)}`).toEqual(new Map());
-      });
+      }
     }
   });
 
@@ -490,6 +492,71 @@ describe('the new families (F12)', () => {
     expect(range('twostep')).toEqual([1500, STRUCT_D_MAX.twostep]);
     expect(range('digitsum')).toEqual([BASE_DIFFICULTY.digitsum, STRUCT_D_MAX.digitsum]);
   });
+
+  it('HELD_OUT_MIN_D is the lowest D each held-out family reaches after T-R70', () => {
+    expect(HELD_OUT_MIN_D).toEqual({ powstep: 1700, twostep: 1500, digitsum: 1350 });
+    fc.assert(
+      fc.property(fc.constantFrom(...HELD_OUT_FAMILIES), fc.integer({ min: 0, max: 2 ** 31 - 1 }), fc.integer({ min: 0, max: 199 }), (f, seed, attempt) => {
+        const item = attemptItem(f, seed, attempt);
+        if (item !== null) expect(item.difficulty).toBeGreaterThanOrEqual(HELD_OUT_MIN_D[f as keyof typeof HELD_OUT_MIN_D]);
+      }),
+      { numRuns: 1000 },
+    );
+    for (const f of HELD_OUT_FAMILIES) {
+      const lowest = HELD_OUT_MIN_D[f as keyof typeof HELD_OUT_MIN_D];
+      expect(Array.from({ length: 200 }, (_, seed) => attemptItem(f, seed, 0)?.difficulty), f).toContain(lowest);
+    }
+  });
+
+  it('diagnosticAim: a held-out item at least 75 above its family\'s lowest D, any other at its target (T-R72)', () => {
+    expect(diagnosticAim('powstep', 1050)).toBe(1775);
+    expect(diagnosticAim('twostep', 1470)).toBe(1575);
+    expect(diagnosticAim('digitsum', 1380)).toBe(1425);
+    expect(diagnosticAim('digitsum', 1500)).toBe(1500);
+    expect(diagnosticAim('arith', 900)).toBe(900);
+    expect(diagnosticAim('letters', 930)).toBe(930);
+  });
+
+  it('withoutRepeats takes an item\'s next seed while its shown terms repeat an earlier item, up to 100 (T-R72)', () => {
+    const calls: [number, number][] = [];
+    const items = withoutRepeats(3, (i, retry) => {
+      calls.push([i, retry]);
+      // Items 1 and 2 first repeat item 0; item 2 also its own first retry's terms of item 1.
+      const shown = i === 0 || retry === 0 ? [1, 2, 3] : i === 2 && retry === 1 ? [1, 1, 9] : [i, retry, 9];
+      return { shown };
+    });
+    expect(items.map((it) => it.shown)).toEqual([[1, 2, 3], [1, 1, 9], [2, 2, 9]]);
+    expect(calls).toEqual([[0, 0], [1, 0], [1, 1], [2, 0], [2, 1], [2, 2]]);
+    expect(() => withoutRepeats(2, () => ({ shown: [1, 2, 3] }))).toThrow(/item 2 repeats an earlier one after 100 next seeds/);
+  });
+
+  it('the six diagnostic forms: no repeated item, held-out items across their lower band, means within 40 of each other (T-R72)', () => {
+    // Means of D by form (spec order of forms 0–5): 1382.5, 1392.5, 1377.5, 1380.0, 1380.0, 1370.0 (SD 260–272), average
+    // 1380.4: the largest gap is 12.1, so no rebalancing.
+    const forms = Array.from({ length: SERIES_FORMS }, (_, i) => diagnosticSeriesItems(i + 1));
+    const schedule = diagnosticSeriesSchedule();
+    const means = forms.map((items) => items.reduce((sum, it) => sum + it.difficulty, 0) / items.length);
+    const average = means.reduce((sum, m) => sum + m, 0) / means.length;
+    for (const [f, items] of forms.entries()) {
+      expect(items.map((it) => it.family), `form ${String(f)}`).toEqual(schedule.map((e) => e.family));
+      expect(new Set(items.map((it) => it.shown.join(','))).size, `form ${String(f)}`).toBe(items.length);
+      expect(Math.abs((means[f] as number) - average), `form ${String(f)}`).toBeLessThanOrEqual(40);
+      for (const it of items) {
+        if (!HELD_OUT_FAMILIES.includes(it.family)) continue;
+        const lowest = HELD_OUT_MIN_D[it.family as keyof typeof HELD_OUT_MIN_D];
+        expect(it.difficulty - lowest, it.id).toBeGreaterThanOrEqual(0);
+        expect(it.difficulty - lowest, it.id).toBeLessThanOrEqual(225);
+      }
+    }
+    // The held-out items vary within their band: no single D takes every powstep or twostep item.
+    for (const f of ['powstep', 'twostep'] as const) {
+      expect(new Set(forms.flat().filter((it) => it.family === f).map((it) => it.difficulty)).size, f).toBeGreaterThan(1);
+    }
+    // The first items of a form are the form's first items (the e2e scale plays 3).
+    expect(diagnosticSeriesItems(4, 3)).toEqual(forms[3]?.slice(0, 3));
+    // Diagnostic 7 plays form 0 again.
+    expect(diagnosticSeriesItems(7)).toEqual(forms[0]);
+  }, 60_000);
 
   it('held-out families never appear in training', () => {
     // Which families come up depends on the weights only. Ratings that put each family's structural target 50 above its
