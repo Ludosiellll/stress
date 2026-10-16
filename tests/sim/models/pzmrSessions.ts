@@ -1,16 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { MemoryRepository } from '../../src/data/memoryRepository';
-import { currentPhase, firstSessionAt } from '../../src/engine/phases';
-import { localDayIso } from '../../src/engine/dates';
-import { planFree, planTraining, taperBudget, warmupLevel, type Segment, type SessionPlan } from '../../src/engine/planner';
-import { createRng } from '../../src/engine/rng';
-import { mean } from '../../src/engine/stats';
-import { FLOOR_FACTOR } from '../../src/engine/windowFloor';
-import { pzmr } from '../../src/modules/reaction/pzmr';
-import { SessionController } from '../../src/session/controller';
-import { playTimeline, type Respond } from '../../src/testing/sessionPlayers';
+import { MemoryRepository } from '../../../src/data/memoryRepository';
+import { currentPhase, firstSessionAt } from '../../../src/engine/phases';
+import { planFree, planTraining, taperBudget, type Segment, type SessionPlan } from '../../../src/engine/planner';
+import { createRng } from '../../../src/engine/rng';
+import { mean } from '../../../src/engine/stats';
+import { FLOOR_FACTOR } from '../../../src/engine/windowFloor';
+import { pzmr } from '../../../src/modules/reaction/pzmr';
+import { SessionController } from '../../../src/session/controller';
+import { playTimeline, type Respond } from '../../../src/testing/sessionPlayers';
 
 /**
+ * The ПЗМР sessions through the controller and their player, shared by session-free, session-warmup and
+ * session-taper.sim.test.ts: one file per long part, so vitest's workers run them side by side (T-R49).
+ *
  * Rulings R6 / R28a: months of sessions through the real SessionController and MemoryRepository on ПЗМР.
  * Each session starts at startLevel(L_saved, days) (−1 up to 4 days, −2 for 5–14, −3 beyond; F6); L_saved is the median of the
  * last 3 session-end levels.
@@ -51,7 +53,7 @@ function phi(x: number): number {
   return x >= 0 ? (1 + erf) / 2 : (1 - erf) / 2;
 }
 
-interface Player {
+export interface Player {
   ability: number;
   /** Median RT of a try, ms. */
   medianRt: number;
@@ -101,7 +103,7 @@ function equilibrium(p: Player): number {
   return (lo + hi) / 2;
 }
 
-function responder(p: Player, seed: number): (L: number) => Respond {
+export function responder(p: Player, seed: number): (L: number) => Respond {
   const rng = createRng(seed);
   const normal = (): number => Math.sqrt(-2 * Math.log(1 - rng.next())) * Math.cos(2 * Math.PI * rng.next());
   return (L) => (spec) => {
@@ -113,7 +115,7 @@ function responder(p: Player, seed: number): (L: number) => Respond {
   };
 }
 
-interface SimCase {
+export interface SimCase {
   name: string;
   player: Player;
   /** Clock advance per block. */
@@ -135,7 +137,7 @@ const pzmrSlot = (taper: boolean): Segment => ({ module: 'pzmr', budgetMs: taper
  * and a ПЗМР reaction slot (F5: ПЗМР is in the reaction pool, and only that slot moves L_saved). Planned as Home
  * does: the phase from the first session (firstSessionAt).
  */
-async function warmupAndSlot(planSeed: number, repo: MemoryRepository, todayIso: string, testDate: string | null = null): Promise<SessionPlan> {
+export async function warmupAndSlot(planSeed: number, repo: MemoryRepository, todayIso: string, testDate: string | null = null): Promise<SessionPlan> {
   const [states, sessions] = await Promise.all([repo.getModuleStates(), repo.listSessions()]);
   const phase = currentPhase({ firstSessionAt: firstSessionAt(sessions), today: todayIso, testDate, states });
   const plan = planTraining(states, todayIso, planSeed, phase);
@@ -145,7 +147,7 @@ async function warmupAndSlot(planSeed: number, repo: MemoryRepository, todayIso:
 }
 
 /** Plays one session through the controller, `blockMs` of the clock per block; the number of blocks played. */
-async function playSession(repo: MemoryRepository, plan: SessionPlan, startMs: number, blockMs: number, respond: (L: number) => Respond): Promise<number> {
+export async function playSession(repo: MemoryRepository, plan: SessionPlan, startMs: number, blockMs: number, respond: (L: number) => Respond): Promise<number> {
   let nowMs = startMs;
   let blocks = 0;
   const ctl = await SessionController.start({
@@ -197,10 +199,15 @@ async function runMonths(c: SimCase, seed: number): Promise<{ savedHistory: numb
   return { savedHistory: (await repo.getModuleStates()).pzmr.savedHistory, blocks };
 }
 
-const CASES: SimCase[] = [
+/** The free ПЗМР cases (session-free.sim.test.ts). */
+export const FREE_CASES: SimCase[] = [
   { name: 'free, logistic-limited', player: { ability: 10, medianRt: 300 }, blockMs: 40_000, blocksPerSession: 8, plan: free },
   { name: 'free, mixed', player: { ability: 18, medianRt: 220 }, blockMs: 40_000, blocksPerSession: 8, plan: free },
   { name: 'free, window-limited', player: { ability: 30, medianRt: 250 }, blockMs: 40_000, blocksPerSession: 8, plan: free },
+];
+
+/** The training case: the day's warm-up and a ПЗМР reaction slot (session-warmup.sim.test.ts). */
+export const WARMUP_CASES: SimCase[] = [
   {
     name: 'training warm-up and ПЗМР reaction slot, mixed',
     player: { ability: 18, medianRt: 220 },
@@ -210,94 +217,27 @@ const CASES: SimCase[] = [
   },
 ];
 
-describe('session simulation (R6, R28a, R29): months of daily sessions through the controller', () => {
-  it.each(CASES)(
-    '$name: mean L_saved of sessions 31–60 within 1 of L* for every seed, no downward drift',
-    async (c) => {
-      const target = equilibrium(c.player);
-      const offTarget: Array<{ seed: number; gap: number }> = [];
-      const drifts: number[] = [];
-      for (const seed of SEEDS) {
-        const { savedHistory, blocks } = await runMonths(c, seed);
-        expect(blocks).toBe(SESSIONS * c.blocksPerSession);
-        expect(savedHistory).toHaveLength(SESSIONS);
-        const gap = mean(savedHistory.slice(30, 60)) - target;
-        if (Math.abs(gap) > 1) offTarget.push({ seed, gap });
-        drifts.push(mean(savedHistory.slice(50, 60)) - mean(savedHistory.slice(20, 30)));
-      }
-      expect(offTarget).toEqual([]);
-      expect(mean(drifts)).toBeGreaterThanOrEqual(-0.5);
-    },
-    120_000,
-  );
-});
-
-/** Local 18:00 of course day `day` (local calendar days, DST-safe). */
-const courseDay = (day: number): Date => new Date(2026, 10, 2 + day, 18);
-const COURSE_DAYS = 90;
-const TAPER_CHECK_DAYS = 10;
-
-/** The taper player: the mixed player, whose window the personal floor keeps from binding (T-R43). */
-const TAPER_PLAYER: Player = { ability: 18, medianRt: 220 };
-/** A course swings with its seed (SD of the drop ≈ 0.6): the mean of 20 seeds measures the taper. */
-const TAPER_SEEDS = Array.from({ length: 20 }, (_, i) => i + 1);
-
-interface TaperCourse {
-  /** L_saved of ПЗМР at the start of each course day. */
-  lSaved: number[];
-  /** Warm-up blocks that did not play at warmupLevel(L_saved) or moved their level (F5): none expected. */
-  offWarmups: string[];
-}
-
-/**
- * Daily sessions with a day off after every 6, the test on day 90, so the last 9 days are the taper (shorter warm-up
- * and slot).
- */
-async function runCourse(seed: number): Promise<TaperCourse> {
-  const repo = new MemoryRepository();
-  const respond = responder(TAPER_PLAYER, seed);
-  const testDate = localDayIso(courseDay(COURSE_DAYS).toISOString());
-  const lSaved: number[] = [];
-  const offWarmups: string[] = [];
-  for (let day = 0; day <= COURSE_DAYS; day++) {
-    const saved = (await repo.getModuleStates()).pzmr.lSaved;
-    lSaved.push(saved);
-    if (day === COURSE_DAYS || day % 7 === 6) continue;
-    const start = courseDay(day);
-    const plan = await warmupAndSlot(seed * 1000 + day, repo, start.toISOString(), testDate);
-    const stored = (await repo.listBlocks()).length;
-    await playSession(repo, plan, start.getTime(), 28_000, respond);
-    const L = warmupLevel(saved);
-    for (const b of (await repo.listBlocks()).slice(stored)) {
-      if (b.flags.includes('warmup') && (b.lBefore !== L || b.lAfter !== L)) offWarmups.push(`day ${String(day)}: ${String(b.lBefore)} → ${String(b.lAfter)}, not ${String(L)}`);
-    }
-  }
-  return { lSaved, offWarmups };
-}
-
-/** The seeds in groups of 5, one test each: a course takes about 7 s through the controller. */
-const TAPER_GROUPS = [0, 5, 10, 15].map((from) => ({ seeds: TAPER_SEEDS.slice(from, from + 5), name: `${String(from + 1)}–${String(from + 5)}` }));
-
-describe('session simulation (F5): the taper', () => {
-  /** The drop of L_saved over the taper per seed: test day − 10 days before; filled by the seed groups. */
-  const drops = new Map<number, number>();
-
-  it.each(TAPER_GROUPS)(
-    'seeds $name: every warm-up plays at warmupLevel(L_saved) and keeps it (F5)',
-    async ({ seeds }) => {
-      // 90 daily sessions (a day off after every 6), test date = day 90; plan = the day's warm-up + a ПЗМР reaction
-      // segment of 5 min (taperBudget in the taper); TAPER_PLAYER.
-      for (const seed of seeds) {
-        const { lSaved, offWarmups } = await runCourse(seed);
-        expect(offWarmups, `seed ${String(seed)}`).toEqual([]);
-        drops.set(seed, (lSaved[COURSE_DAYS] ?? NaN) - (lSaved[COURSE_DAYS - TAPER_CHECK_DAYS] ?? NaN));
-      }
-    },
-    120_000,
-  );
-
-  it('the taper does not pull ПЗМР L_saved down (F5): test day ≥ 10 days before − 0.25, mean of 20 seeds', () => {
-    expect(drops.size, 'the seed groups above fill the drops: run the whole describe').toBe(TAPER_SEEDS.length);
-    expect(mean([...drops.values()])).toBeGreaterThanOrEqual(-0.25);
+/** Registers the R29 check of these cases, one test per case. */
+export function describeMonths(cases: readonly SimCase[]): void {
+  describe('session simulation (R6, R28a, R29): months of daily sessions through the controller', () => {
+    it.each(cases)(
+      '$name: mean L_saved of sessions 31–60 within 1 of L* for every seed, no downward drift',
+      async (c) => {
+        const target = equilibrium(c.player);
+        const offTarget: Array<{ seed: number; gap: number }> = [];
+        const drifts: number[] = [];
+        for (const seed of SEEDS) {
+          const { savedHistory, blocks } = await runMonths(c, seed);
+          expect(blocks).toBe(SESSIONS * c.blocksPerSession);
+          expect(savedHistory).toHaveLength(SESSIONS);
+          const gap = mean(savedHistory.slice(30, 60)) - target;
+          if (Math.abs(gap) > 1) offTarget.push({ seed, gap });
+          drifts.push(mean(savedHistory.slice(50, 60)) - mean(savedHistory.slice(20, 30)));
+        }
+        expect(offTarget).toEqual([]);
+        expect(mean(drifts)).toBeGreaterThanOrEqual(-0.5);
+      },
+      120_000,
+    );
   });
-});
+}
