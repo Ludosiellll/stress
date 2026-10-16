@@ -375,6 +375,30 @@ describe('Progress edge cases', () => {
     const card = chartOf('Разминка ПЗМР: медиана по дням, мс');
     expect(within(card).getByText('меньше — лучше')).toBeTruthy();
     expect(card.querySelectorAll('circle')).toHaveLength(2);
+    expect(card.querySelector('p.muted.chart-note')).toBeNull();
+  });
+
+  it('«Форма дня» names the days of another warm-up band under the chart (T-R78)', async () => {
+    const repo = new MemoryRepository();
+    const day = (d: number): string => new Date(Date.now() - d * 86_400_000).toISOString();
+    // Three days ago the warm-up played L 3 (band 0), yesterday L 8 (band 2).
+    for (const [d, lBefore] of [[3, 3], [1, 8]] as const) {
+      await repo.createSession(session(`s${String(d)}`, day(d), { endedAt: day(d) }));
+      await repo.addBlock(
+        block(`w${String(d)}`, `s${String(d)}`, day(d), { lBefore, lAfter: lBefore, flags: ['warmup'], summaryJson: JSON.stringify({ cleanHitRts: [300] }) }),
+        [],
+        [],
+      );
+    }
+    await renderProgress(repo);
+    const card = chartOf('Разминка ПЗМР: медиана по дням, мс');
+    const marked = new Date(Date.now() - 3 * 86_400_000);
+    const label = `${String(marked.getDate()).padStart(2, '0')}.${String(marked.getMonth() + 1).padStart(2, '0')}`;
+    expect(card.querySelector('p.muted.chart-note')?.textContent).toBe(
+      `Разминка ${label} — на другой нагрузке. Тренд и полоса шума — только по разминкам на текущей нагрузке.`,
+    );
+    expect(card.querySelector('p.chart-trend')?.textContent).toBe('Полоса шума и тренд появятся после 3 дней разминки на текущей нагрузке.');
+    expect([...card.querySelectorAll('circle title')].map((t) => t.textContent)).toEqual([`${label}: 300 (другая нагрузка)`, expect.stringMatching(/^\d\d\.\d\d: 300$/)]);
   });
 
   it('«Прогоны в формате теста» follows «Форма дня»: the mean and the SD of each format by run, the best results (F4)', async () => {

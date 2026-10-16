@@ -134,10 +134,12 @@ export interface ProgressModel {
   diagnostics: ChartSpec[];
   /** «Общий индекс готовности» by diagnostic (F7). */
   indexChart: ChartSpec;
-  /** «Форма дня»: the daily median of the ПЗМР warm-up over FORM_CHART_DAYS days (F5). */
+  /** «Форма дня»: the daily median of the ПЗМР warm-up over FORM_CHART_DAYS days (F5); days on another band are marked. */
   formOfDay: ChartPoint[];
-  /** The trend of the form-of-day chart (F7). */
+  /** The trend of the form-of-day chart (F7), over the days of the latest warm-up band (T-R78). */
   formOfDayTrend: TrendView;
+  /** The line under the form-of-day chart naming the days on another band; null: none. */
+  formOfDayFootnote: string | null;
   /** «Прогоны в формате теста»: the formats with at least one stored run, in TEST_FORMAT_ORDER (F4). */
   testFormats: TestFormatProgress[];
   levels: LevelChartSpec[];
@@ -530,30 +532,73 @@ export function indexChart(rows: readonly DiagnosticRow[]): ChartSpec {
   };
 }
 
+/** «Форма дня» in «Прогресс» (F5, F7): the points, the trend and the footnote naming the days on another band. */
+export interface FormOfDayChart {
+  points: ChartPoint[];
+  trend: TrendView;
+  /** null: every day is on the latest band. */
+  footnote: string | null;
+}
+
+/** The note of a day whose warm-ups played another band than the latest one (T-R78). */
+const OTHER_BAND = 'другая нагрузка';
+/** The form-of-day NO_TREND once some days are on another band: the trend counts the days of the latest band only. */
+const FORM_NO_TREND = 'Полоса шума и тренд появятся после 3 дней разминки на текущей нагрузке.';
+
+/** «01.10–06.10, 09.10»: the marked points in chart order, a run of consecutive ones as its first and last. */
+function markedRuns(points: readonly ChartPoint[]): string {
+  const runs: { first: string; last: string }[] = [];
+  points.forEach((p, i) => {
+    if (p.note === undefined) return;
+    const run = runs.at(-1);
+    if (run !== undefined && points[i - 1]?.note !== undefined) run.last = p.x;
+    else runs.push({ first: p.x, last: p.x });
+  });
+  // x labels are days, one point each: a run of one has the same first and last.
+  return runs.map((r) => (r.first === r.last ? r.first : `${r.first}–${r.last}`)).join(', ');
+}
+
 /**
- * One point per local day with a warm-up in the last FORM_CHART_DAYS days (today included): the median of all its
- * clean hits, whatever the band; x is «дд.мм». Days come in date order.
+ * The form-of-day chart (F5, F7): one point per local day with a warm-up in the last FORM_CHART_DAYS days (today
+ * included), x «дд.мм», in date order. The «обычно» of a warm-up's summary compares days of the same band (dayForm), so
+ * the chart does too (T-R78): the latest band is that of the latest warm-up (the day's last one), a day with warm-ups
+ * on it is the median of their clean hits, and a day without is the median of all of its own, marked, left out of the
+ * trend and its band (lower is better) and named in the footnote, as Горбов's three-table diagnostics are (formatSplit).
  */
-export function formOfDayPoints(days: readonly FormDay[], today: string): ChartPoint[] {
-  return formOfDayDays(days, today).map(({ x, y }) => ({ x, y }));
-}
-
-/** The trend of the form-of-day chart (F7): its points at their days; lower is better. */
-export function formOfDayTrend(days: readonly FormDay[], today: string): TrendView {
-  return trendView(formOfDayDays(days, today), true, 'мс');
-}
-
-function formOfDayDays(days: readonly FormDay[], today: string): { x: string; t: number; y: number }[] {
+export function formOfDayChart(days: readonly FormDay[], today: string): FormOfDayChart {
   const end = localDayNumber(today);
-  const byDay = new Map<string, number[]>();
-  for (const d of days) {
+  const inChart = days.filter((d) => {
     const n = localDayNumber(d.day);
-    if (n > end || n <= end - FORM_CHART_DAYS || d.rts.length === 0) continue;
-    byDay.set(d.day, [...(byDay.get(d.day) ?? []), ...d.rts]);
+    return n <= end && n > end - FORM_CHART_DAYS && d.rts.length > 0;
+  });
+  // The latest day, and on it the last warm-up in block order.
+  const latest = inChart.reduce<FormDay | null>((last, d) => (last === null || d.day >= last.day ? d : last), null);
+  const byDay = new Map<string, { all: number[]; latest: number[] }>();
+  for (const d of inChart) {
+    const day = byDay.get(d.day) ?? { all: [], latest: [] };
+    day.all.push(...d.rts);
+    if (d.band === latest?.band) day.latest.push(...d.rts);
+    byDay.set(d.day, day);
   }
-  return [...byDay.entries()]
+  const timed = [...byDay.entries()]
     .sort(([a], [b]) => (a < b ? -1 : 1))
-    .map(([day, rts]) => ({ x: `${day.slice(8, 10)}.${day.slice(5, 7)}`, t: localDayNumber(day), y: median(rts) }));
+    .map(([day, rts]): TimedPoint & { note?: string } => {
+      const x = `${day.slice(8, 10)}.${day.slice(5, 7)}`;
+      const t = localDayNumber(day);
+      return rts.latest.length > 0 ? { x, t, y: median(rts.latest) } : { x, t, y: median(rts.all), note: OTHER_BAND };
+    });
+  const points = timed.map(({ x, y, note }) => (note === undefined ? { x, y } : { x, y, note }));
+  const marked = points.filter((p) => p.note !== undefined).length;
+  if (marked === 0) return { points, trend: trendView(timed, true, 'мс'), footnote: null };
+  const trend = trendView(
+    timed.map((p) => (p.note === undefined ? p : { ...p, y: null })),
+    true,
+    'мс',
+    undefined,
+    FORM_NO_TREND,
+  );
+  const which = `${marked === 1 ? 'Разминка' : 'Разминки'} ${markedRuns(points)}`;
+  return { points, trend, footnote: `${which} — на другой нагрузке. Тренд и полоса шума — только по разминкам на текущей нагрузке.` };
 }
 
 /** Each format with stored runs (testFormatRunsAt): the points of its two charts, its best and its runs. */
@@ -759,14 +804,15 @@ export async function loadProgressModel(repo: Repository, now: Date = new Date()
   const blocksBySession = count(blocks.map((b) => b.sessionId));
   const points = sessionEndPoints(sessions, blocks);
   const past = pastBlocks(blocks, sessions);
-  const today = localDayIso(now.toISOString());
+  const formOfDay = formOfDayChart(warmupDays(past), localDayIso(now.toISOString()));
   return {
     readiness: readinessOf(diagnostics),
     assessment: assessModules({ states, meanRating: meanFamilyRating(ratings), history: buildBlockHistory(blocks, sessions), now }),
     diagnostics: diagnosticCharts(diagnostics),
     indexChart: indexChart(diagnostics),
-    formOfDay: formOfDayPoints(warmupDays(past), today),
-    formOfDayTrend: formOfDayTrend(warmupDays(past), today),
+    formOfDay: formOfDay.points,
+    formOfDayTrend: formOfDay.trend,
+    formOfDayFootnote: formOfDay.footnote,
     testFormats: testFormatProgress(past),
     levels: LEVEL_MODULES.map((module) => levelChart(module, points[module])),
     overload28d: overload28d(blocks, now),

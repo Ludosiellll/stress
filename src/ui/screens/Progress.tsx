@@ -120,6 +120,7 @@ function FormOfDay({ model }: { model: ProgressModel }) {
           domain={{ min: 0 }}
           whole
           trends={[model.formOfDayTrend]}
+          {...(model.formOfDayFootnote === null ? {} : { footnote: model.formOfDayFootnote })}
         />
       </div>
     </section>

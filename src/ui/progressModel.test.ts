@@ -12,7 +12,7 @@ import {
   diagnosticCharts,
   discardWeeks,
   durationText,
-  formOfDayPoints,
+  formOfDayChart,
   indexChart,
   loadProgressModel,
   overload28d,
@@ -478,28 +478,72 @@ describe('the main variant of a band module (Р29, T-R7)', () => {
 });
 
 describe('the form of the day', () => {
+  const d = (day: string, rts: number[], band = 1) => ({ day, band, rts });
+
   it('the form-of-day chart: the daily warm-up median for 30 days', () => {
-    const d = (day: string, rts: number[], band = 1) => ({ day, band, rts });
     expect(
-      formOfDayPoints(
+      formOfDayChart(
         [
           d('2026-10-15', [300, 310]),
           d('2026-09-15', [400]),
           d('2026-09-16', [290]),
-          d('2026-10-01', [250]),
           d('2026-10-01', [270, 260], 2),
+          d('2026-10-01', [250]),
           d('2026-10-02', []),
           d('2026-10-16', [200]),
         ],
         '2026-10-15',
-      ),
+      ).points,
     ).toEqual([
-      // 15.09 is 30 days back: out. Bands do not matter here; a day of several warm-ups is one point.
+      // 15.09 is 30 days back: out. A day of several warm-ups is one point; on 01.10 only the warm-up on the latest band
+      // (that of 15.10) counts.
       { x: '16.09', y: 290 },
-      { x: '01.10', y: 260 },
+      { x: '01.10', y: 250 },
       { x: '15.10', y: 305 },
     ]);
-    expect(formOfDayPoints([], '2026-10-15')).toEqual([]);
+    expect(formOfDayChart([], '2026-10-15')).toEqual({ points: [], trend: SHORT, footnote: null });
+  });
+
+  it('after a change of the warm-up band the trend and its band use the latest band only; earlier days are marked (T-R78)', () => {
+    // The final review's probe: 6 days at about 250 ms on band 1, then days at about 285 ms on band 4.
+    const band1 = [248, 252, 250, 249, 251, 250].map((rt, i) => d(`2026-10-0${String(i + 1)}`, [rt]));
+    const twoDays = [...band1, d('2026-10-07', [284], 4), d('2026-10-08', [286], 4)];
+    const other = 'другая нагрузка';
+    const before = formOfDayChart(twoDays, '2026-10-08');
+    expect(before.points).toEqual([
+      ...band1.map((b) => ({ x: `${b.day.slice(8)}.10`, y: b.rts[0], note: other })),
+      { x: '07.10', y: 284 },
+      { x: '08.10', y: 286 },
+    ]);
+    // Two days on band 4: no trend yet, and the line says which days it waits for.
+    expect(before.trend).toEqual({ text: 'Полоса шума и тренд появятся после 3 дней разминки на текущей нагрузке.', band: [] });
+    expect(before.footnote).toBe('Разминки 01.10–06.10 — на другой нагрузке. Тренд и полоса шума — только по разминкам на текущей нагрузке.');
+    // A third day on band 4: the trend of the three, not «+44 мс … — хуже» from the change of load.
+    const after = formOfDayChart([...twoDays, d('2026-10-09', [285], 4)], '2026-10-09');
+    expect(after.trend.text).toBe('Тренд: +1 мс за 2 дн. — в пределах шума (шум ±2 мс)');
+    expect(after.trend.band.map((b) => [b.x, b.slot])).toEqual([
+      ['07.10', 6],
+      ['08.10', 7],
+      ['09.10', 8],
+    ]);
+  });
+
+  it('the footnote names one marked day alone and joins the runs of marked days', () => {
+    const one = formOfDayChart([d('2026-10-05', [300], 2), d('2026-10-06', [290]), d('2026-10-07', [280])], '2026-10-07');
+    expect(one.footnote).toBe('Разминка 05.10 — на другой нагрузке. Тренд и полоса шума — только по разминкам на текущей нагрузке.');
+    // Back on band 1 after band 4: the days on band 4 are the marked ones, the band-1 days on both sides count.
+    const runs = formOfDayChart(
+      [d('2026-10-01', [300], 4), d('2026-10-02', [300], 4), d('2026-10-03', [250]), d('2026-10-04', [300], 4), d('2026-10-05', [250])],
+      '2026-10-05',
+    );
+    expect(runs.points.map((p) => p.note)).toEqual([...Array<string>(2).fill('другая нагрузка'), undefined, 'другая нагрузка', undefined]);
+    expect(runs.footnote).toBe('Разминки 01.10–02.10, 04.10 — на другой нагрузке. Тренд и полоса шума — только по разминкам на текущей нагрузке.');
+    // The latest band is that of the day's last warm-up: a session on band 2 after one on band 1 the same day.
+    const sameDay = formOfDayChart([d('2026-10-04', [300]), d('2026-10-05', [260]), d('2026-10-05', [280], 2)], '2026-10-05');
+    expect(sameDay.points).toEqual([
+      { x: '04.10', y: 300, note: 'другая нагрузка' },
+      { x: '05.10', y: 280 },
+    ]);
   });
 
   it('loadProgressModel reads the warm-ups of training and free sessions from the block history', async () => {
@@ -512,7 +556,18 @@ describe('the form of the day', () => {
     await repo.addBlock(block('w', 't', at(14), { flags: ['warmup'], summaryJson: summaryJson([281, 283]) }), [], []);
     await repo.addBlock(block('r', 't', at(14), { summaryJson: summaryJson([200]) }), [], []);
     await repo.addBlock(block('x', 'd', at(13), { flags: ['warmup'], summaryJson: summaryJson([200]) }), [], []);
-    expect((await loadProgressModel(repo, now)).formOfDay).toEqual([{ x: '14.10', y: 282 }]);
+    const model = await loadProgressModel(repo, now);
+    expect(model.formOfDay).toEqual([{ x: '14.10', y: 282 }]);
+    expect(model.formOfDayFootnote).toBeNull();
+    // A warm-up on another band (lBefore 8: band 2 of ПЗМР) the day after: the earlier day is marked and named.
+    await repo.createSession(session('t2', at(15), { endedAt: at(15) }));
+    await repo.addBlock(block('w2', 't2', at(15), { lBefore: 8, lAfter: 8, flags: ['warmup'], summaryJson: summaryJson([260]) }), [], []);
+    const later = await loadProgressModel(repo, now);
+    expect(later.formOfDay).toEqual([
+      { x: '14.10', y: 282, note: 'другая нагрузка' },
+      { x: '15.10', y: 260 },
+    ]);
+    expect(later.formOfDayFootnote).toBe('Разминка 14.10 — на другой нагрузке. Тренд и полоса шума — только по разминкам на текущей нагрузке.');
   });
 });
 
