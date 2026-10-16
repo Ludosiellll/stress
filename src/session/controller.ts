@@ -13,8 +13,8 @@ import { stabilityOf } from '../engine/reaction/stability';
 import type { BlockTimeline, TrialResult } from '../engine/reaction/types';
 import { readinessOfLatest } from '../engine/readiness';
 import { isBandModule, isReactionModule, type BlockFlag, type FamilyId, type LayoutId, type ModuleId } from '../engine/types';
-import type { MemoryTrial } from '../modules/memory/generate';
-import { memorySpan, scoreMemoryTrial, type MemoryAnswer } from '../modules/memory/score';
+import { CARD_LESSON } from '../modules/memory/params';
+import { memorySpan, scoreMemoryBlock, type MemoryAnswer } from '../modules/memory/score';
 import { bandIndex } from '../modules/reaction/common';
 import type { RdoParams } from '../modules/reaction/rdo';
 import { moduleTitles, reactionModules } from '../modules/registry';
@@ -43,6 +43,7 @@ import {
 } from './blocks';
 import {
   appendPast,
+  hasPlayedMode,
   lastSetup,
   pastBlocks,
   rdoCycleCount,
@@ -64,7 +65,7 @@ import {
   dayLayoutLine,
   DIAGNOSTIC_RESTART_NOTICE,
   floorLine,
-  memoryLines,
+  memoryLine,
   reactionLines,
   saveErrorMessage,
   seriesLines,
@@ -329,6 +330,10 @@ export class SessionController {
   private next: { plan: BlockPlan; instruction: string } | null = null;
   /** The day line (dayLayoutLine) still opens the next instruction of a block on the layout of the day (F9). */
   private dayLineDue: boolean;
+  /** The strategy lesson (F13) was shown in this session: never again, even if its card block was not stored. */
+  private lessonShown = false;
+  /** The instruction the lesson on screen comes before. */
+  private afterLesson: StepOf<'instruction'> | null = null;
   private active: ActiveBlock | null = null;
   private saving: SaveContext | null = null;
   private busy = false;
@@ -612,34 +617,56 @@ export class SessionController {
 
   /**
    * One answer per trial, in order; the span protocol (diagnostics) ends early when it stops (checkMemoryAnswers).
-   * s = exact rows / rows answered: all the trials of a fixed block (W2-R9), the ones shown of the span protocol.
-   * The level moves by nextLevel with no stability rule (no RTs). The summary keeps every answer; the span goes
-   * to the diagnostic results.
+   * A fixed block's s is its partial score, the positions right over the positions of all its rows (F13), and its summary
+   * keeps the mode, the row length, the card's showing and sound, the exact rows, the positions right, s and every
+   * answer. The span protocol is that of 0.2.0: s = exact rows / rows shown, and its span goes to the diagnostic results.
+   * The level moves by nextLevel with no stability rule (no RTs).
    */
   async submitMemory(answers: readonly MemoryAnswer[]): Promise<void> {
     const step = this.take('memory_block');
     checkMemoryAnswers(step, answers);
     const { trials, params, mode, protocol } = step;
     await this.exclusive(async () => {
-      const scored = answers.map((a, i) => scoreMemoryTrial(trials[i] as MemoryTrial, a));
-      const exact = scored.filter((r) => r.exact).length;
+      const { exact, positionsCorrect, partial } = scoreMemoryBlock(trials, answers);
       const n = answers.length;
-      const span = protocol === 'span' ? memorySpan(trials, answers) : null;
-      const positionsCorrect = scored.reduce((sum, r) => sum + r.positionsCorrect, 0);
+      if (protocol === 'span') {
+        const span = memorySpan(trials, answers);
+        await this.completeBlock({
+          module: 'memory',
+          L: step.L,
+          score: exact / n,
+          level: NO_STABILITY_RULE,
+          hitRts: [],
+          summary: { protocol, mode, exact, span, answers },
+          lines: spanLines(exact, n, span),
+          rows: () => ({ trials: [], items: [] }),
+          onCommit: () => {
+            if (!this.counted) this.diagParts.push({ module: 'memory', span });
+          },
+        });
+        return;
+      }
+      const { length, exposureMs, sound } = params;
       await this.completeBlock({
         module: 'memory',
         L: step.L,
-        score: exact / n,
+        score: partial,
         level: NO_STABILITY_RULE,
         hitRts: [],
-        summary: span === null ? { mode, length: params.length, exact, positionsCorrect, answers } : { protocol, mode, exact, span, answers },
-        lines: span === null ? memoryLines(exact, n, positionsCorrect, params.length) : spanLines(exact, n, span),
+        summary: { mode, length, exposureMs, sound, exact, positionsCorrect, partial, answers },
+        lines: [memoryLine({ partial, exact, trials: n, length, mode, exposureMs, sound })],
         rows: () => ({ trials: [], items: [] }),
-        onCommit: () => {
-          if (!this.counted && span !== null) this.diagParts.push({ module: 'memory', span });
-        },
       });
     });
+  }
+
+  /** Leaves the lesson (F13) for the instruction it came before. */
+  ackLesson(): void {
+    this.take('lesson');
+    const next = this.afterLesson;
+    if (next === null) throw new Error('SessionController: a lesson without an instruction after it');
+    this.afterLesson = null;
+    this.current = next;
   }
 
   /** Starts the replay announced by the `notice` step. */
@@ -893,7 +920,7 @@ export class SessionController {
   /**
    * Instruction first if the segment just started, for every Gorbov run, or when the rules changed. The first one of a
    * block on the layout of the day, when that is not the user's own, opens with dayLayoutLine (F9); the day line is no
-   * change of rules.
+   * change of rules. Before the first 3×3 card ever the strategy lesson comes, then the card's instruction (F13).
    */
   private presentNext(): void {
     const seg = this.segment();
@@ -901,17 +928,34 @@ export class SessionController {
     const plan = planBlock(seg.segment, seg.L, seg.blocksDone, this.planContext(seg));
     const { text, keysHint } = blockInstruction(plan, layout);
     const instruction = text + '\n' + keysHint;
-    if (seg.segment.module === 'gorbov' || instruction !== seg.lastInstruction) {
+    const lesson = this.lessonDue(plan);
+    if (lesson || seg.segment.module === 'gorbov' || instruction !== seg.lastInstruction) {
       this.next = { plan, instruction };
       let shown = text;
       if (this.dayLineDue && layout !== this.layout) {
         shown = `${dayLayoutLine(layout, this.layout)} ${text}`;
         this.dayLineDue = false;
       }
-      this.current = { kind: 'instruction', module: seg.segment.module, text: shown, keysHint };
+      const step: StepOf<'instruction'> = { kind: 'instruction', module: seg.segment.module, text: shown, keysHint };
+      if (lesson) {
+        this.lessonShown = true;
+        this.afterLesson = step;
+        this.current = { kind: 'lesson', lines: CARD_LESSON };
+      } else {
+        this.current = step;
+      }
     } else {
       this.startBlock(plan);
     }
+  }
+
+  /**
+   * The strategy lesson comes before a training or free 3×3 card block when the history has none (hasPlayedMode, F13)
+   * and the lesson was not shown in this session; never without the history (Р18).
+   */
+  private lessonDue(plan: BlockPlan): boolean {
+    if (plan.kind !== 'memory' || plan.mode !== 'card3x3' || this.lessonShown) return false;
+    return this.past !== null && !hasPlayedMode(this.past, 'card3x3');
   }
 
   /**

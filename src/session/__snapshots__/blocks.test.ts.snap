@@ -18584,9 +18584,12 @@ exports[`diagnostic reaction blocks > the span protocol and the Горбов run
   "mode": "digits",
   "overload": false,
   "params": {
+    "exposureMs": null,
     "gapMs": 250,
     "itemMs": 1000,
     "length": 3,
+    "rows": null,
+    "sound": false,
   },
   "protocol": "span",
 }
@@ -18594,8 +18597,11 @@ exports[`diagnostic reaction blocks > the span protocol and the Горбов run
 
 exports[`diagnostic reaction blocks > the span protocol and the Горбов runs of the diagnostic keep their 0.2.0 parameters > span protocol params 1`] = `
 {
+  "exposureMs": null,
   "gapMs": 250,
   "itemMs": 1000,
   "length": 3,
+  "rows": null,
+  "sound": false,
 }
 `;

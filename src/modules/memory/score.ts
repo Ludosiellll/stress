@@ -18,6 +18,28 @@ function checkAnswered(fn: string, trials: readonly MemoryTrial[], answers: read
   }
 }
 
+/**
+ * A block's rows as F13 scores them: the exact rows, the positions right over the rows answered, and the partial score s
+ * = positions right / the positions those rows had (0 without an answer). The level moves by s.
+ */
+export function scoreMemoryBlock(
+  trials: readonly MemoryTrial[],
+  answers: readonly MemoryAnswer[],
+): { exact: number; positionsCorrect: number; partial: number } {
+  checkAnswered('scoreMemoryBlock', trials, answers);
+  let exact = 0;
+  let positionsCorrect = 0;
+  let positions = 0;
+  answers.forEach((a, i) => {
+    const t = trials[i] as MemoryTrial;
+    const r = scoreMemoryTrial(t, a);
+    if (r.exact) exact++;
+    positionsCorrect += r.positionsCorrect;
+    positions += t.items.length;
+  });
+  return { exact, positionsCorrect, partial: positions > 0 ? positionsCorrect / positions : 0 };
+}
+
 /** Span protocol: true when both trials of the last answered length are wrong (stop after this answer). */
 export function spanProtocolStops(trials: readonly MemoryTrial[], answers: readonly MemoryAnswer[]): boolean {
   checkAnswered('spanProtocolStops', trials, answers);

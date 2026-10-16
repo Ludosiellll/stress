@@ -7,7 +7,7 @@ export interface MemoryRenderer {
   fixation(): void;
   /** Item k: the digit or letter in the centre, or the grid with cell k lit (positions). */
   item(t: MemoryTrial, k: number): void;
-  /** Every digit of the card in its cell, row by row. */
+  /** Every digit of the card in its cell, row by row: 3 columns, t.rows rows, the rest of the last row empty (F13). */
   card(t: MemoryTrial): void;
   /** The background only. */
   clear(): void;
@@ -21,19 +21,21 @@ export const GRID_LINE = '#7a7a7a';
 const GRID_LINE_PX = 2;
 /** Digit, letter and cross height as a share of the shorter side. */
 const ITEM_SIZE = 0.3;
-/** Grid and card side as a share of the shorter side. */
+/** The larger side of a grid or card as a share of the shorter side of the canvas. */
 const GRID_SIZE = 0.8;
 /** Card digits fill this share of their cell. */
 const CARD_DIGIT = 0.6;
 const FONT = "'Segoe UI', Arial, sans-serif";
 
-/** Cell `index` (row by row from 0) of a `side` × `side` grid centred in a w × h canvas, in CSS pixels. */
-export function gridCell(w: number, h: number, side: number, index: number): { x: number; y: number; size: number } {
-  const total = GRID_SIZE * Math.min(w, h);
-  const size = total / side;
+/**
+ * Cell `index` (row by row from 0) of a grid `side` cells wide and `rows` high (square by default) centred in a w × h
+ * canvas, in CSS pixels; the cells are square and the larger side of the grid takes GRID_SIZE of the shorter canvas side.
+ */
+export function gridCell(w: number, h: number, side: number, index: number, rows = side): { x: number; y: number; size: number } {
+  const size = (GRID_SIZE * Math.min(w, h)) / Math.max(side, rows);
   const row = Math.floor(index / side);
   const col = index % side;
-  return { x: (w - total) / 2 + col * size, y: (h - total) / 2 + row * size, size };
+  return { x: (w - side * size) / 2 + col * size, y: (h - rows * size) / 2 + row * size, size };
 }
 
 /** Draws memory trials on a full-screen canvas, in the colours of the reaction screen. */
@@ -64,11 +66,11 @@ export function createMemoryRenderer(canvas: HTMLCanvasElement): MemoryRenderer 
     ctx.fillText(s, x, y);
   };
 
-  const grid = (w: number, h: number, side: number): void => {
+  const grid = (w: number, h: number, side: number, rows = side): void => {
     ctx.strokeStyle = GRID_LINE;
     ctx.lineWidth = GRID_LINE_PX;
-    for (let i = 0; i < side * side; i++) {
-      const c = gridCell(w, h, side, i);
+    for (let i = 0; i < side * rows; i++) {
+      const c = gridCell(w, h, side, i, rows);
       ctx.strokeRect(c.x, c.y, c.size, c.size);
     }
   };
@@ -93,9 +95,9 @@ export function createMemoryRenderer(canvas: HTMLCanvasElement): MemoryRenderer 
     },
     card(t) {
       const { w, h } = background();
-      grid(w, h, t.gridSide);
+      grid(w, h, t.gridSide, t.rows);
       t.items.forEach((digit, i) => {
-        const c = gridCell(w, h, t.gridSide, i);
+        const c = gridCell(w, h, t.gridSide, i, t.rows);
         text(digit, c.x + c.size / 2, c.y + c.size / 2, CARD_DIGIT * c.size);
       });
     },

@@ -49,9 +49,11 @@ const trial = (over: Partial<MemoryTrial>): MemoryTrial => ({
   mode: 'digits',
   items: ['4', '7', '1', '9'],
   gridSide: 0,
+  rows: 0,
   itemMs: 630,
   gapMs: 158,
   cardMs: 2520,
+  sound: false,
   ...over,
 });
 
@@ -97,18 +99,41 @@ describe('memoryRenderer', () => {
     expect(named(calls, 'fillText')).toHaveLength(0);
   });
 
-  it('card: every digit, row by row from the left, in its cell', () => {
+  it('the 3×3 card: 3 columns, the digits row by row from the left, the rest of the last row empty (F13)', () => {
     const { r, calls } = setup(800, 600);
-    const t = trial({ mode: 'card', items: ['3', '1', '4', '1', '5'], gridSide: 3 });
+    const t = trial({ mode: 'card3x3', items: ['3', '1', '4', '1', '5'], gridSide: 3, rows: 2 });
     r.card(t);
     const texts = named(calls, 'fillText');
-    expect(texts).toHaveLength(5);
     expect(texts.map((c) => c.args[0])).toEqual(['3', '1', '4', '1', '5']);
     texts.forEach((c, i) => {
-      const cell = gridCell(800, 600, 3, i);
+      const cell = gridCell(800, 600, 3, i, 2);
       expect(c.args.slice(1)).toEqual([cell.x + cell.size / 2, cell.y + cell.size / 2]);
     });
-    expect(named(calls, 'strokeRect')).toHaveLength(9);
+    // Two rows of 3 cells: the sixth stays empty.
+    const cells = named(calls, 'strokeRect').map((c) => c.args);
+    expect(cells).toEqual([0, 1, 2, 3, 4, 5].map((i) => {
+      const cell = gridCell(800, 600, 3, i, 2);
+      return [cell.x, cell.y, cell.size, cell.size];
+    }));
+    // Digits 4 and 5 open the second row.
+    expect(gridCell(800, 600, 3, 3, 2)).toMatchObject({ x: gridCell(800, 600, 3, 0, 2).x });
+    expect(gridCell(800, 600, 3, 3, 2).y).toBeGreaterThan(gridCell(800, 600, 3, 0, 2).y);
+  });
+
+  it('a card of 4 rows is 3 wide and 4 high, centred, its cells square and inside 0.8 of the shorter side', () => {
+    const { r, calls } = setup(800, 600);
+    r.card(trial({ mode: 'card3x3', items: Array.from({ length: 12 }, (_, i) => String(i % 10)), gridSide: 3, rows: 4 }));
+    expect(named(calls, 'fillText')).toHaveLength(12);
+    const cells = named(calls, 'strokeRect').map((c) => c.args as number[]);
+    expect(cells).toHaveLength(12);
+    const size = (0.8 * 600) / 4;
+    for (const [, , w, h] of cells) expect([w, h]).toEqual([size, size]);
+    const xs = cells.map(([x]) => x as number);
+    const ys = cells.map(([, y]) => y as number);
+    expect(Math.min(...xs) + Math.max(...xs) + size).toBeCloseTo(800, 9);
+    expect(Math.min(...ys) + Math.max(...ys) + size).toBeCloseTo(600, 9);
+    // A square grid keeps its old cells.
+    expect(gridCell(800, 600, 3, 4)).toEqual(gridCell(800, 600, 3, 4, 3));
   });
 
   it('fixation: a plus in the centre', () => {

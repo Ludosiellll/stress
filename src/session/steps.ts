@@ -1,4 +1,5 @@
 import { LAPSE_HOLD_CAP } from '../engine/adaptive';
+import type { AudioStressorParams } from '../engine/audio/stressors';
 import { DAY_FORM_DAYS, DAY_FORM_MIN_DAYS, type DayForm } from '../engine/dayForm';
 import type { DiagnosticResults } from '../engine/diagnostic';
 import { BASE_ITEM_LIMIT_MS } from '../engine/itemLimit';
@@ -10,7 +11,7 @@ import type { ReactionSummary, TrialSpec } from '../engine/reaction/types';
 import type { BlockFlag, InputKey, LayoutId, ModuleId, ReactionModuleId, TableModuleId } from '../engine/types';
 import type { ParamChange } from '../modules/describe';
 import type { MemoryTrial } from '../modules/memory/generate';
-import type { MemoryMode, MemoryParams } from '../modules/memory/params';
+import { cardExposureText, MEMORY_MODE_NAMES, type MemoryMode, type MemoryParams } from '../modules/memory/params';
 import type { BlockStressors } from '../modules/reaction/common';
 import type { TimedSeriesItem } from '../modules/numseries/generate';
 import type { TableCell, TableParams, TableTaskId } from '../modules/tables/gorbov';
@@ -51,9 +52,20 @@ export type Step =
   | { kind: 'numseries_block'; items: TimedSeriesItem[]; totalLimitMs: number | null }
   /**
    * «Память»: each trial is shown, then reproduced; answered with submitMemory. `fixed`: one answer per trial.
-   * `span` (diagnostics): the span protocol, whose answers end early once spanProtocolStops says so.
+   * `span` (diagnostics): the span protocol, whose answers end early once spanProtocolStops says so. `audio`: the sound
+   * of a 3×3 card with sound (CARD_AUDIO, F13), played only while the card is on screen; null otherwise.
    */
-  | { kind: 'memory_block'; L: number; mode: MemoryMode; params: MemoryParams; trials: MemoryTrial[]; protocol: 'fixed' | 'span' }
+  | {
+      kind: 'memory_block';
+      L: number;
+      mode: MemoryMode;
+      params: MemoryParams;
+      trials: MemoryTrial[];
+      protocol: 'fixed' | 'span';
+      audio: AudioStressorParams | null;
+    }
+  /** A one-time lesson before a new kind of block (F13: the strategy before the first 3×3 card); ackLesson() goes on. */
+  | { kind: 'lesson'; lines: readonly string[] }
   | { kind: 'summary'; view: BlockSummaryView }
   /**
    * Diagnostics: the block is played again, and this says why; ackNotice() starts it. A reaction block that was
@@ -439,14 +451,25 @@ export function tableLines(r: TableRunResult): string[] {
   return [time, `Ошибки: ${String(r.errors)}`];
 }
 
-/** «Верно воспроизведено: 4 из 6», «Позиции на своих местах: 85 %» (of all items of the block), «Длина ряда: 6». */
-export function memoryLines(exact: number, trials: number, positionsCorrect: number, length: number): string[] {
-  const share = trials * length > 0 ? positionsCorrect / (trials * length) : 0;
-  return [
-    `Верно воспроизведено: ${String(exact)} из ${String(trials)}`,
-    `Позиции на своих местах: ${String(whole(100 * share))} %`,
-    `Длина ряда: ${String(length)}`,
-  ];
+/**
+ * The line of a fixed memory block (F13): «Верных позиций: 78 % · точных рядов: 3 из 10 · длина 9 (карточка 3×3, 7 с)»;
+ * the partial score s first, in whole percent, the exact rows second; the card names its showing, «, со звуком» too.
+ */
+export function memoryLine(o: {
+  partial: number;
+  exact: number;
+  trials: number;
+  length: number;
+  mode: MemoryMode;
+  exposureMs: number | null;
+  sound: boolean;
+}): string {
+  const name = MEMORY_MODE_NAMES[o.mode];
+  const how = o.exposureMs === null ? name : `${name}, ${cardExposureText(o.exposureMs, o.sound)}`;
+  return (
+    `Верных позиций: ${String(whole(100 * o.partial))} % · точных рядов: ${String(o.exact)} из ${String(o.trials)}` +
+    ` · длина ${String(o.length)} (${how})`
+  );
 }
 
 /** The span protocol: «Верно воспроизведено: 9 из 14» (of the rows shown), «Объём памяти: 7 цифр». */

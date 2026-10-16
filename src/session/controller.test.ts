@@ -25,7 +25,7 @@ import { sdTrimmed } from '../engine/stats';
 import { MODULE_IDS, type InputKey, type LayoutId, type ModuleId } from '../engine/types';
 import { describeChanges } from '../modules/describe';
 import { generateMemoryTrials, spanProtocolTrials, type MemoryTrial } from '../modules/memory/generate';
-import { memoryInstruction, memoryParams } from '../modules/memory/params';
+import { CARD_AUDIO, CARD_LESSON, memoryInstruction, memoryParams } from '../modules/memory/params';
 import { spanProtocolStops, type MemoryAnswer } from '../modules/memory/score';
 import { FAMILIES } from '../modules/numseries/families';
 import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
@@ -179,6 +179,9 @@ async function drive(h: Harness, o: DriveOptions = {}): Promise<string[]> {
       case 'memory_block':
         h.clock.advance(blockMs);
         await h.c.submitMemory(perfectMemoryAnswers(s.trials));
+        break;
+      case 'lesson':
+        h.c.ackLesson();
         break;
       case 'summary':
         await h.c.continueAfterSummary();
@@ -2733,12 +2736,12 @@ describe('SessionController — memory', () => {
     const h = await begin(planFree('memory', 3));
     expect(expectStep(h.c, 'instruction')).toMatchObject({
       module: 'memory',
-      text: memoryInstruction('digits', memoryParams(0)),
+      text: memoryInstruction('digits', memoryParams(0, 'digits')),
       keysHint: 'Цифры, Backspace, Enter',
     });
     const block = memoryBlock(h);
-    expect(block).toMatchObject({ kind: 'memory_block', L: 0, mode: 'digits', params: memoryParams(0), protocol: 'fixed' });
-    expect(block.trials).toEqual(generateMemoryTrials(memoryParams(0), 'digits', 6, createRng(deriveSeed(3, '0:0:0'))));
+    expect(block).toMatchObject({ kind: 'memory_block', L: 0, mode: 'digits', params: memoryParams(0, 'digits'), protocol: 'fixed', audio: null });
+    expect(block.trials).toEqual(generateMemoryTrials(memoryParams(0, 'digits'), 'digits', 10, createRng(deriveSeed(3, '0:0:0'))));
     await h.c.submitMemory(perfectMemoryAnswers(block.trials));
     const { view } = expectStep(h.c, 'summary');
     expect(view).toMatchObject({
@@ -2746,55 +2749,156 @@ describe('SessionController — memory', () => {
       title: 'Память',
       lBefore: 0,
       score: 1,
-      lines: ['Верно воспроизведено: 6 из 6', 'Позиции на своих местах: 100 %', 'Длина ряда: 4'],
+      lines: ['Верных позиций: 100 % · точных рядов: 10 из 10 · длина 4 (цифры)'],
       flags: ['calibration'],
       showLevel: true,
     });
     expect(view.lAfter).toBeGreaterThan(0);
-    expect(view.changes).toEqual(describeChanges('memory', 0, view.lAfter));
+    expect(view.changes).toEqual(describeChanges('memory', 0, view.lAfter, 'digits'));
     expect(view.changes.length).toBeGreaterThan(0);
     const [row] = await h.repo.listBlocks();
     expect(row).toMatchObject({ module: 'memory', lBefore: 0, lAfter: view.lAfter, score: 1 });
     expect(JSON.parse(row?.summaryJson ?? '')).toEqual({
       mode: 'digits',
       length: 4,
-      exact: 6,
-      positionsCorrect: 24,
+      exposureMs: null,
+      sound: false,
+      exact: 10,
+      positionsCorrect: 40,
+      partial: 1,
       answers: perfectMemoryAnswers(block.trials),
     });
-    expect(JSON.parse(row?.paramsJson ?? '')).toEqual({ mode: 'digits', ...memoryParams(0), trials: 6 });
+    expect(JSON.parse(row?.paramsJson ?? '')).toEqual({ mode: 'digits', ...memoryParams(0, 'digits'), trials: 10 });
     expect((await h.repo.getModuleStates()).memory.lifetimeBlocks).toBe(1);
   });
 
-  it('s = exact / trials; the positions line counts items in place over all trials', async () => {
-    const h = await begin(planFree('memory', 3));
+  it('s is the share of positions right', async () => {
+    // L_saved 10 a day ago: the block plays L 9, digits 7 long.
+    const repo = await calibratedRepo(stateWith('memory', { lSaved: 10, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    const h = await begin(planFree('memory', 3), { repo });
     const block = memoryBlock(h);
-    const answers: MemoryAnswer[] = perfectMemoryAnswers(block.trials).map((a, i) => {
-      if (i >= 2) return a;
-      // Trials 1 and 2: the first two items swapped (two positions lost each).
-      const [x = '', y = '', ...rest] = a.given;
-      return { ...a, given: [y, x, ...rest] };
-    });
+    expect(block.trials.map((t) => t.items.length)).toEqual(Array<number>(10).fill(7));
+    // 4 rows exact; then four with 5 of 7 in place and two with 4: 28 + 20 + 8 = 56 of 70.
+    const inPlace = [7, 7, 7, 7, 5, 5, 5, 5, 4, 4];
+    const answers: MemoryAnswer[] = block.trials.map((t, i) => ({
+      given: t.items.map((x, k) => (k < (inPlace[i] ?? 0) ? x : String((Number(x) + 1) % 10))),
+      timeMs: 3000,
+    }));
     await h.c.submitMemory(answers);
     const { view } = expectStep(h.c, 'summary');
-    expect(view.score).toBeCloseTo(4 / 6, 12);
-    expect(view.lines).toEqual(['Верно воспроизведено: 4 из 6', 'Позиции на своих местах: 83 %', 'Длина ряда: 4']);
+    expect(view.score).toBeCloseTo(0.8, 12);
+    expect(view.lines).toEqual(['Верных позиций: 80 % · точных рядов: 4 из 10 · длина 7 (цифры)']);
+    const [row] = (await h.repo.listBlocks()).filter((b) => b.sessionId === h.c.sessionId);
+    expect(row?.score).toBeCloseTo(0.8, 12);
+    expect(JSON.parse(row?.summaryJson ?? '')).toMatchObject({ exact: 4, positionsCorrect: 56, partial: 56 / 70 });
+    // s = 0.8 holds the level.
+    expect(view.lAfter).toBe(9);
   });
 
   it('modes cycle by block, each with its instruction; the level carries on', async () => {
     const h = await begin(planFree('memory', 5));
     const modes: string[] = [];
     for (let i = 0; i < 4; i++) {
+      if (h.c.step.kind === 'lesson') h.c.ackLesson();
       expectStep(h.c, 'instruction');
       const block = memoryBlock(h);
       modes.push(block.mode);
+      expect(block.params).toEqual(memoryParams(block.L, block.mode));
       h.clock.advance(10_000);
       await h.c.submitMemory(perfectMemoryAnswers(block.trials));
       const { view } = expectStep(h.c, 'summary');
       expect(view.lBefore).toBe(block.L);
+      expect(view.changes).toEqual(describeChanges('memory', block.L, view.lAfter, block.mode));
       await h.c.continueAfterSummary();
     }
-    expect(modes).toEqual(['digits', 'positions', 'card', 'letters']);
+    expect(modes).toEqual(['digits', 'positions', 'card3x3', 'letters']);
+  });
+
+  it('the strategy lesson comes once, before the first 3×3 card', async () => {
+    const h = await begin(planFree('memory', 5));
+    const seen: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const s = h.c.step;
+      seen.push(s.kind);
+      if (s.kind === 'lesson') {
+        expect(s.lines).toEqual(CARD_LESSON);
+        expect(() => {
+          h.c.ackInstruction();
+        }).toThrow(/expected step instruction/);
+        h.c.ackLesson();
+        seen.push(h.c.step.kind);
+      }
+      expect(expectStep(h.c, 'instruction').text.endsWith(i === 2 ? ' Стратегия: читай строки как трёхзначные числа.' : 'Enter.')).toBe(true);
+      const block = memoryBlock(h);
+      h.clock.advance(10_000);
+      await h.c.submitMemory(perfectMemoryAnswers(block.trials));
+      await h.c.continueAfterSummary();
+    }
+    expect(seen).toEqual(['instruction', 'instruction', 'lesson', 'instruction']);
+    expect(() => {
+      h.c.ackLesson();
+    }).toThrow(/expected step lesson/);
+    // The card stored: the next 3×3 card, in this session or another, comes without the lesson.
+    for (let i = 3; i < 7; i++) {
+      expectStep(h.c, 'instruction');
+      const block = memoryBlock(h);
+      h.clock.advance(10_000);
+      await h.c.submitMemory(perfectMemoryAnswers(block.trials));
+      await h.c.continueAfterSummary();
+    }
+    const again = await begin(planFree('memory', 5), { repo: h.repo });
+    for (let i = 0; i < 3; i++) {
+      expectStep(again.c, 'instruction');
+      await again.c.submitMemory(perfectMemoryAnswers(memoryBlock(again).trials));
+      await again.c.continueAfterSummary();
+    }
+    expectStep(again.c, 'instruction');
+  });
+
+  it('no lesson with a 3×3 card in the history, nor without a readable history (Р18)', async () => {
+    const yesterday = new Date(new Date(T0).getTime() - DAY).toISOString();
+    const played = new MemoryRepository();
+    await played.createSession(session('s0', yesterday, { kind: 'free', endedAt: yesterday }));
+    // A block counted as 0 after Esc names its mode in its params only.
+    const paramsJson = JSON.stringify({ mode: 'card3x3', ...memoryParams(0, 'card3x3'), trials: 10 });
+    await played.addBlock(block('b0', 's0', yesterday, { module: 'memory', paramsJson, flags: ['discarded'], summaryJson: '{}' }), [], []);
+    const unread = new MemoryRepository();
+    vi.spyOn(unread, 'listBlocks').mockRejectedValueOnce(new Error('disk I/O error'));
+    for (const repo of [played, unread]) {
+      const h = await begin(planFree('memory', 5), { repo });
+      for (let i = 0; i < 2; i++) {
+        await h.c.submitMemory(perfectMemoryAnswers(memoryBlock(h).trials));
+        await h.c.continueAfterSummary();
+      }
+      expect(expectStep(h.c, 'instruction').text).toMatch(/^На карточке/);
+    }
+  });
+
+  it('a 3×3 card with sound carries CARD_AUDIO and says so (F13)', async () => {
+    // L_saved 22 today: the segment starts at 21, where the card plays 9 digits for 5 s with sound.
+    const repo = await calibratedRepo(stateWith('memory', { lSaved: 22, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    // A card in the history: no lesson in the way.
+    await repo.addBlock(block('card', 'calibrated', T0, { module: 'memory', paramsJson: '{"mode":"card3x3"}' }), [], []);
+    const h = await begin(planFree('memory', 5), { repo });
+    const audios: unknown[] = [];
+    for (let i = 0; i < 3; i++) {
+      const b = memoryBlock(h);
+      audios.push(b.audio);
+      if (b.mode === 'card3x3') {
+        expect(b.trials.every((t) => t.sound && t.cardMs === 5000)).toBe(true);
+        // Half the rows right: the level stays where the card has its sound.
+        await h.c.submitMemory(b.trials.map((t) => ({ given: t.items.slice(0, 7), timeMs: 3000 })));
+        const { view } = expectStep(h.c, 'summary');
+        expect(view.lines[0]).toMatch(/ · длина 9 \(карточка 3×3, 5 с, со звуком\)$/);
+        const row = (await h.repo.listBlocks()).filter((r) => r.sessionId === h.c.sessionId).at(-1);
+        expect(JSON.parse(row?.summaryJson ?? '')).toMatchObject({ mode: 'card3x3', length: 9, exposureMs: 5000, sound: true });
+      } else {
+        // Answers 0.8 of each row right: the level stays at 21.
+        await h.c.submitMemory(b.trials.map((t) => ({ given: t.items.map((x, k) => (k < Math.round(0.8 * t.items.length) ? x : '')), timeMs: 3000 })));
+      }
+      await h.c.continueAfterSummary();
+    }
+    expect(audios).toEqual([null, null, CARD_AUDIO]);
   });
 
   it('discardBlock keeps the memory level', async () => {
@@ -2819,7 +2923,7 @@ describe('SessionController — memory', () => {
     const block = memoryBlock(h);
     const answers = perfectMemoryAnswers(block.trials);
     await expect(h.c.submitMemory(answers.slice(1))).rejects.toThrow(RangeError);
-    await expect(h.c.submitMemory([...answers, answers[0] as MemoryAnswer])).rejects.toThrow(/7 answers for 6 trials/);
+    await expect(h.c.submitMemory([...answers, answers[0] as MemoryAnswer])).rejects.toThrow(/11 answers for 10 trials/);
     expectStep(h.c, 'memory_block');
     expect(await h.repo.listBlocks()).toEqual([]);
   });
@@ -2831,7 +2935,7 @@ describe('SessionController — memory', () => {
     await h.c.submitMemory(perfectMemoryAnswers(block.trials));
     const { view } = expectStep(h.c, 'summary');
     expect(view.score).toBe(1);
-    expect(view.lines[0]).toBe('Верно воспроизведено: 3 из 3');
+    expect(view.lines[0]).toBe('Верных позиций: 100 % · точных рядов: 3 из 3 · длина 4 (цифры)');
   });
 });
 
@@ -3691,6 +3795,21 @@ describe('SessionController — Esc policy (F11)', () => {
     m.c.ackInstruction();
     expect(await m.c.discardBlock('user', 0.5)).toEqual({ kind: 'counted', progress: 0.5, lBefore: 0, lAfter: 0, levelMoves: false, series: false });
     expect((await storedRows(m))[0]).toMatchObject({ module: 'memory', flags: ['discarded'], score: 0, lBefore: 0, lAfter: 0 });
+  });
+
+  it('memory of 10 rows and partial scoring: Esc after 3 of 10 answers restarts for free, after 4 counts as s = 0 (F11, F13)', async () => {
+    const repo = await calibratedRepo(stateWith('memory', { lSaved: 10, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    const h = await begin(planFree('memory', 5), { repo });
+    h.c.ackInstruction();
+    expect(expectStep(h.c, 'memory_block').trials).toHaveLength(10);
+    // The share its view reports: answered rows / rows.
+    expect(await h.c.discardBlock('user', 3 / 10)).toEqual({ kind: 'restarted' });
+    expect(await h.c.discardBlock('user', 4 / 10)).toEqual({ kind: 'counted', progress: 0.4, lBefore: 9, lAfter: 7, levelMoves: true, series: false });
+    const [row] = await storedRows(h);
+    expect(row).toMatchObject({ module: 'memory', flags: ['discarded'], score: 0, lBefore: 9, lAfter: 7 });
+    expect(summaryOf(row)).toEqual({ discarded: { reason: 'user', progress: 0.4 }, restarts: [{ reason: 'user', progress: 0.3 }] });
+    // The next block follows: the next mode, with its instruction.
+    expect(expectStep(h.c, 'instruction').text).toMatch(/^Клетки загораются/);
   });
 
   it('focus loss and drawing errors restart for free and are recorded', async () => {

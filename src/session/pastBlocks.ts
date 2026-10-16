@@ -5,9 +5,10 @@ import { isCountedSession, storedBand } from '../engine/derive';
 import type { TestFormatId } from '../engine/planner';
 import type { BlockFlag, LayoutId, ReactionModuleId, SessionKind } from '../engine/types';
 import { FLOOR_HITS } from '../engine/windowFloor';
+import type { StoredMemoryMode } from '../modules/memory/params';
 import { bandIndex } from '../modules/reaction/common';
 import { pzmr } from '../modules/reaction/pzmr';
-import { parseObject } from './blockHistory';
+import { memoryModeOf, parseObject } from './blockHistory';
 import { readTestFormat, type TestFormatMetrics } from './testFormat';
 
 /**
@@ -239,4 +240,12 @@ export function cleanHitsByBand(past: PastBlocks, module: ReactionModuleId): Map
     else list.push(hits.rts);
   }
   return new Map([...chunks].map(([band, list]) => [band, list.reverse().flat().slice(-FLOOR_HITS)]));
+}
+
+/**
+ * Whether the history has a memory block of `mode` (F13): the strategy lesson comes before the first 3×3 card only. A block
+ * of any session counts, one counted as 0 after Esc too: its card was shown.
+ */
+export function hasPlayedMode(past: PastBlocks, mode: StoredMemoryMode): boolean {
+  return past.blocks.some((row) => row.module === 'memory' && memoryModeOf(row) === mode);
 }

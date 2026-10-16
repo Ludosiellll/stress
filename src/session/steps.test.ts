@@ -14,7 +14,7 @@ import {
   errorLine,
   floorLine,
   MEMORY_SPAN_INSTRUCTION,
-  memoryLines,
+  memoryLine,
   OVERLOAD_SOUND_PREFIX,
   overloadBandPrefix,
   plural,
@@ -359,10 +359,26 @@ describe('Помехоустойчивость', () => {
   });
 });
 
-describe('memoryLines', () => {
-  it('exact trials, share of items in place, row length', () => {
-    expect(memoryLines(4, 6, 31, 6)).toEqual(['Верно воспроизведено: 4 из 6', 'Позиции на своих местах: 86 %', 'Длина ряда: 6']);
-    expect(memoryLines(0, 0, 0, 4)[1]).toBe('Позиции на своих местах: 0 %');
+describe('memoryLine (F13)', () => {
+  const card = { mode: 'card3x3' as const, length: 9, trials: 10 };
+
+  it('the partial score first, the exact rows second, then the row length and the mode', () => {
+    expect(memoryLine({ partial: 0.8, exact: 4, trials: 10, length: 7, mode: 'digits', exposureMs: null, sound: false })).toBe(
+      'Верных позиций: 80 % · точных рядов: 4 из 10 · длина 7 (цифры)',
+    );
+    expect(memoryLine({ partial: 0, exact: 0, trials: 3, length: 4, mode: 'letters', exposureMs: null, sound: false })).toBe(
+      'Верных позиций: 0 % · точных рядов: 0 из 3 · длина 4 (буквы)',
+    );
+    expect(memoryLine({ partial: 1, exact: 3, trials: 3, length: 3, mode: 'positions', exposureMs: null, sound: false })).toContain('(позиции)');
+  });
+
+  it('the card names how long it was shown, and its sound', () => {
+    expect(memoryLine({ ...card, partial: 0.78, exact: 3, exposureMs: 7000, sound: false })).toBe(
+      'Верных позиций: 78 % · точных рядов: 3 из 10 · длина 9 (карточка 3×3, 7 с)',
+    );
+    expect(memoryLine({ ...card, partial: 0.78, exact: 3, exposureMs: 5000, sound: true })).toBe(
+      'Верных позиций: 78 % · точных рядов: 3 из 10 · длина 9 (карточка 3×3, 5 с, со звуком)',
+    );
   });
 });
 

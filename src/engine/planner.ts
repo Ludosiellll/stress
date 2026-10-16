@@ -8,7 +8,8 @@ export { daysBetween };
 
 /**
  * Level at which a module counts as "at norm" (planner priority, R1). numseries has no level. In the modules with load
- * bands it is the first level of the first band harder than the test format (F3, spec §3.1.5).
+ * bands it is the first level of the first band harder than the test format (F3, spec §3.1.5); in memory the first step
+ * of the 3×3 card harder than the test, 9 digits for 5 s with sound (F13, spec §4.7).
  */
 export const L_NORM: Record<ModuleId, number> = {
   pzmr: 8,
@@ -20,7 +21,7 @@ export const L_NORM: Record<ModuleId, number> = {
   stroop: 12,
   taskswitch: 8,
   pomeh: 8,
-  memory: 9,
+  memory: 21,
   numseries: 0,
 };
 

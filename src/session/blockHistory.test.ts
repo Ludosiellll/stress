@@ -68,6 +68,9 @@ describe('variantOf', () => {
     expect(variantOf(row({ module: 'schulte', paramsJson: '{"size":2.5}' }))).toBeNull();
     expect(variantOf(row({ module: 'schulte', paramsJson: '{"size":0}' }))).toBeNull();
     expect(variantOf(memory({ mode: 'digits' }))).toBe('memory:digits');
+    // The 3×3 card of F13 and the card of 0.2.0 are different variants (Р27, Р29).
+    expect(variantOf(memory({ mode: 'card3x3' }))).toBe('memory:card3x3');
+    expect(variantOf(memory({ mode: 'card' }))).toBe('memory:card');
     expect(variantOf(memory({ mode: 'xx' }))).toBeNull();
     expect(variantOf(row({ module: 'memory', summaryJson: 'not json' }))).toBeNull();
   });
@@ -148,9 +151,11 @@ describe('keyMetric', () => {
     expect(keyMetric({ module: 'taskswitch', summaryJson: cond('repeat', 'switch', 600, 588) })).toBe(-12);
     expect(keyMetric({ module: 'pomeh', summaryJson: cond('quiet', 'noisy', 300, 335.2) })).toBe(35);
     expect(keyMetric({ module: 'stroop', summaryJson: '{"meanRt":500}' })).toBeNull(); // written before 46fca3b
+    // Memory: the partial score of every row, an old one of 6 rows too (Р27): 36 of 6·7 positions.
     expect(
-      keyMetric({ module: 'memory', summaryJson: JSON.stringify({ mode: 'digits', length: 7, exact: 4, answers: [1, 2, 3, 4, 5, 6] }) }),
-    ).toBe(67);
+      keyMetric({ module: 'memory', summaryJson: JSON.stringify({ mode: 'digits', length: 7, exact: 4, positionsCorrect: 36, answers: [1, 2, 3, 4, 5, 6] }) }),
+    ).toBe(86);
+    expect(keyMetric({ module: 'memory', summaryJson: JSON.stringify({ mode: 'card3x3', length: 9, positionsCorrect: 70, partial: 70 / 90, answers: answers(10) }) })).toBe(78);
     expect(keyMetric({ module: 'numseries', summaryJson: '{"correct":7,"total":10}' })).toBe(70);
     for (const bad of ['', 'null', '[]', '{"meanRt":"300"}']) expect(keyMetric({ module: 'pzmr', summaryJson: bad })).toBeNull();
   });
@@ -164,9 +169,12 @@ describe('keyMetric', () => {
     expect(keyMetric({ module: 'stroop', summaryJson: '{"conditions":{"congruent":{"medianRt":500}}}' })).toBeNull();
     expect(keyMetric({ module: 'stroop', summaryJson: '{"conditions":{"congruent":5,"incongruent":[]}}' })).toBeNull();
     expect(keyMetric({ module: 'stroop', summaryJson: '{"conditions":{"congruent":{"medianRt":null},"incongruent":{"medianRt":600}}}' })).toBeNull();
-    expect(keyMetric({ module: 'memory', summaryJson: '{"exact":4,"answers":[]}' })).toBeNull();
-    expect(keyMetric({ module: 'memory', summaryJson: '{"exact":"4","answers":[1]}' })).toBeNull();
-    expect(keyMetric({ module: 'memory', summaryJson: '{"exact":4,"answers":"abcdef"}' })).toBeNull();
+    expect(keyMetric({ module: 'memory', summaryJson: '{"length":7,"positionsCorrect":4,"answers":[]}' })).toBeNull();
+    expect(keyMetric({ module: 'memory', summaryJson: '{"length":7,"positionsCorrect":"4","answers":[1]}' })).toBeNull();
+    expect(keyMetric({ module: 'memory', summaryJson: '{"length":7,"positionsCorrect":4,"answers":"abcdef"}' })).toBeNull();
+    expect(keyMetric({ module: 'memory', summaryJson: '{"length":"7","positionsCorrect":4,"answers":[1]}' })).toBeNull();
+    // The exact rows alone (no row of any version lacks positionsCorrect) give no number.
+    expect(keyMetric({ module: 'memory', summaryJson: '{"length":7,"exact":4,"answers":[1]}' })).toBeNull();
     expect(keyMetric({ module: 'numseries', summaryJson: '{"correct":7,"total":0}' })).toBeNull();
     expect(keyMetric({ module: 'numseries', summaryJson: '{"correct":7}' })).toBeNull();
     expect(keyMetric({ module: 'gorbov', summaryJson: '{"timeMs":1e999}' })).toBeNull();
@@ -183,9 +191,10 @@ describe('keyMetric', () => {
     const cond = (f: number, s: number): string => JSON.stringify({ conditions: { congruent: { medianRt: f }, incongruent: { medianRt: s } } });
     expect(keyMetric({ module: 'stroop', summaryJson: cond(0, 600) })).toBeNull();
     expect(keyMetric({ module: 'stroop', summaryJson: cond(500, -1) })).toBeNull();
-    expect(keyMetric({ module: 'memory', summaryJson: '{"exact":9,"answers":[1]}' })).toBeNull();
-    expect(keyMetric({ module: 'memory', summaryJson: '{"exact":-1,"answers":[1,2]}' })).toBeNull();
-    expect(keyMetric({ module: 'memory', summaryJson: '{"exact":2,"answers":[1,2]}' })).toBe(100);
+    expect(keyMetric({ module: 'memory', summaryJson: '{"length":4,"positionsCorrect":9,"answers":[1]}' })).toBeNull();
+    expect(keyMetric({ module: 'memory', summaryJson: '{"length":4,"positionsCorrect":-1,"answers":[1,2]}' })).toBeNull();
+    expect(keyMetric({ module: 'memory', summaryJson: '{"length":0,"positionsCorrect":0,"answers":[1,2]}' })).toBeNull();
+    expect(keyMetric({ module: 'memory', summaryJson: '{"length":4,"positionsCorrect":8,"answers":[1,2]}' })).toBe(100);
     expect(keyMetric({ module: 'numseries', summaryJson: '{"correct":11,"total":10}' })).toBeNull();
     expect(keyMetric({ module: 'numseries', summaryJson: '{"correct":-1,"total":10}' })).toBeNull();
     expect(keyMetric({ module: 'numseries', summaryJson: '{"correct":0,"total":10}' })).toBe(0);
@@ -344,12 +353,22 @@ describe('normSamples', () => {
     expect(normSamples(row({ module: 'gorbov', paramsJson: '{}', summaryJson: '{"timeMs":44000}' }), 'training')).toEqual([]);
   });
 
-  it('память: digits, all 6 answers and at least 4 exact give the row length', () => {
+  it('память: digits, all 10 answers and at least 7 exact give the row length (F13)', () => {
+    expect(normSamples(memory({ mode: 'digits', length: 7, exact: 7, answers: answers(10) }), 'training')).toEqual([{ id: 'memorySpan', value: 7 }]);
+    expect(normSamples(memory({ mode: 'digits', length: 7, exact: 10, answers: answers(10) }), 'training')).toEqual([{ id: 'memorySpan', value: 7 }]);
+    expect(normSamples(memory({ mode: 'digits', length: 7, exact: 6, answers: answers(10) }), 'training')).toEqual([]);
+    expect(normSamples(memory({ mode: 'card3x3', length: 9, exact: 10, answers: answers(10) }), 'training')).toEqual([]);
+    expect(normSamples(memory({ mode: 'letters', length: 7, exact: 10, answers: answers(10) }), 'training')).toEqual([]);
+    expect(normSamples(memory({ mode: 'digits', length: 'x', exact: 9, answers: answers(10) }), 'training')).toEqual([]);
+    // Under the e2e scale, or another number of rows: no norm.
+    for (const n of [3, 5, 9, 11]) expect(normSamples(memory({ mode: 'digits', length: 7, exact: n, answers: answers(n) }), 'training')).toEqual([]);
+  });
+
+  it('память: a 0.2.0 block of 6 rows keeps its rule, at least 4 exact (T-R21)', () => {
     expect(normSamples(memory({ mode: 'digits', length: 7, exact: 4, answers: answers(6) }), 'training')).toEqual([{ id: 'memorySpan', value: 7 }]);
     expect(normSamples(memory({ mode: 'digits', length: 7, exact: 3, answers: answers(6) }), 'training')).toEqual([]);
     expect(normSamples(memory({ mode: 'letters', length: 7, exact: 6, answers: answers(6) }), 'training')).toEqual([]);
-    expect(normSamples(memory({ mode: 'digits', length: 7, exact: 3, answers: answers(3) }), 'training')).toEqual([]);
-    expect(normSamples(memory({ mode: 'digits', length: 'x', exact: 6, answers: answers(6) }), 'training')).toEqual([]);
+    expect(normSamples(memory({ mode: 'card', length: 7, exact: 6, answers: answers(6) }), 'training')).toEqual([]);
   });
 
   it('память: the span protocol gives its span', () => {
@@ -368,6 +387,7 @@ describe('normSamples', () => {
     expect(normSamples(row({ module: 'szmr', lBefore: 0, summaryJson: '{"meanRt":-1}' }), 'diagnostic')).toEqual([]);
     expect(normSamples(table('black_up', 0), 'training')).toEqual([]);
     expect(normSamples(memory({ mode: 'digits', length: 7, exact: 9, answers: answers(6) }), 'training')).toEqual([]);
+    expect(normSamples(memory({ mode: 'digits', length: 7, exact: 11, answers: answers(10) }), 'training')).toEqual([]);
     expect(normSamples(memory({ mode: 'digits', length: 0, exact: 6, answers: answers(6) }), 'training')).toEqual([]);
     expect(normSamples(memory({ protocol: 'span', mode: 'digits', exact: 9, span: -2, answers: answers(14) }), 'diagnostic')).toEqual([]);
   });
@@ -471,12 +491,14 @@ describe('buildBlockHistory', () => {
     expect(historyEntry(table('alternate', null))).toBeNull();
   });
 
-  it('memory entries keep the row length, whole as shown', () => {
+  it('memory entries: the partial score, the row length whole as shown (Р27)', () => {
     const r = memory({ mode: 'digits', length: 7, exact: 4, positionsCorrect: 36, answers: answers(6) }, { lBefore: 9, startedAt: ago(1) });
-    expect(historyEntry(r)).toEqual({ at: ago(1), value: 67, L: 9, length: 7, norms: [{ id: 'memorySpan', value: 7 }] });
-    expect(historyEntry(memory({ mode: 'letters', exact: 3, answers: answers(6) }))).toMatchObject({ value: 50, length: null });
-    expect(historyEntry(memory({ mode: 'letters', length: 6.6, exact: 3, answers: answers(6) }))).toMatchObject({ length: 7 });
-    expect(historyEntry(memory({ mode: 'letters', length: -2, exact: 3, answers: answers(6) }))).toMatchObject({ length: null });
+    expect(historyEntry(r)).toEqual({ at: ago(1), value: 86, L: 9, length: 7, norms: [{ id: 'memorySpan', value: 7 }] });
+    const card = memory({ mode: 'card3x3', length: 9, exact: 3, positionsCorrect: 70, partial: 70 / 90, answers: answers(10) }, { lBefore: 15 });
+    expect(historyEntry(card)).toMatchObject({ value: 78, L: 15, length: 9, norms: [] });
+    expect(historyEntry(memory({ mode: 'letters', length: 6.6, positionsCorrect: 20, answers: answers(6) }))).toMatchObject({ value: 51, length: 7 });
+    expect(historyEntry(memory({ mode: 'letters', exact: 3, answers: answers(6) }))).toBeNull();
+    expect(historyEntry(memory({ mode: 'letters', length: -2, positionsCorrect: 3, answers: answers(6) }))).toBeNull();
   });
 
   it('appendBlock adds a block exactly as buildBlockHistory does', () => {

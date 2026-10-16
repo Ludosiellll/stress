@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import { MemoryRepository } from '../../data/memoryRepository';
 import { EMPTY_RESULTS, type DiagnosticResults } from '../../engine/diagnostic';
 import { planFree, type SessionPlan } from '../../engine/planner';
+import { CARD_AUDIO, CARD_LESSON } from '../../modules/memory/params';
 import type { TimedSeriesItem } from '../../modules/numseries/generate';
 import { NO_STRESSORS } from '../../modules/reaction/common';
 import { moduleTitles } from '../../modules/registry';
@@ -70,9 +71,20 @@ const MEMORY: StepOf<'memory_block'> = {
   kind: 'memory_block',
   L: 0,
   mode: 'digits',
-  params: { length: 2, itemMs: 100, gapMs: 100 },
-  trials: [{ mode: 'digits', items: ['4', '7'], gridSide: 0, itemMs: 100, gapMs: 100, cardMs: 200 }],
+  params: { length: 2, itemMs: 100, gapMs: 100, exposureMs: null, rows: null, sound: false },
+  trials: [{ mode: 'digits', items: ['4', '7'], gridSide: 0, rows: 0, itemMs: 100, gapMs: 100, cardMs: 200, sound: false }],
   protocol: 'fixed',
+  audio: null,
+};
+
+/** A 3×3 card with sound (F13). */
+const CARD: StepOf<'memory_block'> = {
+  ...MEMORY,
+  L: 21,
+  mode: 'card3x3',
+  params: { length: 9, itemMs: 341, gapMs: 100, exposureMs: 5000, rows: 3, sound: true },
+  trials: [{ mode: 'card3x3', items: ['4', '7', '2', '1', '9', '5', '3', '8', '6'], gridSide: 3, rows: 3, itemMs: 341, gapMs: 100, cardMs: 5000, sound: true }],
+  audio: CARD_AUDIO,
 };
 
 const SERIES: StepOf<'numseries_block'> = {
@@ -104,6 +116,7 @@ function fakeDriver(first: Step): FakeDriver {
     abandonPending: vi.fn(() => Promise.resolve()),
     submitWellbeing: vi.fn(() => Promise.resolve()),
     ackNotice: vi.fn(),
+    ackLesson: vi.fn(),
   };
 }
 
@@ -239,10 +252,35 @@ describe('Session start', () => {
     expect(inKeyPress).toEqual(['volume 0.35', 'ack', 'unlock']);
   });
 
+  it('the instruction of a 3×3 card with sound unlocks the audio in its key press too (F13)', async () => {
+    const unlock = vi.fn<AudioOut['unlock']>(() => Promise.resolve());
+    const audio: AudioOut = {
+      available: true,
+      unlock,
+      setVolume: vi.fn<AudioOut['setVolume']>(),
+      prepare: vi.fn<AudioOut['prepare']>(() => null),
+      hold: vi.fn<AudioOut['hold']>(() => () => undefined),
+    };
+    const c = fakeDriver(INSTRUCTION);
+    c.ackInstruction.mockImplementation(() => {
+      c.step = CARD;
+    });
+    await renderSession(c, { audio });
+    let inKeyPress = 0;
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'Enter', code: 'Enter' });
+      inKeyPress = unlock.mock.calls.length;
+      await Promise.resolve();
+    });
+    await nextTask();
+    expect(inKeyPress).toBe(1);
+    expect(document.querySelector('.memory canvas')).not.toBeNull();
+  });
+
   it('a step without sound never unlocks: a session without sound never creates an audio context (M4)', async () => {
     const make = vi.fn(() => new FakeAudioContext());
     const audio = createAudioOut(make);
-    for (const next of [REACTION, TABLE, { kind: 'summary', view: SUMMARY } as const]) {
+    for (const next of [REACTION, TABLE, MEMORY, { kind: 'summary', view: SUMMARY } as const]) {
       const c = fakeDriver(INSTRUCTION);
       c.ackInstruction.mockImplementation(() => {
         c.step = next;
@@ -388,6 +426,41 @@ describe('Session steps', () => {
     await click('Начать (Enter)');
     // The answer field has autofocus; the heading does not take it away.
     expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Ответ' }));
+  });
+
+  it('the strategy lesson: its lines, «Понятно (Enter)»; Enter or the button goes to the instruction (F13)', async () => {
+    const c = fakeDriver({ kind: 'lesson', lines: CARD_LESSON });
+    c.ackLesson.mockImplementation(() => {
+      c.step = INSTRUCTION;
+    });
+    await renderSession(c);
+    expect(document.querySelector('.lesson')).not.toBeNull();
+    expect(screen.getByRole('heading', { name: 'Как запоминать карточку 3×3.' })).toBeTruthy();
+    for (const line of CARD_LESSON.slice(1)) expect(screen.getByText(line)).toBeTruthy();
+    expect(document.activeElement?.tagName).toBe('H2');
+    await press('Enter');
+    expect(c.ackLesson).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(INSTRUCTION.text)).toBeTruthy();
+
+    cleanup();
+    const clicked = fakeDriver({ kind: 'lesson', lines: CARD_LESSON });
+    clicked.ackLesson.mockImplementation(() => {
+      clicked.step = INSTRUCTION;
+    });
+    await renderSession(clicked);
+    await click('Понятно (Enter)');
+    expect(clicked.ackLesson).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(INSTRUCTION.text)).toBeTruthy();
+  });
+
+  it('Escape on the lesson pauses; going on brings the lesson back', async () => {
+    const c = fakeDriver({ kind: 'lesson', lines: CARD_LESSON });
+    await renderSession(c);
+    await press('Escape');
+    expect(screen.getByRole('heading', { name: 'Пауза' })).toBeTruthy();
+    expect(c.discardBlock).not.toHaveBeenCalled();
+    await click('Продолжить');
+    expect(document.querySelector('.lesson')).not.toBeNull();
   });
 
   it('a diagnostic replay notice: Enter starts the replayed block (I1)', async () => {

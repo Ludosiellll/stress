@@ -157,8 +157,13 @@ describe('localDayIso', () => {
 });
 
 describe('L_NORM', () => {
-  it('the first level of the first band harder than the test format (F3, spec §3.1.5); memory keeps 9 until F13', () => {
-    expect(L_NORM).toEqual({ pzmr: 8, szmr: 8, gonogo: 8, rdo: 10, gorbov: 12, schulte: 6, stroop: 12, taskswitch: 8, pomeh: 8, memory: 9, numseries: 0 });
+  it('the first level of the first band harder than the test format (F3, spec §3.1.5); memory 21, the first card harder than the test (F13)', () => {
+    expect(L_NORM).toEqual({ pzmr: 8, szmr: 8, gonogo: 8, rdo: 10, gorbov: 12, schulte: 6, stroop: 12, taskswitch: 8, pomeh: 8, memory: 21, numseries: 0 });
+  });
+
+  it('memory at 9, the norm of 0.2.0, now weighs as a weak module in the plan (F13)', () => {
+    const state: ModuleState = { module: 'memory', lSaved: 9, sessionEndLevels: [9], savedHistory: [9], plateau: false, lastTrainedAt: TODAY, lifetimeBlocks: 9 };
+    expect(modulePriority(state, TODAY)).toBeCloseTo(1 - 9 / 21, 12);
   });
 
   it('OLD_L_NORM keeps the values of 0.2.0 for the step of the norm line in «Прогресс» (F3, spec §3.1.6)', () => {
@@ -388,13 +393,14 @@ describe('planTraining', () => {
         gorbov: { lSaved: 12, lastTrainedAt: TODAY },
         schulte: { lSaved: 6, lastTrainedAt: TODAY },
         taskswitch: { lSaved: 5, lastTrainedAt: TODAY },
-        memory: { lSaved: 9, lastTrainedAt: TODAY },
+        memory: { lSaved: 21, lastTrainedAt: TODAY },
       }),
       TODAY,
       1,
       DEV,
     );
-    // stroop (never trained): 2 — attention; then taskswitch 0.5 beats memory, gorbov and schulte (0).
+    // stroop (never trained): 2 — attention; then taskswitch 0.375 beats memory (at its L_norm 21, F13), gorbov and
+    // schulte (0).
     expect(plan.segments.slice(3, 5)).toEqual([
       { module: 'stroop', budgetMs: 300000, purpose: 'attention' },
       { module: 'taskswitch', budgetMs: 300000, purpose: 'attention' },

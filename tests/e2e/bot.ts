@@ -112,6 +112,8 @@ export type Screen =
   | 'series'
   /** A memory block (presentation and answers, every trial of the block). */
   | 'memory'
+  /** The strategy lesson before the first 3×3 card (F13). */
+  | 'lesson'
   | 'summary'
   | 'fatigue'
   | 'notice'
@@ -130,6 +132,7 @@ const ACTIONABLE: readonly Screen[] = [
   'table',
   'series',
   'memory',
+  'lesson',
   'summary',
   'fatigue',
   'replay',
@@ -154,6 +157,7 @@ async function claimScreen(page: Page, stopAt: Screen): Promise<{ kind: Screen; 
     else if (has('table-screen')) kind = 'table';
     else if (has('series')) kind = 'series';
     else if (has('memory')) kind = 'memory';
+    else if (has('lesson')) kind = 'lesson';
     else if (has('instruction')) kind = 'instruction';
     else if (has('summary')) kind = 'summary';
     else if (has('wellbeing')) kind = 'wellbeing';
@@ -255,9 +259,9 @@ const LETTER_KEYS: Readonly<Record<string, { code: string; key: string }>> = {
 };
 
 /**
- * Plays the memory block on screen: waits for each response screen, reproduces the exposed row (digits typed,
- * letters as key events of their ЙЦУКЕН keys — `keyboard.type` sends no keydown for Cyrillic — cells clicked),
- * sends it with Enter, and returns when the block's screen is gone.
+ * Plays the memory block on screen: waits for each response screen, reproduces the exposed row (digits and the 3×3
+ * card, `data-mode="card3x3"`, typed; letters as key events of their ЙЦУКЕН keys — `keyboard.type` sends no keydown for
+ * Cyrillic — cells clicked), sends it with Enter, and returns when the block's screen is gone.
  */
 export async function playMemory(page: Page): Promise<void> {
   for (;;) {
@@ -444,6 +448,9 @@ export async function playSession(page: Page, o: PlayOptions = {}): Promise<Scre
         break;
       case 'memory':
         await playMemory(page);
+        break;
+      case 'lesson':
+        await page.getByRole('button', { name: 'Понятно (Enter)' }).click();
         break;
       case 'summary':
         await page.getByRole('button', { name: 'Дальше' }).click();

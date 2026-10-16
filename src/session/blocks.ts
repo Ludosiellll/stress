@@ -25,6 +25,7 @@ import { bandFloors } from '../engine/windowFloor';
 import { generateMemoryTrials, SPAN_PROTOCOL_PARAMS, SPAN_PROTOCOL_TRIALS, spanProtocolTrials } from '../modules/memory/generate';
 import { spanProtocolStops, type MemoryAnswer } from '../modules/memory/score';
 import {
+  CARD_AUDIO,
   MEMORY_TRIALS,
   memoryInstruction,
   memoryKeysHint,
@@ -189,8 +190,9 @@ export type BlockPlan =
    */
   | { kind: 'table'; module: TableModuleId; L: number; task: TableTaskId; params: TableParams; overload: boolean; table: 'series' | 'own' }
   /**
-   * Memory blocks cycle their mode by block index (by pairs of blocks in a plateau mix); `count` trials. A diagnostic
-   * plays the span protocol instead: digits, its first `count` trials, ending early when it stops.
+   * Memory blocks cycle their mode by block index (by pairs of blocks in a plateau mix), at the one level of the module
+   * (F13); `count` trials. A diagnostic plays the span protocol instead: digits, its first `count` trials, ending early
+   * when it stops.
    */
   | { kind: 'memory'; protocol: 'fixed' | 'span'; L: number; mode: MemoryMode; params: MemoryParams; count: number; overload: boolean }
   /** Training items carry their own limits (R36); `totalLimitMs` is the diagnostic's block limit. */
@@ -307,8 +309,8 @@ export function planBlock(segment: Segment, segmentL: number, blockIndex: number
     }
     const count = scaledCount(MEMORY_TRIALS, ctx.scale);
     // A mix alternates normal and overload blocks, so its modes advance every two blocks: each mode gets both (W2-R27).
-    const modeIndex = segment.overload === 'mix' ? Math.floor(blockIndex / 2) : blockIndex;
-    return { kind: 'memory', protocol: 'fixed', L, mode: memoryModeForBlock(modeIndex), params: memoryParams(L), count, overload };
+    const mode = memoryModeForBlock(segment.overload === 'mix' ? Math.floor(blockIndex / 2) : blockIndex);
+    return { kind: 'memory', protocol: 'fixed', L, mode, params: memoryParams(L, mode), count, overload };
   }
   if (ctx.diagnostic) {
     const scheduled = diagnosticSeriesSchedule().length;
@@ -377,8 +379,8 @@ function bandBlock(module: BandModuleId, L: number, overload: boolean, ctx: Plan
  * describes its training parameters at both levels, so a swapped Go/No-Go segment names its swapped colours (T-R41),
  * and a band module's window is the one its blocks play (the floor of the band when that is larger, F3): at lBefore
  * the window the block played (ctx.floors), at lAfter the one the next block plays, on `floorsAfter`, the floors with
- * the block just played (T-R50). `played` is the block's plan: a table's task, and a normal block of a Горбов series
- * never reshuffles, at either level (F10, T-R62).
+ * the block just played (T-R50). `played` is the block's plan: a table's task, a memory block's mode (F13), and a normal
+ * block of a Горбов series never reshuffles, at either level (F10, T-R62).
  */
 export function levelChanges(
   module: ModuleId,
@@ -392,7 +394,10 @@ export function levelChanges(
     const series = (L: number): TableParams => ({ ...gorbovParams(L, played.task), reshuffleEvery: null });
     return describeTableChanges(series(lBefore), series(lAfter));
   }
-  if (!isBandModule(module)) return describeChanges(module, lBefore, lAfter, played.kind === 'table' ? played.task : undefined);
+  if (!isBandModule(module)) {
+    const task = played.kind === 'table' ? played.task : played.kind === 'memory' ? played.mode : undefined;
+    return describeChanges(module, lBefore, lAfter, task);
+  }
   const at = (L: number, floors: WindowFloors | null): BandFields => bandBlock(module, L, false, { ...ctx, floors }).params;
   return describeParamChanges(module, at(lBefore, ctx.floors), at(lAfter, floorsAfter));
 }
@@ -532,12 +537,14 @@ export function buildBlock(
       const { L, mode, params, count, protocol } = plan;
       if (protocol === 'span') {
         return {
-          step: { kind: 'memory_block', L, mode, params, trials: spanProtocolTrials(createRng(seed)).slice(0, count), protocol },
+          step: { kind: 'memory_block', L, mode, params, trials: spanProtocolTrials(createRng(seed)).slice(0, count), protocol, audio: null },
           paramsJson: JSON.stringify({ protocol, mode, ...params, trials: count }),
         };
       }
+      // A 3×3 card with sound plays CARD_AUDIO while it is on screen (F13).
+      const trials = generateMemoryTrials(params, mode, count, createRng(seed));
       return {
-        step: { kind: 'memory_block', L, mode, params, trials: generateMemoryTrials(params, mode, count, createRng(seed)), protocol },
+        step: { kind: 'memory_block', L, mode, params, trials, protocol, audio: params.sound ? CARD_AUDIO : null },
         paramsJson: JSON.stringify({ mode, ...params, trials: count }),
       };
     }

@@ -13,7 +13,8 @@ export const FIXATION_MS = 500;
  * - sequential modes: item k at the first frame with ts ≥ t0 + 500 + k·(itemMs + gapMs) — the schedule is
  *   kept from t0, so a late frame never pushes later items back — hidden at the first frame with
  *   ts ≥ its onset + itemMs;
- * - card: at the first frame with ts ≥ t0 + 500, hidden cardMs after its onset.
+ * - the 3×3 card: at the first frame with ts ≥ t0 + 500, hidden at the first frame with ts ≥ its onset + cardMs (its
+ *   exposure, F13).
  * Resolves 'done' at the frame that hides the last item, or 'aborted' (screen cleared) when `signal` aborts;
  * a renderer that throws rejects the promise with its error. Nothing is requested after the end.
  * An empty row throws RangeError at once (a sequential one would never end).
@@ -32,8 +33,9 @@ export function presentMemoryTrial(
     let shownAt: number | null = null;
     /** Index of the next item to show (the card counts as one). */
     let next = 0;
-    const count = t.mode === 'card' ? 1 : t.items.length;
-    const showMs = t.mode === 'card' ? t.cardMs : t.itemMs;
+    const card = t.mode === 'card3x3';
+    const count = card ? 1 : t.items.length;
+    const showMs = card ? t.cardMs : t.itemMs;
 
     const end = (): void => {
       if (frameId !== null) clock.cancel(frameId);
@@ -66,7 +68,7 @@ export function presentMemoryTrial(
             }
           }
           if (shownAt === null && next < count && ts >= t0 + FIXATION_MS + next * (t.itemMs + t.gapMs)) {
-            if (t.mode === 'card') r.card(t);
+            if (card) r.card(t);
             else r.item(t, next);
             shownAt = ts;
             next++;

@@ -278,27 +278,42 @@ test('free training of Помехоустойчивость reaches 100 %', asyn
 });
 
 test('free training of Память reaches 100 %', async ({ page }) => {
-  // Scale 0.3: a 90 s budget, enough for the four modes (digits, positions, card, letters) at 3 trials each.
+  // Scale 0.3: a 90 s budget, enough for the four modes (digits, positions, the 3×3 card, letters) at 3 trials each
+  // (10 × 0.3). The card shows 10 s at level 0.
   await openApp(page, '/?e2e=1&scale=0.3');
   await page.getByRole('button', { name: 'Свободная тренировка' }).click();
   await page.getByRole('button', { name: 'Память' }).click();
   const titles: string[] = [];
   const instructions: string[] = [];
+  const counters = new Set<string>();
   const summaries = checkSummaries(page, titles);
   const screens = await playSession(page, {
     timeoutMs: 200_000,
     onScreen: async (kind) => {
       if (kind === 'instruction') instructions.push(await page.locator('.instruction').innerText());
+      if (kind === 'lesson') await expect(page.getByRole('heading', { name: 'Как запоминать карточку 3×3.' })).toBeVisible();
+      if (kind === 'memory') {
+        // The first row of the block: its counter names the rows of the block.
+        const counter = page.locator('.memory-response .muted');
+        await expect(counter).toHaveText(/^Проба 1 из \d+$/, { timeout: 30_000 });
+        counters.add(await counter.innerText());
+      }
       await summaries(kind);
     },
   });
   expect(screens).toContain('memory');
   expect(new Set(titles)).toEqual(new Set(['Память']));
+  // The lesson comes once, right before the first card's instruction (F13).
+  expect(screens.filter((s) => s === 'lesson')).toHaveLength(1);
+  expect(screens[screens.indexOf('lesson') + 1]).toBe('instruction');
+  // Every block plays 3 rows under the e2e scale.
+  expect([...counters]).toEqual(['Проба 1 из 3']);
   // Every block starts with its instruction and ends in a 100 % summary: each mode was reproduced exactly.
   expect(titles.length).toBeGreaterThanOrEqual(4);
   for (const mode of ['Запомни цифры', 'Клетки загораются', 'На карточке', 'Запомни буквы']) {
     expect(instructions.some((t) => t.includes(mode)), mode).toBe(true);
   }
+  expect(instructions.find((t) => t.includes('На карточке'))).toContain('Стратегия: читай строки как трёхзначные числа.');
   await expect(page.getByRole('list', { name: 'Итог по модулям' })).toContainText('Память: блоков');
 });
 

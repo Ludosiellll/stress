@@ -6,6 +6,7 @@ import { cutText, gradeByBands, NORM_HINTS, NORMS, type NormTable } from '../eng
 import { L_NORM, type ModuleState } from '../engine/planner';
 import { MODULE_IDS, isBandModule, type FamilyId, type ModuleId, type SessionKind } from '../engine/types';
 import { changeText, describeChanges, type DescribeContext, type ParamChange } from '../modules/describe';
+import { isMemoryMode } from '../modules/memory/params';
 import { FAMILIES } from '../modules/numseries/families';
 import { moduleTitles } from '../modules/registry';
 import {
@@ -15,6 +16,7 @@ import {
   keyMetric,
   KEY_METRICS,
   mainVariant,
+  memoryModeOf,
   normSamples,
   parseObject,
   schulteSize,
@@ -130,14 +132,19 @@ function goalHead(step: number): string {
 const lowerFirst = (s: string): string => s.charAt(0).toLocaleLowerCase('ru') + s.slice(1);
 
 /**
- * What changes from lAfter to the next step; Горбов needs its task, unreadable → nothing (A-R14). A band module's window
- * rests on the floors of its bands (F3; a band without history takes the chain from the band below).
+ * What changes from lAfter to the next step; Горбов needs its task and memory its mode (F13), unreadable → nothing
+ * (A-R14; the card of 0.2.0 is not played any more). A band module's window rests on the floors of its bands (F3; a band
+ * without history takes the chain from the band below).
  */
 function paramChanges(row: BlockRow, next: number, floors: WindowFloors | null): ParamChange[] {
   const { module } = row;
   if (module === 'gorbov') {
     const task = gorbovTaskOf(row);
     return task === null ? [] : describeChanges(module, row.lAfter, next, task);
+  }
+  if (module === 'memory') {
+    const mode = memoryModeOf(row);
+    return mode === null || !isMemoryMode(mode) ? [] : describeChanges(module, row.lAfter, next, mode);
   }
   const ctx: DescribeContext | undefined = floors === null || !isBandModule(module) ? undefined : { floors: (band) => floors(module, band) };
   return describeChanges(module, row.lAfter, next, undefined, ctx);

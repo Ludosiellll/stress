@@ -225,6 +225,23 @@ describe('parseExportBundle: errors (the first one found)', () => {
     expect((await restored.getModuleStates()).pzmr.sessionEndLevels).toEqual([3]);
   });
 
+  it('a memory block of the 3×3 card goes through export and restore unchanged (F13)', async () => {
+    const repo = new MemoryRepository();
+    await repo.createSession(session('s1', T1, { endedAt: '2026-10-01T08:30:00.000Z' }));
+    const paramsJson = JSON.stringify({ mode: 'card3x3', length: 9, itemMs: 463, gapMs: 116, exposureMs: 7000, rows: 3, sound: false, trials: 10 });
+    const answers = Array.from({ length: 10 }, () => ({ given: ['4', '7', '2', '1', '9', '5', '3', '8', '6'], timeMs: 4100 }));
+    const summaryJson = JSON.stringify({ mode: 'card3x3', length: 9, exposureMs: 7000, sound: false, exact: 3, positionsCorrect: 70, partial: 70 / 90, answers });
+    const row = block('b1', 's1', T1, { module: 'memory', lBefore: 15, lAfter: 14.89, score: 70 / 90, paramsJson, summaryJson });
+    await repo.addBlock(row, [], []);
+
+    const bundle = parsed(await exportBundle(repo, '0.3.0'));
+    const restored = new MemoryRepository();
+    await importBundle(restored, bundle, { pause: () => Promise.resolve() });
+    expect(await restored.listBlocks()).toEqual([row]);
+    // One level for every mode: the rebuilt memory level is the block's.
+    expect((await restored.getModuleStates()).memory.sessionEndLevels).toEqual([14.89]);
+  });
+
   it('unknown module, kind and family; flags outside BlockFlag; mood outside 1…5', () => {
     expect(errorOf(variant((b) => Object.assign(rows(b, 'blocks')[0] ?? {}, { module: 'tetris' })))).toBe(
       'Запись blocks[0]: поле module должно быть одним из: pzmr, szmr, gonogo, rdo, gorbov, schulte, stroop, taskswitch, pomeh, memory, numseries.',

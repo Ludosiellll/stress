@@ -2,9 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { createRng } from '../../engine/rng';
 import type { MemoryTrial } from './generate';
 import { spanProtocolTrials } from './generate';
-import { memorySpan, scoreMemoryTrial, spanProtocolStops, type MemoryAnswer } from './score';
+import { memorySpan, scoreMemoryBlock, scoreMemoryTrial, spanProtocolStops, type MemoryAnswer } from './score';
 
-const trial = (items: string[]): MemoryTrial => ({ mode: 'digits', items, gridSide: 0, itemMs: 1000, gapMs: 250, cardMs: items.length * 1000 });
+const trial = (items: string[]): MemoryTrial => ({
+  mode: 'digits',
+  items,
+  gridSide: 0,
+  rows: 0,
+  itemMs: 1000,
+  gapMs: 250,
+  cardMs: items.length * 1000,
+  sound: false,
+});
 const answer = (given: string[]): MemoryAnswer => ({ given, timeMs: 3000 });
 
 const T = trial(['3', '8', '1', '5', '9', '2']);
@@ -25,6 +34,21 @@ describe('scoreMemoryTrial', () => {
 
   it('extra items make it not exact', () => {
     expect(scoreMemoryTrial(T, answer(['3', '8', '1', '5', '9', '2', '7']))).toEqual({ exact: false, positionsCorrect: 6 });
+  });
+});
+
+describe('scoreMemoryBlock (F13)', () => {
+  it('s is the share of positions right over every row shown; the exact rows are counted on the side', () => {
+    const rows = [trial(['1', '2', '3', '4']), trial(['5', '6', '7', '8']), trial(['9', '0'])];
+    const answers = [answer(['1', '2', '3', '4']), answer(['5', '6', '8', '7']), answer(['9'])];
+    expect(scoreMemoryBlock(rows, answers)).toEqual({ exact: 1, positionsCorrect: 7, partial: 0.7 });
+  });
+
+  it('fewer answers than rows: only the rows answered count; none answered is 0', () => {
+    const rows = [trial(['1', '2']), trial(['3', '4'])];
+    expect(scoreMemoryBlock(rows, [answer(['1', '2'])])).toEqual({ exact: 1, positionsCorrect: 2, partial: 1 });
+    expect(scoreMemoryBlock(rows, [])).toEqual({ exact: 0, positionsCorrect: 0, partial: 0 });
+    expect(() => scoreMemoryBlock(rows.slice(0, 1), [answer([]), answer([])])).toThrow(RangeError);
   });
 });
 

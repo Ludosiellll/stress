@@ -5,7 +5,7 @@ import { penalizedScore } from '../engine/reaction/summary';
 import type { Outcome } from '../engine/reaction/types';
 import { isBandModule, type BlockFlag, type ModuleId, type SessionKind } from '../engine/types';
 import type { BlockRow } from '../data/rows';
-import { MEMORY_TRIALS } from '../modules/memory/params';
+import { MEMORY_TRIALS, STORED_MEMORY_MODES, type StoredMemoryMode } from '../modules/memory/params';
 import { RDO_PERIODS } from '../modules/reaction/rdo';
 import { szmr } from '../modules/reaction/szmr';
 import { displayedCost, round1, whole } from './steps';
@@ -69,14 +69,21 @@ export type HistoryRow = Pick<BlockRow, 'sessionId' | 'module' | 'lBefore' | 'fl
 
 /** The СЗМР norm is a choice of 2: it applies to a block of 2 colours on 2 keys only. */
 export const isTwoChoice = (p: { nColors: number; nKeys: number }): boolean => p.nColors === 2 && p.nKeys === 2;
-/** A training memory block gives a span only with this many exact rows out of MEMORY_TRIALS. */
-const MEMORY_SPAN_MIN_EXACT = 4;
+/**
+ * A training memory block gives a span only with this many exact rows: of the MEMORY_TRIALS (10) rows of F13, 7; a
+ * block of 0.2.0 had 6 rows and keeps its rule, 4 of them (T-R21).
+ */
+const MEMORY_SPAN_MIN_EXACT: ReadonlyMap<number, number> = new Map([
+  [MEMORY_TRIALS, 7],
+  [6, 4],
+]);
 const MS_PER_DAY = 86_400_000;
 
 const GORBOV_TASKS = ['black_up', 'red_down', 'alternate'] as const;
 const GORBOV_TABLES = ['series', 'own'] as const;
 const SCHULTE_PREFIX = 'schulte:';
-const MEMORY_MODES = ['digits', 'letters', 'positions', 'card'] as const;
+/** The modes a stored memory block may name: the played ones and the card of 0.2.0 (Р27, T-R21). */
+const MEMORY_MODES: readonly StoredMemoryMode[] = STORED_MEMORY_MODES;
 
 type Json = Readonly<Record<string, unknown>>;
 
@@ -163,6 +170,11 @@ export type GorbovTask = (typeof GORBOV_TASKS)[number];
 /** The Горбов task: from the summary, else from the params. */
 function gorbovTask(summary: Json | null, paramsJson: string): GorbovTask | null {
   return oneOf(summary, 'task', GORBOV_TASKS) ?? oneOf(parseObject(paramsJson), 'task', GORBOV_TASKS);
+}
+
+/** The mode of a memory block: from the summary, else from the params (a block counted as 0 after Esc has no summary). */
+export function memoryModeOf(row: Pick<BlockRow, 'paramsJson' | 'summaryJson'>): StoredMemoryMode | null {
+  return oneOf(parseObject(row.summaryJson), 'mode', MEMORY_MODES) ?? oneOf(parseObject(row.paramsJson), 'mode', MEMORY_MODES);
 }
 
 /** A Горбов block on a table of its own (F10: block 3 and later of a segment); a series block or one before F10 is not. */
@@ -262,8 +274,10 @@ function metricFrom(module: ModuleId, summary: Json | null): number | null {
     case 'pomeh':
       return costOf(module, summary);
     case 'memory': {
+      // The partial score of every row, old ones too (Р27): positions right of all the positions shown.
       const answers = summary?.['answers'];
-      return Array.isArray(answers) ? percent(num(summary, 'exact'), answers.length) : null;
+      const length = num(summary, 'length');
+      return Array.isArray(answers) && length !== null ? percent(num(summary, 'positionsCorrect'), length * answers.length) : null;
     }
     case 'numseries':
       return percent(num(summary, 'correct'), num(summary, 'total'));
@@ -273,7 +287,10 @@ function metricFrom(module: ModuleId, summary: Json | null): number | null {
   }
 }
 
-/** Memory: the span protocol's span; a training block's row length in digits with all 6 answers and ≥ 4 exact. */
+/**
+ * Memory: the span protocol's span; a training block of digits gives its row length with all its rows answered and
+ * enough of them exact: 7 of 10, or 4 of the 6 of a 0.2.0 block (MEMORY_SPAN_MIN_EXACT, T-R21).
+ */
 function memoryNorms(summary: Json | null): NormSample[] {
   if (summary?.['protocol'] === 'span') {
     const span = wholeFromZero(summary, 'span');
@@ -282,8 +299,9 @@ function memoryNorms(summary: Json | null): NormSample[] {
   const answers = summary?.['answers'];
   const exact = num(summary, 'exact');
   const length = positiveWhole(summary, 'length');
-  const full = Array.isArray(answers) && answers.length === MEMORY_TRIALS;
-  if (oneOf(summary, 'mode', MEMORY_MODES) !== 'digits' || !full || exact === null || exact < MEMORY_SPAN_MIN_EXACT || exact > MEMORY_TRIALS) {
+  const rows = Array.isArray(answers) ? answers.length : 0;
+  const minExact = MEMORY_SPAN_MIN_EXACT.get(rows);
+  if (oneOf(summary, 'mode', MEMORY_MODES) !== 'digits' || minExact === undefined || exact === null || exact < minExact || exact > rows) {
     return [];
   }
   return length === null ? [] : [{ id: 'memorySpan', value: length }];

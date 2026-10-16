@@ -1,5 +1,5 @@
 import { isBandModule, isReactionModule, type ModuleId, type ReactionModuleId } from '../engine/types';
-import { describeMemoryParams, memoryParams } from './memory/params';
+import { describeMemoryParams, isMemoryMode, memoryParams, type MemoryMode } from './memory/params';
 import { withFloor } from './reaction/common';
 import { bandModules, reactionModules } from './registry';
 import { gorbovParams, type TableParams, type TableTaskId } from './tables/gorbov';
@@ -54,10 +54,16 @@ export interface DescribeContext {
  * What changed in the module's parameters between two levels, for the block summary.
  * Reaction modules (any id of the catalogue) describe their own parameters; with `ctx` a band module's window is the
  * one a block plays (the nominal window or the floor of its band, whichever is larger), so a window resting on one
- * floor at both levels is no change (F3). Gorbov needs the run task (alternate gets 1.6× time); memory parameters do
- * not depend on the mode; numseries has no level, so nothing changes.
+ * floor at both levels is no change (F3). Gorbov needs the run task (alternate gets 1.6× time) and memory the mode the
+ * block played (its row length and showing depend on it, F13); numseries has no level, so nothing changes.
  */
-export function describeChanges(module: ModuleId, lBefore: number, lAfter: number, task?: TableTaskId, ctx?: DescribeContext): ParamChange[] {
+export function describeChanges(
+  module: ModuleId,
+  lBefore: number,
+  lAfter: number,
+  task?: TableTaskId | MemoryMode,
+  ctx?: DescribeContext,
+): ParamChange[] {
   if (isBandModule(module) && ctx !== undefined) {
     const m = bandModules[module];
     const at = (L: number): unknown => {
@@ -72,13 +78,15 @@ export function describeChanges(module: ModuleId, lBefore: number, lAfter: numbe
   }
   switch (module) {
     case 'gorbov': {
-      if (task === undefined) throw new RangeError('describeChanges: gorbov needs the run task');
+      if (task === undefined || isMemoryMode(task)) throw new RangeError('describeChanges: gorbov needs the run task');
       return describeTableChanges(gorbovParams(lBefore, task), gorbovParams(lAfter, task));
     }
     case 'schulte':
       return describeTableChanges(schulteParams(lBefore), schulteParams(lAfter));
-    case 'memory':
-      return changed(describeMemoryParams(memoryParams(lBefore)), describeMemoryParams(memoryParams(lAfter)));
+    case 'memory': {
+      if (task === undefined || !isMemoryMode(task)) throw new RangeError('describeChanges: memory needs the mode');
+      return changed(describeMemoryParams(task, memoryParams(lBefore, task)), describeMemoryParams(task, memoryParams(lAfter, task)));
+    }
     case 'numseries':
       return [];
   }

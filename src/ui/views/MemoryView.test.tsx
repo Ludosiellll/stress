@@ -1,19 +1,27 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { MemoryRepository } from '../../data/memoryRepository';
 import type { MemoryTrial } from '../../modules/memory/generate';
+import { CARD_AUDIO } from '../../modules/memory/params';
 import type { MemoryAnswer } from '../../modules/memory/score';
+import { createAudioOut, type AudioOut, type StressorHandle } from '../../runtime/audio/audioOut';
 import type { StepOf } from '../../session/steps';
 import { manualFrames, mockCanvas, nextTask, type ManualFrames } from '../../testing/domFakes';
+import { createFakePlatform } from '../../testing/fakePlatform';
+import { renderWithApp } from '../testUtils';
 import MemoryView from './MemoryView';
+import { UNLOCK_WAIT_MS } from './ReactionView';
 
 /** Short timings so a trial is shown within a few frames: fixation 500, items every 200 ms. */
 const trial = (over: Partial<MemoryTrial> = {}): MemoryTrial => ({
   mode: 'digits',
   items: ['7', '3', '9', '1'],
   gridSide: 0,
+  rows: 0,
   itemMs: 100,
   gapMs: 100,
   cardMs: 400,
+  sound: false,
   ...over,
 });
 
@@ -23,9 +31,10 @@ function step(trials: MemoryTrial[], over: Partial<StepOf<'memory_block'>> = {})
     kind: 'memory_block',
     L: 0,
     mode: first.mode,
-    params: { length: first.items.length, itemMs: first.itemMs, gapMs: first.gapMs },
+    params: { length: first.items.length, itemMs: first.itemMs, gapMs: first.gapMs, exposureMs: null, rows: null, sound: false },
     trials,
     protocol: 'fixed',
+    audio: null,
     ...over,
   };
 }
@@ -46,14 +55,40 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function renderView(s: StepOf<'memory_block'>, o: { exposeAnswer?: boolean; busy?: boolean } = {}) {
+function renderView(s: StepOf<'memory_block'>, o: { exposeAnswer?: boolean; busy?: boolean; audio?: AudioOut } = {}) {
   const handlers = {
     onSubmit: vi.fn<(a: MemoryAnswer[]) => void>(),
     onFocusLost: vi.fn<() => void>(),
     onProgress: vi.fn<(p: number) => void>(),
   };
-  const view = render(<MemoryView step={s} exposeAnswer={o.exposeAnswer ?? false} busy={o.busy ?? false} {...handlers} />);
+  const view = renderWithApp(
+    <MemoryView step={s} exposeAnswer={o.exposeAnswer ?? false} busy={o.busy ?? false} {...handlers} />,
+    createFakePlatform(),
+    new MemoryRepository(),
+    o.audio ?? createAudioOut(null),
+  );
   return { ...handlers, ...view };
+}
+
+/** A sound output whose handle records the order of what the view does with it. */
+function fakeAudio(o: { unlock?: () => Promise<void> } = {}) {
+  const log: string[] = [];
+  const handle = {
+    start: vi.fn<StressorHandle['start']>(() => {
+      log.push('start');
+      return true;
+    }),
+    setActive: vi.fn<StressorHandle['setActive']>((on) => {
+      log.push(`active ${String(on)}`);
+    }),
+    stop: vi.fn<StressorHandle['stop']>(() => {
+      log.push('stop');
+    }),
+  };
+  const prepare = vi.fn<AudioOut['prepare']>(() => ({ ...handle, playing: false }));
+  const unlock = vi.fn<AudioOut['unlock']>(o.unlock ?? (() => Promise.resolve()));
+  const audio: AudioOut = { available: true, unlock, setVolume: () => undefined, prepare, hold: () => () => undefined };
+  return { audio, prepare, unlock, handle, log };
 }
 
 /** Runs frames 50 ms apart until the response screen is up (the presentation of the current trial is over). */
@@ -293,12 +328,94 @@ describe('MemoryView', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it('the card is shown whole, then typed like digits', async () => {
-    const { onSubmit } = renderView(step([trial({ mode: 'card', gridSide: 3 })]));
+  it('the 3×3 card is shown whole, then typed like digits (F13)', async () => {
+    const { onSubmit } = renderView(step([trial({ mode: 'card3x3', gridSide: 3, rows: 2 })]));
     await showTrial();
+    expect(document.querySelector('.memory-response')?.getAttribute('data-mode')).toBe('card3x3');
     for (const d of ['7', '3', '9', '1']) key(d);
+    key('w', 'KeyW');
     key('Enter');
     expect(onSubmit.mock.calls[0]?.[0]?.[0]?.given).toEqual(['7', '3', '9', '1']);
+  });
+
+  it('ten rows: after each answer the share done is the rows answered out of 10 (F11, F13)', async () => {
+    const trials = Array.from({ length: 10 }, () => trial({ items: ['5'] }));
+    const { onProgress } = renderView(step(trials));
+    for (let i = 0; i < 4; i++) {
+      await showTrial();
+      key('5');
+      key('Enter');
+    }
+    expect(onProgress.mock.calls).toEqual([[0.1], [0.2], [0.3], [0.4]]);
+  });
+
+  it('a card with sound: the sound plays only while the card is on screen (F13)', async () => {
+    const { audio, prepare, unlock, log } = fakeAudio();
+    const cards = [trial({ mode: 'card3x3', gridSide: 3, rows: 2, sound: true }), trial({ mode: 'card3x3', gridSide: 3, rows: 2, sound: true })];
+    renderView(step(cards, { audio: CARD_AUDIO }), { audio });
+    expect(prepare).toHaveBeenCalledWith(CARD_AUDIO, expect.any(Number));
+    expect(unlock).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // The fixation cross: no sound yet.
+    frames.run(0);
+    frames.run(250);
+    expect(log).toEqual([]);
+    // The card at 500 ms: the sound starts and is switched on.
+    frames.run(500);
+    expect(log).toEqual(['start', 'active true']);
+    frames.run(800);
+    expect(log).toEqual(['start', 'active true']);
+    // The card goes 400 ms later: the sound stops with it.
+    frames.run(900);
+    expect(log).toEqual(['start', 'active true', 'stop']);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await nextTask();
+    for (const d of ['7', '3', '9', '1']) key(d);
+    key('Enter');
+    // The next card plays it again, the answer screen never.
+    await showTrial();
+    expect(log).toEqual(['start', 'active true', 'stop', 'start', 'active true', 'stop']);
+  });
+
+  it('a card with sound waits for the unlock, at most UNLOCK_WAIT_MS; a block without sound neither prepares nor unlocks', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const { audio, unlock, log } = fakeAudio({ unlock: () => new Promise<void>(() => undefined) });
+      renderView(step([trial({ mode: 'card3x3', gridSide: 3, rows: 2, sound: true })], { audio: CARD_AUDIO }), { audio });
+      expect(unlock).toHaveBeenCalledTimes(1);
+      frames.run(0);
+      expect(frames.pending()).toBe(0);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(UNLOCK_WAIT_MS);
+      });
+      // The unlock never settled: the card is shown all the same.
+      frames.run(1000);
+      frames.run(1500);
+      expect(log).toEqual(['start', 'active true']);
+    } finally {
+      vi.useRealTimers();
+    }
+    const quiet = fakeAudio();
+    renderView(step([trial()]), { audio: quiet.audio });
+    expect(quiet.prepare).not.toHaveBeenCalled();
+    expect(quiet.unlock).not.toHaveBeenCalled();
+  });
+
+  it('unmounting while the card is on screen stops its sound', async () => {
+    const { audio, log } = fakeAudio();
+    const { unmount } = renderView(step([trial({ mode: 'card3x3', gridSide: 3, rows: 2, sound: true })], { audio: CARD_AUDIO }), { audio });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    frames.run(0);
+    frames.run(500);
+    expect(log).toEqual(['start', 'active true']);
+    unmount();
+    expect(log.at(-1)).toBe('stop');
   });
 
   it('blur → onFocusLost, during the presentation or the answer', async () => {

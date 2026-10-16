@@ -5,6 +5,7 @@ import type { BlockRow } from '../data/rows';
 import {
   appendPast,
   cleanHitsByBand,
+  hasPlayedMode,
   lastSetup,
   pastBlocks,
   rdoCycleCount,
@@ -322,5 +323,29 @@ describe('the setup of a segment (F9, Р26)', () => {
     // A block of this session joins once it is stored.
     appendPast(past, szmrBlock('n', 'now', { layout: 'keyboard', mapping: [0, 1] }), 'free');
     expect(lastSetup(past, 'szmr')).toEqual({ mapping: [0, 1], layout: 'keyboard', swapped: false });
+  });
+});
+
+describe('hasPlayedMode (F13)', () => {
+  const sessions = [session('t', '2026-10-10T09:00:00'), session('d', '2026-10-11T09:00:00', { kind: 'diagnostic' })];
+  const memory = (id: string, over: Partial<BlockRow>): BlockRow => block(id, 't', '2026-10-10T09:01:00', { module: 'memory', ...over });
+
+  it('a memory block of the mode in the history, by its summary or, without one, its params', () => {
+    const played = memory('a', { summaryJson: '{"mode":"card3x3"}' });
+    expect(hasPlayedMode(pastBlocks([played], sessions), 'card3x3')).toBe(true);
+    // Counted as 0 after Esc: no summary of the rows, the mode in the params.
+    const counted = memory('b', { flags: ['discarded'], summaryJson: '{"discarded":{"reason":"user","progress":0.5}}', paramsJson: '{"mode":"card3x3"}' });
+    expect(hasPlayedMode(pastBlocks([counted], sessions), 'card3x3')).toBe(true);
+    expect(hasPlayedMode(pastBlocks([played], sessions), 'digits')).toBe(false);
+  });
+
+  it('the card of 0.2.0 is another mode; other modules, damaged rows and an empty history have none', () => {
+    const old = memory('a', { summaryJson: '{"mode":"card"}' });
+    expect(hasPlayedMode(pastBlocks([old], sessions), 'card3x3')).toBe(false);
+    expect(hasPlayedMode(pastBlocks([old], sessions), 'card')).toBe(true);
+    const other = block('b', 't', '2026-10-10T09:02:00', { module: 'pzmr', summaryJson: '{"mode":"card3x3"}' });
+    const damaged = memory('c', { summaryJson: 'not json', paramsJson: '{"mode":"card4x4"}' });
+    expect(hasPlayedMode(pastBlocks([other, damaged], sessions), 'card3x3')).toBe(false);
+    expect(hasPlayedMode(pastBlocks([], sessions), 'card3x3')).toBe(false);
   });
 });

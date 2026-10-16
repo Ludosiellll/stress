@@ -214,8 +214,13 @@ legend {
 }
 
 .instruction-text,
-.notice {
+.notice,
+.lesson-points {
   font-size: 1.35rem;
+}
+
+.lesson-points li + li {
+  margin-top: 0.6em;
 }
 
 .reaction {

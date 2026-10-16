@@ -33,8 +33,9 @@ function recorder(clock: FakeClock, o: { throwOn?: Call['op'] } = {}): { r: Memo
   };
 }
 
-const DIGITS: MemoryTrial = { mode: 'digits', items: ['4', '7', '1'], gridSide: 0, itemMs: 630, gapMs: 158, cardMs: 1890 };
-const CARD: MemoryTrial = { ...DIGITS, mode: 'card', items: ['4', '7', '1', '9'], gridSide: 3, cardMs: 2520 };
+const DIGITS: MemoryTrial = { mode: 'digits', items: ['4', '7', '1'], gridSide: 0, rows: 0, itemMs: 630, gapMs: 158, cardMs: 1890, sound: false };
+/** A 3×3 card (F13): on screen for its exposure, 7 s, whatever its items' timing says. */
+const CARD: MemoryTrial = { ...DIGITS, mode: 'card3x3', items: ['4', '7', '1', '9'], gridSide: 3, rows: 2, cardMs: 7000 };
 
 /** Runs the presentation to its end on `clock`. */
 async function play(t: MemoryTrial, clock: FakeClock, r: MemoryRenderer, signal = new AbortController().signal) {
@@ -71,7 +72,7 @@ describe('presentMemoryTrial', () => {
     expect(onsets).toEqual([0, 1, 2].map((k) => clock.firstFrameAtOrAfter(t0 + 500 + k * 788)));
   });
 
-  it('the card appears at t0 + 500 and stays cardMs', async () => {
+  it('the 3×3 card appears at t0 + 500 and stays exactly cardMs, its exposure (F13)', async () => {
     const clock = new FakeClock();
     const { r, calls } = recorder(clock);
     await expect(play(CARD, clock, r)).resolves.toBe('done');
@@ -82,6 +83,10 @@ describe('presentMemoryTrial', () => {
       { op: 'card', at: shown },
       { op: 'clear', at: clock.firstFrameAtOrAfter(shown + CARD.cardMs) },
     ]);
+    // On screen from its first frame to the first frame at or after 7 s later: never less than 7 s, at most a frame more.
+    const hidden = calls[2]?.at ?? Number.NaN;
+    expect(hidden - shown).toBeGreaterThanOrEqual(7000);
+    expect(hidden - shown).toBeLessThan(7000 + 17);
   });
 
   it('an abort mid-presentation clears the screen and resolves aborted; nothing is drawn after it', async () => {

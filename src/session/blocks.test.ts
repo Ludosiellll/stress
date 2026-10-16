@@ -22,7 +22,7 @@ import {
 import { createRng, deriveSeed } from '../engine/rng';
 import { sdTrimmed } from '../engine/stats';
 import { generateMemoryTrials, SPAN_PROTOCOL_PARAMS, spanProtocolTrials } from '../modules/memory/generate';
-import { memoryModeForBlock, memoryParams } from '../modules/memory/params';
+import { CARD_AUDIO, memoryModeForBlock, memoryParams } from '../modules/memory/params';
 import { FAMILIES } from '../modules/numseries/families';
 import { generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
 import { NO_STRESSORS, bandIndex } from '../modules/reaction/common';
@@ -259,14 +259,15 @@ describe('planBlock', () => {
     });
   });
 
-  it('memory: mode by block index, level params, 6 trials (3 under the e2e scale); keys and text per mode', () => {
+  it('memory: mode by block index, its params at the one level, 10 trials (3 under the e2e scale); keys and text per mode', () => {
     const segment: Segment = { module: 'memory', budgetMs: 300_000, purpose: 'free' };
     const ctx = { layout: 'pult' as const, scale: 1, diagnostic: false, ...PLAIN };
     const plan = planBlock(segment, 9, 2, ctx);
-    expect(plan).toEqual({ kind: 'memory', protocol: 'fixed', L: 9, mode: 'card', params: memoryParams(9), count: 6, overload: false });
-    expect(planBlock(segment, 9, 0, { ...ctx, scale: 0.02 })).toMatchObject({ mode: 'digits', count: 3 });
+    expect(plan).toEqual({ kind: 'memory', protocol: 'fixed', L: 9, mode: 'card3x3', params: memoryParams(9, 'card3x3'), count: 10, overload: false });
+    expect(planBlock(segment, 9, 0, { ...ctx, scale: 0.02 })).toMatchObject({ mode: 'digits', count: 3, params: memoryParams(9, 'digits') });
+    expect(planBlock(segment, 9, 1, ctx)).toMatchObject({ mode: 'positions', params: { length: 6 } });
     expect(blockInstruction(plan, 'pult')).toEqual({
-      text: 'На карточке 7 цифр. Запомни их по строкам, слева направо. Потом набери и нажми Enter.',
+      text: 'На карточке 8 цифр. Запомни их по строкам, слева направо. Потом набери и нажми Enter. Стратегия: читай строки как трёхзначные числа.',
       keysHint: 'Цифры, Backspace, Enter',
     });
     expect(blockInstruction(planBlock(segment, 9, 1, ctx), 'pult').keysHint).toBe('Мышь, Enter');
@@ -274,12 +275,23 @@ describe('planBlock', () => {
     expect(step).toEqual({
       kind: 'memory_block',
       L: 9,
-      mode: 'card',
-      params: memoryParams(9),
-      trials: generateMemoryTrials(memoryParams(9), 'card', 6, createRng(42)),
+      mode: 'card3x3',
+      params: memoryParams(9, 'card3x3'),
+      trials: generateMemoryTrials(memoryParams(9, 'card3x3'), 'card3x3', 10, createRng(42)),
       protocol: 'fixed',
+      audio: null,
     });
-    expect(JSON.parse(paramsJson)).toEqual({ mode: 'card', length: 7, itemMs: 630, gapMs: 158, trials: 6 });
+    expect(JSON.parse(paramsJson)).toEqual({ mode: 'card3x3', length: 8, itemMs: 630, gapMs: 158, exposureMs: 10_000, rows: 3, sound: false, trials: 10 });
+  });
+
+  it('a 3×3 card with sound carries CARD_AUDIO; other memory blocks none (F13)', () => {
+    const segment: Segment = { module: 'memory', budgetMs: 300_000, purpose: 'free' };
+    const ctx = { layout: 'keyboard' as const, scale: 1, diagnostic: false, ...PLAIN };
+    const at = (L: number, blockIndex: number) => buildBlock(planBlock(segment, L, blockIndex, ctx), 7, 'keyboard', new Map()).step as StepOf<'memory_block'>;
+    expect(at(21, 2)).toMatchObject({ mode: 'card3x3', audio: CARD_AUDIO });
+    expect(at(21, 2).trials.every((t) => t.sound && t.cardMs === 5000)).toBe(true);
+    expect(at(20, 2).audio).toBeNull();
+    for (const blockIndex of [0, 1, 3]) expect(at(30, blockIndex).audio).toBeNull();
   });
 
   it('diagnostic memory: the span protocol, digits at 1000 / 250 ms, the first scaledCount(20) trials', () => {
@@ -292,7 +304,7 @@ describe('planBlock', () => {
       protocol: 'span',
       L: 0,
       mode: 'digits',
-      params: { length: 3, itemMs: 1000, gapMs: 250 },
+      params: { length: 3, itemMs: 1000, gapMs: 250, exposureMs: null, rows: null, sound: false },
       count: 20,
       overload: false,
     });
@@ -303,11 +315,23 @@ describe('planBlock', () => {
       kind: 'memory_block',
       L: 0,
       mode: 'digits',
-      params: { length: 3, itemMs: 1000, gapMs: 250 },
+      params: { length: 3, itemMs: 1000, gapMs: 250, exposureMs: null, rows: null, sound: false },
       trials: spanProtocolTrials(createRng(42)),
       protocol: 'span',
+      audio: null,
     });
-    expect(JSON.parse(paramsJson)).toEqual({ protocol: 'span', mode: 'digits', length: 3, itemMs: 1000, gapMs: 250, trials: 20 });
+    // The protocol of 0.2.0 with the card fields empty (F13).
+    expect(JSON.parse(paramsJson)).toEqual({
+      protocol: 'span',
+      mode: 'digits',
+      length: 3,
+      itemMs: 1000,
+      gapMs: 250,
+      exposureMs: null,
+      rows: null,
+      sound: false,
+      trials: 20,
+    });
     const short = buildBlock(planBlock(segment, 0, 0, { ...ctx, scale: 0.02 }), 42, 'keyboard', new Map()).step as StepOf<'memory_block'>;
     expect(short.trials).toEqual(spanProtocolTrials(createRng(42)).slice(0, 3));
   });
@@ -618,8 +642,8 @@ describe('overload blocks', () => {
       Array.from({ length: 8 }, (_, i) => planBlock(seg('memory', overload), 9, i, ctx)).map((p) =>
         p.kind === 'memory' ? `${p.mode}${p.overload ? '+3' : ''}` : p.kind,
       );
-    expect(modes('mix')).toEqual(['digits', 'digits+3', 'positions', 'positions+3', 'card', 'card+3', 'letters', 'letters+3']);
-    const cycle = ['digits', 'positions', 'card', 'letters', 'digits', 'positions', 'card', 'letters'];
+    expect(modes('mix')).toEqual(['digits', 'digits+3', 'positions', 'positions+3', 'card3x3', 'card3x3+3', 'letters', 'letters+3']);
+    const cycle = ['digits', 'positions', 'card3x3', 'letters', 'digits', 'positions', 'card3x3', 'letters'];
     expect(modes(undefined)).toEqual(cycle);
     expect(modes('finisher')).toEqual(cycle.map((m) => m + '+3'));
   });

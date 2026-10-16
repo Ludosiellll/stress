@@ -1,12 +1,16 @@
 import { useEffect, useEffectEvent, useRef, useState, type CSSProperties, type MouseEvent } from 'react';
+import { STRESSOR_LOOP_S } from '../../engine/audio/stressors';
 import { digitFromKey, letterFromKey } from '../../modules/memory/input';
 import { spanProtocolStops, type MemoryAnswer } from '../../modules/memory/score';
+import { prepareQuietly, type QuietHandle } from '../../runtime/audio/audioOut';
 import { attachFocusGuard } from '../../runtime/focusGuard';
 import { browserFrameClock } from '../../runtime/frameClock';
 import { presentMemoryTrial } from '../../runtime/memoryPresenter';
-import { createMemoryRenderer } from '../../runtime/memoryRenderer';
+import { createMemoryRenderer, type MemoryRenderer } from '../../runtime/memoryRenderer';
 import type { StepOf } from '../../session/steps';
+import { useApp } from '../AppContext';
 import { isEnter, useKeyDown } from '../keys';
+import { UNLOCK_WAIT_MS } from './ReactionView';
 
 export interface MemoryViewProps {
   step: StepOf<'memory_block'>;
@@ -23,6 +27,31 @@ export interface MemoryViewProps {
 
 type Phase = 'present' | 'respond';
 
+/** The seed of the card's sound (F13): one loop for every card, built once and cached by the player. */
+const CARD_SOUND_SEED = 13;
+/** Where in the 20 s loop the card of trial i starts its sound, s: each card hears another stretch of it. */
+const cardSoundOffsetS = (i: number): number => (i * 7) % STRESSOR_LOOP_S;
+
+/**
+ * The renderer of a trial with sound: the card's sound starts when the card is drawn and stops when the card goes, so
+ * it plays only while the card is on screen (F13). Without a handle, the renderer as it is.
+ */
+function withCardSound(r: MemoryRenderer, sound: QuietHandle | null, offsetS: number): MemoryRenderer {
+  if (sound === null) return r;
+  return {
+    ...r,
+    card(t) {
+      r.card(t);
+      sound.start(offsetS);
+      sound.setActive(true);
+    },
+    clear() {
+      sound.stop();
+      r.clear();
+    },
+  };
+}
+
 /**
  * A memory block, one trial at a time: the row is shown on a full-screen canvas (presentMemoryTrial, frame
  * timing, no cursor), then reproduced on a DOM screen — typed (digits, letters, card: Backspace erases, Enter
@@ -31,8 +60,13 @@ type Phase = 'present' | 'respond';
  * After the last trial every answer goes to `onSubmit`; the span protocol sends them as soon as it stops
  * (spanProtocolStops). The focus guard covers the whole block; Escape is the session screen's (it pauses and
  * discards the block, as for tables).
+ *
+ * A block with sound (a 3×3 card from L 21, F13) builds its sound first and waits for `audio.unlock()` (at most
+ * UNLOCK_WAIT_MS) before the first trial; the sound plays only while a card is on screen. If it cannot be built or
+ * started, the cards are shown without it.
  */
 export default function MemoryView({ step, exposeAnswer, busy, onSubmit, onProgress, onFocusLost }: MemoryViewProps) {
+  const { audio } = useApp();
   const { trials } = step;
   const [index, setIndex] = useState(0);
   const [phase, setPhase] = useState<Phase>('present');
@@ -48,6 +82,29 @@ export default function MemoryView({ step, exposeAnswer, busy, onSubmit, onProgr
   /** All answers went to onSubmit: the block is over, focus no longer matters. */
   const sent = useRef(false);
   const focusLost = useEffectEvent(onFocusLost);
+  /** The card's sound, built once for the block; null without sound or when it cannot be built. */
+  const sound = useRef<QuietHandle | null>(null);
+  /** The first trial may be shown: at once without sound, after the unlock (or its wait) with it. */
+  const [ready, setReady] = useState(step.audio === null);
+
+  useEffect(() => {
+    if (step.audio === null) return;
+    const handle = prepareQuietly(audio, step.audio, CARD_SOUND_SEED);
+    sound.current = handle;
+    let live = true;
+    const go = (): void => {
+      if (live) setReady(true);
+    };
+    const wait = setTimeout(go, UNLOCK_WAIT_MS);
+    // unlock() never rejects by contract; a rejection still shows the cards (silently).
+    audio.unlock().then(go, go);
+    return () => {
+      live = false;
+      clearTimeout(wait);
+      handle?.stop();
+      sound.current = null;
+    };
+  }, [step, audio]);
 
   useEffect(
     () =>
@@ -63,11 +120,12 @@ export default function MemoryView({ step, exposeAnswer, busy, onSubmit, onProgr
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (phase !== 'present' || trial === undefined || canvas === null || over) return;
+    if (!ready || phase !== 'present' || trial === undefined || canvas === null || over) return;
     const ac = new AbortController();
+    const renderer = (): MemoryRenderer =>
+      withCardSound(createMemoryRenderer(canvas), trial.sound ? sound.current : null, cardSoundOffsetS(index));
     // Async, so a canvas without a 2D context rejects like a failed frame.
-    const show = async (): Promise<'done' | 'aborted'> =>
-      presentMemoryTrial(trial, browserFrameClock, createMemoryRenderer(canvas), ac.signal);
+    const show = async (): Promise<'done' | 'aborted'> => presentMemoryTrial(trial, browserFrameClock, renderer(), ac.signal);
     show().then(
       (end) => {
         if (end !== 'done') return;
@@ -81,7 +139,7 @@ export default function MemoryView({ step, exposeAnswer, busy, onSubmit, onProgr
     return () => {
       ac.abort();
     };
-  }, [phase, trial, over]);
+  }, [ready, phase, trial, over, index]);
 
   // A drawing failure goes to the session's error boundary (logged; stored blocks stay stored).
   if (crash !== null) throw crash;

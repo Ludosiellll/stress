@@ -149,7 +149,8 @@ describe('loadProgressModel', () => {
   it('level charts for every module except the number series', async () => {
     const model = await loadProgressModel(new MemoryRepository());
     expect(model.levels.map((l) => l.module)).toEqual(MODULE_IDS.filter((m) => m !== 'numseries'));
-    expect(model.levels.find((l) => l.module === 'memory')).toMatchObject({ title: 'Память', norm: 9 });
+    // One level for every memory mode; its norm is the first card step harder than the test (F13).
+    expect(model.levels.find((l) => l.module === 'memory')).toMatchObject({ title: 'Память', norm: 21, marker: null });
     expect(model.diagnostics).toHaveLength(10);
   });
 

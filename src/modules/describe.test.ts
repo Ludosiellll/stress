@@ -104,13 +104,22 @@ describe('describeChanges', () => {
     expect(describeChanges('stroop', 7, 8)).toContainEqual({ label: 'Нагрузка', from: '3 цвета, подсказка клавиш', to: '4 цвета без подсказки' });
   });
 
-  it('memory: row length, display time and pause', () => {
-    expect(describeChanges('memory', 8, 9)).toEqual([
+  it('memory: the row length and how it is shown, for the mode the block played (F13)', () => {
+    expect(describeChanges('memory', 8, 9, 'digits')).toEqual([
       { label: 'Длина ряда', from: '6', to: '7' },
-      { label: 'Показ элемента', from: '663 мс', to: '630 мс' },
-      { label: 'Пауза', from: '166 мс', to: '158 мс' },
+      { label: 'Показ', from: '663 мс на элемент', to: '630 мс на элемент' },
     ]);
-    expect(describeChanges('memory', 30, 31)).toEqual([]);
+    expect(describeChanges('memory', 8, 9, 'letters')).toContainEqual({ label: 'Длина ряда', from: '5', to: '6' });
+    expect(describeChanges('memory', 14, 15, 'card3x3')).toEqual([{ label: 'Показ', from: '10 с', to: '7 с' }]);
+    expect(describeChanges('memory', 20, 21, 'card3x3')).toEqual([{ label: 'Показ', from: '5 с', to: '5 с, со звуком' }]);
+    expect(changeText({ label: 'Показ', from: '10 с', to: '7 с' })).toBe('Показ: 10 → 7 с');
+    expect(describeChanges('memory', 30, 31, 'digits')).toEqual([]);
+  });
+
+  it('memory needs the mode, Gorbov its task', () => {
+    expect(() => describeChanges('memory', 0, 1)).toThrow(RangeError);
+    expect(() => describeChanges('memory', 0, 1, 'alternate')).toThrow(RangeError);
+    expect(() => describeChanges('gorbov', 0, 1, 'digits')).toThrow(RangeError);
   });
 
   it('numseries has no level parameters', () => {

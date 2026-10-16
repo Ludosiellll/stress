@@ -312,6 +312,20 @@ describe('old levels after the load bands (F3, Р9, spec §3.1.6)', () => {
     expect(deriveModuleStates(sessions.slice(0, 1), [blk('s1', 'pzmr', 5, day(1, 8, 1), [], OLD)]).pzmr.lSaved).toBe(5);
   });
 
+  it('memory levels of 0.2.0 count as recorded: one level then and now, and every old level lies below L_norm 21 (F13)', () => {
+    // 0.2.0 played every mode at one level, digits 4 + ⌊L/3⌋ long as now; 6 rows scored by the exact ones held a player
+    // near L 9, the 10 rows scored by positions take one to 15–20 (spec §8.5), so an old level is never above the new one.
+    const OLD_MEMORY = '{"mode":"card","length":8,"itemMs":540,"gapMs":135,"trials":6}';
+    const sessions = [ses('s1', day(1)), ses('s2', day(2))];
+    const states = deriveModuleStates(sessions, [
+      blk('s1', 'memory', 12.5, day(1, 8, 1), [], OLD_MEMORY),
+      blk('s2', 'memory', 13, day(2, 8, 1), [], '{"mode":"card3x3","length":9,"exposureMs":10000,"rows":3,"sound":false,"trials":10}'),
+    ]);
+    expect(states.memory.sessionEndLevels).toEqual([12.5, 13]);
+    expect(states.memory.lSaved).toBe(12.75);
+    expect(L_NORM.memory).toBe(21);
+  });
+
   it('a band of the wrong type is no band; the end block of the session decides', () => {
     const sessions = [ses('s1', day(1)), ses('s2', day(2)), ses('s3', day(3))];
     const states = deriveModuleStates(sessions, [

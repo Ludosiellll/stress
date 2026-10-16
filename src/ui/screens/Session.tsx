@@ -15,7 +15,7 @@ import Done from '../views/Done';
 import Instruction from '../views/Instruction';
 import MemoryView from '../views/MemoryView';
 import NumSeriesView from '../views/NumSeriesView';
-import { FatiguePrompt, Notice, PauseMenu, SaveError } from '../views/Prompts';
+import { FatiguePrompt, Lesson, Notice, PauseMenu, SaveError } from '../views/Prompts';
 import ReactionView from '../views/ReactionView';
 import TableView from '../views/TableView';
 import Warnings from '../views/Warnings';
@@ -37,6 +37,7 @@ export type SessionDriver = Pick<
   | 'abandonPending'
   | 'submitWellbeing'
   | 'ackNotice'
+  | 'ackLesson'
   | 'escAllowed'
 >;
 
@@ -338,9 +339,11 @@ function SessionFlow({
             run((c) => {
               c.ackInstruction();
               // Still inside the key press or click, the moment the browser lets the audio context start. Only a
-              // block with sound needs it: a session without sound never creates an audio context (M4).
+              // block with sound needs it: a session without sound never creates an audio context (M4). A 3×3 card
+              // with sound is one too (F13).
               const next = c.step;
-              if (next.kind === 'reaction_block' && next.layers.audio !== null) void audio.unlock();
+              const sound = next.kind === 'reaction_block' ? next.layers.audio : next.kind === 'memory_block' ? next.audio : null;
+              if (sound !== null) void audio.unlock();
             });
           }}
         />
@@ -441,6 +444,17 @@ function SessionFlow({
           busy={busy}
           onContinue={() => {
             run((c) => c.continueAfterSummary());
+          }}
+        />
+      );
+    case 'lesson':
+      return (
+        <Lesson
+          lines={step.lines}
+          onContinue={() => {
+            run((c) => {
+              c.ackLesson();
+            });
           }}
         />
       );

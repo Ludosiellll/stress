@@ -186,18 +186,58 @@ describe('assessBlock', () => {
     expect(assessBlock(szmr(8), ctx).norms).toEqual([]);
   });
 
-  it('memory: the span norm from 4 exact of 6; the history shows the row length', () => {
+  it('memory: the span norm from 4 exact of a 0.2.0 block of 6 (T-R21); the history shows the row length', () => {
     const memory = row({
       module: 'memory',
       lBefore: 9,
       lAfter: 9.5,
       paramsJson: '{"mode":"digits","length":7}',
-      summaryJson: JSON.stringify({ mode: 'digits', length: 7, exact: 5, answers: [1, 2, 3, 4, 5, 6] }),
+      summaryJson: JSON.stringify({ mode: 'digits', length: 7, exact: 5, positionsCorrect: 39, answers: [1, 2, 3, 4, 5, 6] }),
     });
     const history = withHistory('memory:digits', [{ at: ago(2), value: 67, L: 9, length: 7, norms: [] }]);
     expect(assessBlock(memory, history)).toMatchObject({
       norms: ['Норма (ориентир), объём: 7 — средний; выше среднего — от 8. Woods 2011, молодые взрослые, слуховое предъявление'],
       history: 'Раньше в этом блоке: прошлый раз 67 % (ряд 7, ур. 9) · лучший 67 % · в среднем за 7 дней 67 % — новый лучший результат',
+    });
+  });
+
+  describe('memory after F13', () => {
+    const tenRows = Array.from({ length: 10 }, (_, i) => i);
+    const memoryRow = (summary: object, over: Partial<BlockRow> = {}): BlockRow =>
+      row({ module: 'memory', lBefore: 15, lAfter: 15.5, paramsJson: '{"mode":"digits"}', summaryJson: JSON.stringify(summary), ...over });
+
+    it('the key metric is the partial score in %, of an old row too (Р27)', () => {
+      const old = memoryRow({ mode: 'digits', length: 7, exact: 2, positionsCorrect: 36, answers: [1, 2, 3, 4, 5, 6] });
+      const history = buildBlockHistory([old], [{ id: 's', kind: 'training' }]);
+      expect(history.get('memory:digits')?.map((e) => e.value)).toEqual([86]);
+      const now = memoryRow({ mode: 'digits', length: 9, exact: 3, positionsCorrect: 72, partial: 0.8, answers: tenRows });
+      expect(assessBlock(now, { ...ctx, history }).history).toBe(
+        'Раньше в этом блоке: прошлый раз 86 % (ряд 7, ур. 15) · лучший 86 % · в среднем за 7 дней 86 %',
+      );
+    });
+
+    it('the span norm: 10 answers with 7 exact give it, 6 exact do not', () => {
+      const norm = (exact: number): string[] => assessBlock(memoryRow({ mode: 'digits', length: 9, exact, positionsCorrect: 80, answers: tenRows }), ctx).norms;
+      expect(norm(7)).toEqual(['Норма (ориентир), объём: 9 — высокий. Woods 2011, молодые взрослые, слуховое предъявление']);
+      expect(norm(6)).toEqual([]);
+    });
+
+    it('memory:card3x3 is a variant of its own; the goal names how the card changes there', () => {
+      const card = memoryRow(
+        { mode: 'card3x3', length: 9, exposureMs: 7000, sound: false, exact: 3, positionsCorrect: 72, partial: 0.8, answers: tenRows },
+        { paramsJson: '{"mode":"card3x3"}' },
+      );
+      const history = withHistory('memory:card3x3', [{ at: ago(1), value: 70, L: 14, length: 9, norms: [] }]);
+      expect(assessBlock(card, history)).toMatchObject({
+        step: 'Ступень 2 из 5+ — на подходе к формату теста (уровень 15,5; формат теста — 21)',
+        goal: 'До ступени 3 «формат теста»: уровень 21 (+5,5). Там: показ: 7 с → 5 с, со звуком',
+        history: 'Раньше в этом блоке: прошлый раз 70 % (ряд 9, ур. 14) · лучший 70 % · в среднем за 7 дней 70 % — новый лучший результат',
+      });
+      // A block of the old card or with an unreadable mode names no changes.
+      expect(assessBlock(memoryRow({ mode: 'card', length: 7, positionsCorrect: 30, answers: [1] }, { paramsJson: '{}' }), ctx).goal).toBe(
+        'До ступени 3 «формат теста»: уровень 21 (+5,5)',
+      );
+      expect(assessBlock(memoryRow({}, { paramsJson: 'not json' }), ctx).goal).toBe('До ступени 3 «формат теста»: уровень 21 (+5,5)');
     });
   });
 
@@ -271,8 +311,8 @@ describe('assessBlock', () => {
     expect(a.step).toBe('Ступень 3 из 5+ — формат теста (уровень 12; формат теста — 12)');
     expect(a.goal).toMatch(/^До ступени 4 «сверх нормы»: уровень 17 \(\+5\)\. Там: /);
     // 4,5 − 3,3 is 1,2 in shown rounding, not 1,2000000000000002.
-    expect(assessBlock(row({ module: 'memory', lBefore: 3, lAfter: 3.3, summaryJson: '{}' }), ctx).goal).toMatch(
-      /^До ступени 2 «на подходе к формату теста»: уровень 4,5 \(\+1,2\)\. Там: /,
+    expect(assessBlock(row({ module: 'memory', lBefore: 3, lAfter: 9.3, paramsJson: '{"mode":"digits"}', summaryJson: '{}' }), ctx).goal).toMatch(
+      /^До ступени 2 «на подходе к формату теста»: уровень 10,5 \(\+1,2\)\. Там: /,
     );
   });
 
@@ -437,14 +477,15 @@ describe('assessModules', () => {
         paramsJson: JSON.stringify({ mode: 'digits', length }),
         summaryJson: JSON.stringify({ mode: 'digits', length, exact, positionsCorrect: 30, answers: [1, 2, 3, 4, 5, 6] }),
       });
+    // The partial scores 30/36 and 30/42 (Р27); the steps by L_norm 21 (F13).
     const rows = assess({ memory: { lSaved: 9.5, lifetimeBlocks: 6 } }, [memoryBlock(3, 6, 6), memoryBlock(1, 7, 4)]);
     expect(rowOf(rows, 'memory')).toEqual({
       module: 'memory',
       title: 'Память — цифры',
-      step: '3 — формат теста (ур. 9,5; формат теста — 9)',
-      lastBest: '67 % / 100 %',
+      step: '1 — начальная (ур. 9,5; формат теста — 21)',
+      lastBest: '71 % / 83 %',
       norm: 'ряд 7: средний',
-      goal: 'ур. 14 (+4,5)',
+      goal: 'ур. 10,5 (+1)',
     });
   });
 

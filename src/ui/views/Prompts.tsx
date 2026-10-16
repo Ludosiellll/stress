@@ -2,7 +2,7 @@ import type { SaveErrorWhat } from '../../session/steps';
 import { noBreakUnits } from '../format';
 import { fromControl, isEnter, useKeyDown } from '../keys';
 
-/** Small session screens: fatigue question, save error, interruption notice, pause menu. */
+/** Small session screens: fatigue question, save error, interruption notice, lesson, pause menu. */
 
 export function FatiguePrompt({ busy, onAnswer }: { busy: boolean; onAnswer: (stop: boolean) => void }) {
   return (
@@ -102,6 +102,38 @@ export function Notice({ title = 'Блок прерван', text, onContinue, on
             Завершить сессию
           </button>
         )}
+      </div>
+    </div>
+  );
+}
+
+export interface LessonProps {
+  /** The lesson's lines: the first is its heading, the rest its points (F13: CARD_LESSON). */
+  lines: readonly string[];
+  onContinue: () => void;
+}
+
+/** A one-time lesson before a new kind of block (F13: the strategy before the first 3×3 card); Enter goes on. */
+export function Lesson({ lines, onContinue }: LessonProps) {
+  useKeyDown((e) => {
+    if (!isEnter(e) || fromControl(e)) return;
+    e.preventDefault();
+    onContinue();
+  });
+  const [title = '', ...points] = lines;
+  return (
+    <div className="screen-center lesson">
+      <h2 tabIndex={-1}>{title}</h2>
+      <ul className="lesson-points">
+        {points.map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+      <p className="hint">Нажми Enter, чтобы продолжить. Esc — пауза.</p>
+      <div className="actions">
+        <button type="button" className="primary" onClick={onContinue}>
+          Понятно (Enter)
+        </button>
       </div>
     </div>
   );

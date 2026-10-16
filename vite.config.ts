@@ -9,5 +9,6 @@ export default defineConfig({
   clearScreen: false,
   define: { __APP_VERSION__: JSON.stringify(version) },
   server: { port: 5173, strictPort: true },
-  build: { target: 'es2022' },
+  // The desktop app loads its one chunk from disk, not over a network: the 500 kB web warning does not apply to it.
+  build: { target: 'es2022', chunkSizeWarningLimit: 1000 },
 });
