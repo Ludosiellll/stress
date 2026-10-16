@@ -102,6 +102,17 @@ describe('diagnosticDetailLines (F7, Р20)', () => {
   it('the РДО bias: + is after the mark, 0 has no side', () => {
     expect(diagnosticDetailLines({ ...EMPTY_METRICS, rdoEarly: 2, rdoLate: 5, rdoSignedBiasMs: 4.4 })).toEqual(['РДО: рано 2, поздно 5, смещение +4 мс (позже отметки)']);
     expect(diagnosticDetailLines({ ...EMPTY_METRICS, rdoEarly: 0, rdoLate: 0, rdoSignedBiasMs: -0.4 })).toEqual(['РДО: рано 0, поздно 0, смещение 0 мс']);
+    expect(diagnosticDetailLines({ ...EMPTY_METRICS, rdoEarly: 0, rdoLate: 0, rdoSignedBiasMs: 0 })).toEqual(['РДО: рано 0, поздно 0, смещение 0 мс']);
+  });
+
+  it('a count that is not a whole number ≥ 0 (a damaged or imported row) counts as missing: no line (T-R55)', () => {
+    for (const bad of [1.5, -2]) {
+      expect(diagnosticDetailLines({ ...F7, szmrWrong: bad })).not.toContainEqual(expect.stringMatching(/^СЗМР/));
+      expect(diagnosticDetailLines({ ...F7, pzmrFalseStarts: bad })).not.toContainEqual(expect.stringMatching(/^ПЗМР/));
+      expect(diagnosticDetailLines({ ...F7, gonogoOmissions: bad })).not.toContainEqual(expect.stringMatching(/^Go\/No-Go/));
+      expect(diagnosticDetailLines({ ...F7, rdoLate: bad })).not.toContainEqual(expect.stringMatching(/^РДО/));
+    }
+    expect(diagnosticDetailLines({ ...F7, szmrFalseStarts: 2.5, gonogoCommissions: -1, rdoEarly: 0.5, pzmrFalseStarts: -0.5 })).toEqual([]);
   });
 
   it('a module without data has no line; a row stored before F7 has none at all', () => {

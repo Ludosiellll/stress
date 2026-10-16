@@ -155,13 +155,24 @@ function biasText(ms: number): string {
   return `${signedMs(b)} мс (${b < 0 ? 'раньше' : 'позже'} отметки)`;
 }
 
+/** A count as stored: a whole number ≥ 0, else missing (a damaged or imported row may hold 1.5 or −2; T-R55). */
+const count = (v: number | null): number | null => (v !== null && Number.isInteger(v) && v >= 0 ? v : null);
+
 /**
  * «Подробности диагностики» under the results table (F7, Р20): the spread and the errors of ПЗМР, СЗМР, Go/No-Go and
- * РДО, ms whole. A module has a line only when every value of it is there: rows stored before F7 have none.
+ * РДО, ms whole. A module has a line only when every value of it is there: rows stored before F7 have none, and a
+ * count that is not a whole number ≥ 0 counts as missing.
  */
 export function diagnosticDetailLines(d: DiagnosticMetrics): string[] {
   const lines: string[] = [];
-  const { pzmrSdRt, pzmrIqrRt, pzmrFalseStarts, szmrSdRt, szmrIqrRt, szmrFalseStarts, szmrWrong } = d;
+  const { pzmrSdRt, pzmrIqrRt, szmrSdRt, szmrIqrRt, rdoSignedBiasMs } = d;
+  const pzmrFalseStarts = count(d.pzmrFalseStarts);
+  const szmrFalseStarts = count(d.szmrFalseStarts);
+  const szmrWrong = count(d.szmrWrong);
+  const commissions = count(d.gonogoCommissions);
+  const omissions = count(d.gonogoOmissions);
+  const early = count(d.rdoEarly);
+  const late = count(d.rdoLate);
   if (pzmrSdRt !== null && pzmrIqrRt !== null && pzmrFalseStarts !== null) {
     lines.push(`ПЗМР: разброс (SD) ${String(whole(pzmrSdRt))} мс, IQR ${String(whole(pzmrIqrRt))} мс, фальстарты ${String(pzmrFalseStarts)}`);
   }
@@ -170,11 +181,11 @@ export function diagnosticDetailLines(d: DiagnosticMetrics): string[] {
       `СЗМР: разброс (SD) ${String(whole(szmrSdRt))} мс, IQR ${String(whole(szmrIqrRt))} мс, фальстарты ${String(szmrFalseStarts)}, неверная клавиша ${String(szmrWrong)}`,
     );
   }
-  if (d.gonogoCommissions !== null && d.gonogoOmissions !== null) {
-    lines.push(`Go/No-Go: нажатия на no-go ${String(d.gonogoCommissions)}, пропуски ${String(d.gonogoOmissions)}`);
+  if (commissions !== null && omissions !== null) {
+    lines.push(`Go/No-Go: нажатия на no-go ${String(commissions)}, пропуски ${String(omissions)}`);
   }
-  if (d.rdoEarly !== null && d.rdoLate !== null && d.rdoSignedBiasMs !== null) {
-    lines.push(`РДО: рано ${String(d.rdoEarly)}, поздно ${String(d.rdoLate)}, смещение ${biasText(d.rdoSignedBiasMs)}`);
+  if (early !== null && late !== null && rdoSignedBiasMs !== null) {
+    lines.push(`РДО: рано ${String(early)}, поздно ${String(late)}, смещение ${biasText(rdoSignedBiasMs)}`);
   }
   return lines;
 }

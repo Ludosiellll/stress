@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { sdScore } from '../../src/engine/readiness';
 import { sd, sdTrimmed } from '../../src/engine/stats';
+import { exGaussRt } from './models/exgauss';
 import { Rand } from './models/learner';
 
 /**
@@ -28,11 +29,7 @@ const SEED = 3;
 
 function blockRts(b: DiagnosticBlock, r: Rand): number[] {
   const day = b.daySd * r.normal();
-  return Array.from({ length: b.n }, () => {
-    let x = b.mu + day + b.sigma * r.normal() + r.exp(b.tau);
-    if (r.next() < LAPSE) x += 300 + 400 * r.next();
-    return x;
-  });
+  return Array.from({ length: b.n }, () => exGaussRt(r, b.mu + day, b.sigma, b.tau, LAPSE));
 }
 
 /** The SD part of the second diagnostic against the first, over PAIRS pairs of diagnostics of the same player. */
@@ -51,3 +48,4 @@ describe('readiness SD simulation (F7)', () => {
     expect(sd(sdParts(b))).toBeLessThanOrEqual(23);
   });
 });
+

@@ -46,9 +46,10 @@ export function sdTrimmed(xs: readonly number[]): number {
 
 /**
  * The p-quantile (0 ≤ p ≤ 1) with linear interpolation between ranks: the sorted values at (k − 1)·p (Справочник F7,
- * IQR). NaN for none.
+ * IQR). NaN for none; RangeError for p outside [0, 1].
  */
 export function quantile(xs: readonly number[], p: number): number {
+  if (!(p >= 0 && p <= 1)) throw new RangeError(`quantile needs 0 ≤ p ≤ 1, got ${String(p)}`);
   const sorted = [...xs].sort((a, b) => a - b);
   const last = sorted.length - 1;
   if (last < 0) return NaN;

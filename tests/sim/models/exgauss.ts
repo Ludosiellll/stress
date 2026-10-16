@@ -83,12 +83,17 @@ const FLOOR_ITERATIONS = 40;
 const FLOOR_SAMPLES = 20_000;
 const STIMULUS: TrialSpec['stimulus'] = { kind: 'shape', shape: 'circle', color: 'red' };
 
+/** One ex-Gaussian RT, μ + σ·N(0, 1) + Exp(τ), with a lapse of +300…700 ms at the rate `lapse`. */
+export function exGaussRt(r: Rand, mu: number, sigma: number, tau: number, lapse: number): number {
+  let x = mu + sigma * r.normal() + r.exp(tau);
+  if (r.next() < lapse) x += 300 + 400 * r.next();
+  return x;
+}
+
 function rt(r: Rand, l: ExGaussLearner, hard: boolean, load: number): number {
   const mu = (l.mu + (hard ? l.condShift : 0)) * (1 + 0.06 * load);
   const tau = l.tau * (hard ? l.condTau : 1) * (1 + 0.1 * load);
-  let x = mu + l.sigma * r.normal() + r.exp(tau);
-  if (r.next() < l.lapse) x += 300 + 400 * r.next();
-  return x;
+  return exGaussRt(r, mu, l.sigma, tau, l.lapse);
 }
 
 /** The value at rank ⌊p·n⌋ of the sorted values (the script's quantile). */

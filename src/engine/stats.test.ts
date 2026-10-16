@@ -70,4 +70,8 @@ describe('stats', () => {
     expect(xs).toEqual([4, 1, 3, 2]);
     expect(quantile([], 0.5)).toBeNaN();
   });
+
+  it('quantile refuses p outside [0, 1] (T-R55)', () => {
+    for (const p of [-0.01, 1.01, Number.NaN]) expect(() => quantile([1, 2, 3], p)).toThrow(RangeError);
+  });
 });
