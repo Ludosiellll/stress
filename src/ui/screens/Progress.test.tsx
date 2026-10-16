@@ -183,8 +183,8 @@ describe('Progress edge cases', () => {
     expect(screen.getByText('Пройди диагностику, чтобы увидеть индекс')).toBeTruthy();
     // One chart per diagnostic metric + one level chart per module with a level (all but number series).
     const levelModules = MODULE_IDS.filter((m) => m !== 'numseries').length;
-    // …and the form-of-day chart.
-    expect(screen.getAllByText('Нет данных')).toHaveLength(diagnosticCharts([]).length + levelModules + 1);
+    // …and the form-of-day chart and the index chart.
+    expect(screen.getAllByText('Нет данных')).toHaveLength(diagnosticCharts([]).length + levelModules + 2);
     expect(screen.getByText('Сессий пока нет')).toBeTruthy();
     expect(screen.queryByText('≈ формат теста')).toBeNull();
   });
@@ -380,5 +380,80 @@ describe('Progress navigation', () => {
     await new Promise((r) => setTimeout(r, 5));
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(onBack).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('Progress: noise band and trend (F7)', () => {
+  /** Diagnostics a week apart, the ПЗМР median of each as given. */
+  async function weekly(repo: MemoryRepository, medians: readonly number[]): Promise<void> {
+    for (const [i, pzmrMedianRt] of medians.entries()) {
+      const at = new Date(2026, 6, 1 + 7 * i, 10).toISOString();
+      await repo.createSession(session(`diag-${String(i)}`, at, { kind: 'diagnostic', endedAt: at }));
+      await repo.addDiagnostic({ id: `d${String(i)}`, sessionId: `diag-${String(i)}`, number: i + 1, at, resultsJson: JSON.stringify({ ...base, pzmrMedianRt }) });
+    }
+  }
+
+  it('under a chart: the trend line with its noise band; Горбов has a line per series', async () => {
+    const repo = new MemoryRepository();
+    await weekly(repo, [300, 298, 295, 292, 290, 288]);
+    await renderProgress(repo);
+    const card = chartOf('ПЗМР, медиана, мс');
+    // A number keeps its unit on its line (T-R26).
+    expect(card.querySelector('p.chart-trend')?.textContent).toBe('Тренд: −12\u00a0мс за 5 недель — лучше (шум ±3\u00a0мс)');
+    expect(card.querySelectorAll('polygon.chart-band')).toHaveLength(1);
+    const gorbov = chartOf('Таблица Горбова: V, P, Π, с');
+    expect([...gorbov.querySelectorAll('p.chart-trend')].map((p) => p.textContent)).toEqual([
+      'V: тренд 0\u00a0с за 5 недель — в пределах шума (шум ±0,0\u00a0с)',
+      'P: тренд 0\u00a0с за 5 недель — в пределах шума (шум ±0,0\u00a0с)',
+      'Π: тренд 0\u00a0с за 5 недель — в пределах шума (шум ±0,0\u00a0с)',
+    ]);
+    expect(gorbov.querySelectorAll('polygon.chart-band')).toHaveLength(3);
+  });
+
+  it('the index chart comes first among the diagnostics, with its trend', async () => {
+    const repo = new MemoryRepository();
+    await weekly(repo, [300, 298, 295]);
+    await renderProgress(repo);
+    const headings = screen.getAllByRole('heading').map((h) => h.textContent);
+    const at = headings.indexOf('Контрольные диагностики');
+    expect(headings[at + 1]).toBe('Общий индекс готовности');
+    const card = chartOf('Общий индекс готовности');
+    expect(card.closest('section')?.getAttribute('aria-labelledby')).toBe('diagnostics-title');
+    expect(within(card).getByText('больше — лучше')).toBeTruthy();
+    expect(card.querySelectorAll('circle')).toHaveLength(3);
+    expect(card.querySelectorAll('p.chart-trend')).toHaveLength(1);
+    expect(card.querySelector('p.chart-trend')?.textContent).toMatch(/^Тренд: [+−]?\d+ за 2 недели — /);
+  });
+
+  it('with fewer than 3 points the line says when the band comes, once per chart; an empty chart has none', async () => {
+    const repo = new MemoryRepository();
+    await weekly(repo, [300, 298]);
+    await renderProgress(repo);
+    expect([...chartOf('ПЗМР, медиана, мс').querySelectorAll('p.chart-trend')].map((p) => p.textContent)).toEqual([
+      'Полоса шума и тренд появятся после 3 точек.',
+    ]);
+    // Three short series, one line.
+    expect(chartOf('Таблица Горбова: V, P, Π, с').querySelectorAll('p.chart-trend')).toHaveLength(1);
+    expect(chartOf('ПЗМР, медиана, мс').querySelector('polygon')).toBeNull();
+    // No warm-ups: «Нет данных», no trend line.
+    expect(chartOf('Разминка ПЗМР: медиана по дням, мс').querySelector('p.chart-trend')).toBeNull();
+  });
+
+  it('the run charts and the form of the day have their trend lines', async () => {
+    const repo = new MemoryRepository();
+    const day = (d: number): string => new Date(Date.now() - d * 86_400_000).toISOString();
+    const run = (mean: number): string => JSON.stringify({ testFormat: { mean, sd: 30, errors: 0, falseStarts: 0, thirds: [mean, mean, mean] } });
+    for (const [d, mean] of [[22, 300], [15, 298], [8, 295], [1, 292]] as const) {
+      await repo.createSession(session(`s${String(d)}`, day(d), { endedAt: day(d) }));
+      await repo.addBlock(block(`r${String(d)}`, `s${String(d)}`, day(d), { module: 'szmr', flags: ['test_format'], summaryJson: run(mean) }), [], []);
+      await repo.addBlock(block(`w${String(d)}`, `s${String(d)}`, day(d), { flags: ['warmup'], summaryJson: JSON.stringify({ cleanHitRts: [mean] }) }), [], []);
+    }
+    await renderProgress(repo);
+    for (const title of ['СЗМР: среднее, мс', 'Разминка ПЗМР: медиана по дням, мс']) {
+      const card = chartOf(title);
+      expect(card.querySelector('p.chart-trend')?.textContent).toMatch(/^Тренд: −\d+\u00a0мс за 3 недели — /);
+      expect(card.querySelectorAll('polygon.chart-band')).toHaveLength(1);
+    }
+    expect(chartOf('СЗМР: SD, мс').querySelector('p.chart-trend')?.textContent).toBe('Тренд: 0\u00a0мс за 3 недели — в пределах шума (шум ±0\u00a0мс)');
   });
 });

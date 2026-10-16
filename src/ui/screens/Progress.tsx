@@ -4,7 +4,15 @@ import LineChart, { type ChartDomain, type ChartSeries } from '../charts/LineCha
 import { logEvent } from '../errorLog';
 import { decimal, noBreakUnits } from '../format';
 import { useKeyDown } from '../keys';
-import { loadProgressModel, SESSION_LINES, type OverloadMean, type ProgressModel, type TestFormatProgress } from '../progressModel';
+import {
+  loadProgressModel,
+  SESSION_LINES,
+  type ChartSpec,
+  type OverloadMean,
+  type ProgressModel,
+  type TestFormatProgress,
+  type TrendView,
+} from '../progressModel';
 import ReadinessBlock from '../views/ReadinessBlock';
 
 export interface ProgressProps {
@@ -26,8 +34,13 @@ function ChartCard(props: {
   footnote?: string;
   domain: ChartDomain;
   whole?: boolean;
+  /** The trend of each series (F7): its noise band on the chart, its line under it. */
+  trends?: readonly TrendView[];
 }) {
-  const { title, note, yLabel, xLabel, lowerIsBetter, series, refLine, marker, unreliable = [], footnote, domain, whole = false } = props;
+  const { title, note, yLabel, xLabel, lowerIsBetter, series, refLine, marker, unreliable = [], footnote, domain, whole = false, trends } = props;
+  // Under a chart with values; series that are all short say so once.
+  const hasValues = series.some((s) => s.points.some((p) => p.y !== null));
+  const trendLines = trends === undefined || !hasValues ? [] : [...new Set(trends.map((t) => t.text))];
   return (
     <figure className="chart-card">
       <figcaption>
@@ -43,7 +56,13 @@ function ChartCard(props: {
         {...(lowerIsBetter === undefined ? {} : { lowerIsBetter })}
         {...(refLine === undefined ? {} : { refLine })}
         {...(marker === undefined ? {} : { marker })}
+        {...(trends === undefined ? {} : { bands: trends.map((t) => t.band) })}
       />
+      {trendLines.map((line) => (
+        <p key={line} className="chart-note chart-trend">
+          {noBreakUnits(line)}
+        </p>
+      ))}
       {unreliable.length > 0 && <p className="muted chart-note">Замер ненадёжен (пропуски кадров): {unreliable.join(', ')}</p>}
       {footnote !== undefined && <p className="muted chart-note">{footnote}</p>}
     </figure>
@@ -96,6 +115,7 @@ function FormOfDay({ model }: { model: ProgressModel }) {
           series={[{ name: 'Разминка ПЗМР', points: model.formOfDay }]}
           domain={{ min: 0 }}
           whole
+          trends={[model.formOfDayTrend]}
         />
       </div>
     </section>
@@ -108,8 +128,8 @@ const msCell = (v: number | null): string => (v === null ? '—' : noBreakUnits(
 /** The two charts of a format: its mean (РДО: the deviation) and its SD by run, x «дд.мм». */
 function TestFormatCharts({ f }: { f: TestFormatProgress }) {
   const charts = [
-    { title: f.format === 'rdo' ? `${f.name}: отклонение, мс` : `${f.name}: среднее, мс`, points: f.mean },
-    { title: `${f.name}: SD, мс`, points: f.sd },
+    { title: f.format === 'rdo' ? `${f.name}: отклонение, мс` : `${f.name}: среднее, мс`, points: f.mean, trend: f.trends.mean },
+    { title: `${f.name}: SD, мс`, points: f.sd, trend: f.trends.sd },
   ];
   return (
     <>
@@ -123,6 +143,7 @@ function TestFormatCharts({ f }: { f: TestFormatProgress }) {
           series={[{ name: f.name, points: c.points }]}
           domain={{ min: 0 }}
           whole
+          trends={[c.trend]}
         />
       ))}
     </>
@@ -191,7 +212,7 @@ function Diagnostics({ model }: { model: ProgressModel }) {
       <h2 id="diagnostics-title">Контрольные диагностики</h2>
       <p className="muted">По одной точке на диагностику. Если показателя в диагностике не было, на графике пропуск.</p>
       <div className="chart-grid">
-        {model.diagnostics.map((c) => (
+        {[model.indexChart, ...model.diagnostics].map((c: ChartSpec) => (
           <ChartCard
             key={c.id}
             title={c.title}
@@ -202,6 +223,7 @@ function Diagnostics({ model }: { model: ProgressModel }) {
             unreliable={c.unreliable}
             domain={c.domain}
             whole={c.whole}
+            trends={c.trends}
           />
         ))}
       </div>

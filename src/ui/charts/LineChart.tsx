@@ -34,6 +34,17 @@ export interface LineChartProps {
   domain?: ChartDomain;
   /** Whole units (milliseconds, %): values are rounded as the results tables round them and the ticks are whole. */
   whole?: boolean;
+  /**
+   * The noise band of each series (F7), in its colour: an area from lo to hi over the slots whose labels are the x of
+   * its points. Kept inside the domain; the y scale reaches its edges. A band on fewer than two slots is not drawn.
+   */
+  bands?: ReadonlyArray<ReadonlyArray<BandPoint>>;
+}
+
+export interface BandPoint {
+  x: string;
+  lo: number;
+  hi: number;
 }
 
 export interface ChartDomain {
@@ -176,6 +187,22 @@ function pointTitle(x: string, value: string, series: string | null, note: strin
   return extra.length === 0 ? `${x}: ${value}` : `${x}: ${value} (${extra.join(', ')})`;
 }
 
+/**
+ * The slots of a band, in slot order: each point takes the first slot with its label that no earlier point took (two
+ * runs on one day share a label). Points on no slot are left out.
+ */
+function bandSlots(band: ReadonlyArray<BandPoint>, xLabels: readonly string[]): { i: number; lo: number; hi: number }[] {
+  const used = new Set<number>();
+  const slots: { i: number; lo: number; hi: number }[] = [];
+  for (const b of band) {
+    const i = xLabels.findIndex((x, k) => x === b.x && !used.has(k));
+    if (i < 0) continue;
+    used.add(i);
+    slots.push({ i, lo: b.lo, hi: b.hi });
+  }
+  return slots.sort((a, b) => a.i - b.i);
+}
+
 function ends(s: ChartSeries): { first: ChartPoint & { y: number }; last: ChartPoint & { y: number } } | null {
   const real = s.points.filter((p): p is ChartPoint & { y: number } => p.y !== null);
   const first = real[0];
@@ -197,7 +224,7 @@ function markerLabelX(lineX: number, label: string, yLabel: string): number {
   return from > to ? (from + to) / 2 : Math.min(Math.max(lineX, from), to);
 }
 
-export default function LineChart({ series, yLabel, xLabel, lowerIsBetter, refLine, marker, domain, whole = false }: LineChartProps) {
+export default function LineChart({ series, yLabel, xLabel, lowerIsBetter, refLine, marker, domain, whole = false, bands = [] }: LineChartProps) {
   const fmt = whole ? fmtWhole : fmtValue;
   const drawn = series.slice(0, MAX_SERIES);
   const values = drawn.flatMap((s) => s.points.flatMap((p) => (p.y === null ? [] : [p.y])));
@@ -207,10 +234,17 @@ export default function LineChart({ series, yLabel, xLabel, lowerIsBetter, refLi
   const slots = widest.points.length;
   const xLabels = widest.points.map((p) => p.x);
 
+  // A band never leaves the domain: a time is never below 0, a percentage never above 100.
+  const inDomain = (v: number): number => Math.min(domain?.max ?? Infinity, Math.max(domain?.min ?? -Infinity, v));
+  const bandAreas = drawn.map((_, si) =>
+    bandSlots(bands[si] ?? [], xLabels).map((b) => ({ i: b.i, lo: inDomain(b.lo), hi: inDomain(b.hi) })),
+  );
+  const bandValues = bandAreas.flatMap((area) => (area.length < 2 ? [] : area.flatMap((b) => [b.lo, b.hi])));
+
   const markerSlot = marker === undefined ? -1 : xLabels.indexOf(marker.x);
   const shown = markerSlot < 0 ? undefined : marker;
   const refBefore = refLine === undefined ? undefined : shown?.refYBefore;
-  const scale = [...values, ...(refLine === undefined ? [] : [refLine.y]), ...(refBefore === undefined ? [] : [refBefore])];
+  const scale = [...values, ...bandValues, ...(refLine === undefined ? [] : [refLine.y]), ...(refBefore === undefined ? [] : [refBefore])];
   const ticks = niceTicks(Math.min(...scale), Math.max(...scale), domain, whole);
   const lo = ticks[0] as number;
   const hi = ticks[ticks.length - 1] as number;
@@ -302,6 +336,18 @@ export default function LineChart({ series, yLabel, xLabel, lowerIsBetter, refLi
               {refLine.label}
             </text>
           </>
+        )}
+        {bandAreas.map((area, si) =>
+          area.length < 2 ? null : (
+            <g key={`band-${String(si)}`} className={`s${String(si + 1)}`}>
+              <polygon
+                className="chart-band"
+                points={[...area.map((b) => [b.i, b.hi] as const), ...[...area].reverse().map((b) => [b.i, b.lo] as const)]
+                  .map(([i, v]) => `${xAt(i).toFixed(1)},${yAt(v).toFixed(1)}`)
+                  .join(' ')}
+              />
+            </g>
+          ),
         )}
         {drawn.map((s, si) => {
           let d = '';

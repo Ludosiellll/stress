@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { sdScore } from '../../src/engine/readiness';
-import { sd, sdTrimmed } from '../../src/engine/stats';
+import { mean, sd, sdTrimmed } from '../../src/engine/stats';
+import { trend, TREND_POINTS, type Trend } from '../../src/engine/trend';
 import { exGaussRt } from './models/exgauss';
 import { Rand } from './models/learner';
 
@@ -49,3 +50,18 @@ describe('readiness SD simulation (F7)', () => {
   });
 });
 
+/** σ̂ on a straight line with noise (Справочник F7): σ = 10, a slope of 0,4σ per step, k = 6 points, 20 000 lines. */
+const LINE = { sigma: 10, slopePerStep: 0.4 * 10, k: TREND_POINTS, repeats: 20_000 };
+
+describe('noise band simulation (F7)', () => {
+  it('σ̂ on a noisy line is off by ≤ 15 % at k = 6', () => {
+    const r = new Rand(SEED);
+    const sigmas = Array.from({ length: LINE.repeats }, () => {
+      const points = Array.from({ length: LINE.k }, (_, i) => ({ t: 7 * i, y: LINE.slopePerStep * i + LINE.sigma * r.normal() }));
+      return (trend(points, true) as Trend).sigma;
+    });
+    // Seed 3: mean(σ̂)/σ = 0.980. The plain SD of the points (trend included) gives 1.19, the differences without the
+    // factor 2 give 1.39: both fail.
+    expect(Math.abs(mean(sigmas) / LINE.sigma - 1)).toBeLessThanOrEqual(0.15);
+  });
+});

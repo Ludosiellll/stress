@@ -5,15 +5,18 @@ import type { FormDay } from '../engine/dayForm';
 import { sessionEndPoints, type LevelPoint } from '../engine/derive';
 import { parseResults, type DiagnosticMetrics, type DiagnosticResults } from '../engine/diagnostic';
 import { L_NORM, OLD_L_NORM, TEST_FORMAT_ORDER, type TestFormatId } from '../engine/planner';
+import { readinessOfLatest } from '../engine/readiness';
 import { mean, median } from '../engine/stats';
+import { trend, trendWindow, type Trend } from '../engine/trend';
 import { isBandModule, MODULE_IDS, type ModuleId, type ReactionModuleId, type SessionKind } from '../engine/types';
 import { moduleTitles } from '../modules/registry';
 import { assessModules, meanFamilyRating, type ModuleAssessment } from '../session/assessment';
 import { buildBlockHistory, scoreFromCounts } from '../session/blockHistory';
 import { pastBlocks, testFormatRunsAt, warmupDays, type PastBlocks } from '../session/pastBlocks';
-import { shownCost } from '../session/steps';
+import { plural, shownCost } from '../session/steps';
 import { TEST_FORMAT_NAMES, testFormatBest, type TestFormatBest } from '../session/testFormat';
 import type { ChartDomain, ChartPoint, ChartSeries } from './charts/LineChart';
+import { decimal } from './format';
 import { readinessOf, type HomeModel } from './homeModel';
 
 export interface ChartSpec {
@@ -30,6 +33,20 @@ export interface ChartSpec {
   domain: ChartDomain;
   /** Whole units (ms, %, counts): rounded as the results table rounds them, whole ticks (B6). */
   whole: boolean;
+  /** One per series, in series order (F7). */
+  trends: TrendView[];
+}
+
+/** The unit of a trend line: ms, %, s, or none (counts, index points). */
+export type TrendUnit = 'мс' | '%' | 'с' | '';
+
+/**
+ * The trend line under a chart and the noise band of one series (F7, Р19): the band is the trend line ± 2σ̂ at the x
+ * of the points the trend uses; none below 3 points, where the text says when they come.
+ */
+export interface TrendView {
+  text: string;
+  band: { x: string; lo: number; hi: number }[];
 }
 
 /** Times, errors, counts and levels are never negative; Go/No-Go is a percentage. */
@@ -62,6 +79,8 @@ export interface TestFormatProgress {
   /** The mean (РДО: the deviation) of each run; null: the run has none. */
   mean: ChartPoint[];
   sd: ChartPoint[];
+  /** The trends of the two charts (F7). */
+  trends: { mean: TrendView; sd: TrendView };
   best: TestFormatBest;
   runs: number;
 }
@@ -79,8 +98,12 @@ export interface ProgressModel {
   /** «Оценка по модулям», in MODULE_IDS order. */
   assessment: ModuleAssessment[];
   diagnostics: ChartSpec[];
+  /** «Общий индекс готовности» by diagnostic (F7). */
+  indexChart: ChartSpec;
   /** «Форма дня»: the daily median of the ПЗМР warm-up over FORM_CHART_DAYS days (F5). */
   formOfDay: ChartPoint[];
+  /** The trend of the form-of-day chart (F7). */
+  formOfDayTrend: TrendView;
   /** «Прогоны в формате теста»: the formats with at least one stored run, in TEST_FORMAT_ORDER (F4). */
   testFormats: TestFormatProgress[];
   levels: LevelChartSpec[];
@@ -134,6 +157,70 @@ function count<T>(keys: readonly T[]): Map<T, number> {
   return m;
 }
 
+/** The local calendar day of an ISO time, the t of a trend (F7); null when it does not read as a date. */
+function dayOf(iso: string): number | null {
+  try {
+    return localDayNumber(iso);
+  } catch {
+    return null;
+  }
+}
+
+export const NO_TREND = 'Полоса шума и тренд появятся после 3 точек.';
+
+const VERDICTS: Record<Trend['verdict'], string> = { better: 'лучше', worse: 'хуже', noise: 'в пределах шума' };
+
+/**
+ * «Тренд: −12 мс за 5 недель — лучше (шум ±3 мс)» (F7): the change and 2σ̂ in whole units, seconds with one decimal;
+ * the period in weeks from 14 days on, else in days. With a series name: «V: тренд …». Without a trend: NO_TREND.
+ */
+export function trendText(t: Trend | null, unit: TrendUnit, seriesName?: string): string {
+  if (t === null) return NO_TREND;
+  const size = (v: number): string => (unit === 'с' ? decimal(Math.abs(v), 1) : String(Math.round(Math.abs(v))));
+  const withUnit = (text: string): string => (unit === '' ? text : `${text} ${unit}`);
+  const change = size(t.change);
+  const signed = /^0(,0)?$/.test(change) ? '0' : `${t.change < 0 ? '−' : '+'}${change}`;
+  const days = Math.round(t.days);
+  const weeks = Math.round(days / 7);
+  const period = days >= 14 ? `${String(weeks)} ${plural(weeks, 'неделю', 'недели', 'недель')}` : `${String(days)} дн.`;
+  const line = `${withUnit(signed)} за ${period} — ${VERDICTS[t.verdict]} (шум ±${withUnit(size(2 * t.sigma))})`;
+  return seriesName === undefined ? `Тренд: ${line}` : `${seriesName}: тренд ${line}`;
+}
+
+/** A chart point with its time in days; t null: no date, left out of the trend like a missing value. */
+interface TimedPoint {
+  x: string;
+  t: number | null;
+  y: number | null;
+}
+
+/** The trend of a series and its band: the line ± 2σ̂ at the x of the same last ≤ 6 points by date (Р19). */
+export function trendView(points: readonly TimedPoint[], lowerIsBetter: boolean, unit: TrendUnit, seriesName?: string): TrendView {
+  const window = trendWindow(points.flatMap((p) => (p.y === null || p.t === null ? [] : [{ x: p.x, t: p.t, y: p.y }])));
+  const t = trend(window, lowerIsBetter);
+  const band =
+    t === null
+      ? []
+      : window.map((p) => {
+          const mid = t.intercept + t.slope * p.t;
+          return { x: p.x, lo: mid - 2 * t.sigma, hi: mid + 2 * t.sigma };
+        });
+  return { text: trendText(t, unit, seriesName), band };
+}
+
+/** One trend per series, the point at index i taken at time ts[i]; named by its series when the chart has several. */
+function seriesTrends(series: readonly ChartSeries[], ts: readonly (number | null)[], lowerIsBetter: boolean, unit: TrendUnit): TrendView[] {
+  const several = series.length > 1;
+  return series.map((s) =>
+    trendView(
+      s.points.map((p, i) => ({ x: p.x, t: ts[i] ?? null, y: p.y })),
+      lowerIsBetter,
+      unit,
+      several ? s.name : undefined,
+    ),
+  );
+}
+
 /**
  * x labels of the diagnostics: «№2». A number two diagnostics share (after a restore merge) gets the local date,
  * «№1 (05.10)», and the time too when they share the day, «№1 (01.10 09:30)», so no label shows twice.
@@ -174,6 +261,7 @@ type NumericMetric = Exclude<keyof DiagnosticMetrics, 'gorbov'>;
 export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
   const labels = diagnosticLabels(rows);
   const parsed = rows.map((row, i) => ({ x: labels[i] as string, r: parseResults(row) }));
+  const ts = rows.map((row) => dayOf(row.at));
   const shaky = (module: ReactionModuleId | null, r: DiagnosticResults | null): boolean =>
     module !== null && r !== null && r.unreliable.includes(module);
   const line = (name: string, pick: (r: DiagnosticResults | null) => number | null, module: ReactionModuleId | null = null): ChartSeries => ({
@@ -187,20 +275,22 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
   /** A difference as Done and the block summary show it (shownCost). */
   const cost = (fast: NumericMetric, slow: NumericMetric, stored: NumericMetric) => (r: DiagnosticResults | null): number | null =>
     shownCost(metric(r, fast), metric(r, slow), metric(r, stored));
+  /** A chart before its trends; the unit of its trend lines is its y label, or none for counts. */
+  type Draft = Omit<ChartSpec, 'trends'> & { unit: TrendUnit };
   const reaction = (
     id: ReactionModuleId,
     title: string,
-    yLabel: string,
+    unit: 'мс' | '%',
     lowerIsBetter: boolean,
     name: string,
     key: NumericMetric | ((r: DiagnosticResults | null) => number | null),
     domain: ChartDomain = NON_NEGATIVE,
-  ): ChartSpec => {
+  ): Draft => {
     const series = [line(name, typeof key === 'function' ? key : (r) => metric(r, key), id)];
     const unreliable = (series[0]?.points ?? []).flatMap((p) => (p.note === undefined ? [] : [p.x]));
-    return { id, title, yLabel, lowerIsBetter, series, unreliable, domain, whole: true };
+    return { id, title, yLabel: unit, unit, lowerIsBetter, series, unreliable, domain, whole: true };
   };
-  return [
+  const drafts: Draft[] = [
     reaction('pzmr', 'ПЗМР, медиана, мс', 'мс', true, 'ПЗМР', 'pzmrMedianRt'),
     reaction('szmr', 'СЗМР, медиана, мс', 'мс', true, 'СЗМР', 'szmrMedianRt'),
     reaction('gonogo', 'Go/No-Go, точность, %', '%', false, 'Go/No-Go', 'gonogoScore', PERCENT),
@@ -209,6 +299,7 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
       id: 'gorbov',
       title: 'Таблица Горбова: V, P, Π, с',
       yLabel: 'с',
+      unit: 'с',
       lowerIsBetter: true,
       series: [line('V', (r) => gorbovOf(r).V), line('P', (r) => gorbovOf(r).P), line('Π', (r) => gorbovOf(r).Pi)],
       unreliable: [],
@@ -220,6 +311,7 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
       id: 'numseries',
       title: 'Числовые ряды, верно из 20',
       yLabel: 'верно из 20',
+      unit: '',
       lowerIsBetter: false,
       series: [line('Числовые ряды', (r) => metric(r, 'numseriesCorrect'))],
       unreliable: [],
@@ -233,6 +325,7 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
       id: 'memory',
       title: 'Память: объём',
       yLabel: 'цифр',
+      unit: '',
       lowerIsBetter: false,
       series: [line(moduleTitles.memory, (r) => metric(r, 'memorySpan'))],
       unreliable: [],
@@ -240,6 +333,41 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
       whole: true,
     },
   ];
+  return drafts.map(({ unit, ...c }) => ({ ...c, trends: seriesTrends(c.series, ts, c.lowerIsBetter, unit) }));
+}
+
+/**
+ * «Общий индекс готовности» by diagnostic (F7): the overall index of each diagnostic after the ones before it, as Home
+ * shows it for the latest (readinessOf); an unreadable row is a gap and no baseline for the later ones.
+ */
+export function indexChart(rows: readonly DiagnosticRow[]): ChartSpec {
+  const labels = diagnosticLabels(rows);
+  const earlier: DiagnosticMetrics[] = [];
+  const points = rows.map<ChartPoint>((row, i) => {
+    const x = labels[i] as string;
+    const r = parseResults(row);
+    if (r === null) return { x, y: null };
+    const y = readinessOfLatest(earlier, r).overall;
+    earlier.push(r);
+    return { x, y };
+  });
+  const series = [{ name: 'Общий индекс', points }];
+  return {
+    id: 'index',
+    title: 'Общий индекс готовности',
+    yLabel: 'баллы',
+    lowerIsBetter: false,
+    series,
+    unreliable: [],
+    domain: PERCENT,
+    whole: true,
+    trends: seriesTrends(
+      series,
+      rows.map((row) => dayOf(row.at)),
+      false,
+      '',
+    ),
+  };
 }
 
 /**
@@ -247,6 +375,15 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
  * clean hits, whatever the band; x is «дд.мм». Days come in date order.
  */
 export function formOfDayPoints(days: readonly FormDay[], today: string): ChartPoint[] {
+  return formOfDayDays(days, today).map(({ x, y }) => ({ x, y }));
+}
+
+/** The trend of the form-of-day chart (F7): its points at their days; lower is better. */
+export function formOfDayTrend(days: readonly FormDay[], today: string): TrendView {
+  return trendView(formOfDayDays(days, today), true, 'мс');
+}
+
+function formOfDayDays(days: readonly FormDay[], today: string): { x: string; t: number; y: number }[] {
   const end = localDayNumber(today);
   const byDay = new Map<string, number[]>();
   for (const d of days) {
@@ -256,7 +393,7 @@ export function formOfDayPoints(days: readonly FormDay[], today: string): ChartP
   }
   return [...byDay.entries()]
     .sort(([a], [b]) => (a < b ? -1 : 1))
-    .map(([day, rts]) => ({ x: `${day.slice(8, 10)}.${day.slice(5, 7)}`, y: median(rts) }));
+    .map(([day, rts]) => ({ x: `${day.slice(8, 10)}.${day.slice(5, 7)}`, t: localDayNumber(day), y: median(rts) }));
 }
 
 /** Each format with stored runs (testFormatRunsAt): the points of its two charts, its best and its runs. */
@@ -265,12 +402,15 @@ export function testFormatProgress(past: PastBlocks): TestFormatProgress[] {
     const runs = testFormatRunsAt(past, format);
     const best = testFormatBest(runs.map((r) => r.metrics));
     if (best === null) return [];
+    const timed = (pick: (m: (typeof runs)[number]['metrics']) => number | null): TimedPoint[] =>
+      runs.map((r) => ({ x: dayMonth(r.at), t: dayOf(r.at), y: pick(r.metrics) }));
     return [
       {
         format,
         name: TEST_FORMAT_NAMES[format],
         mean: runs.map((r) => ({ x: dayMonth(r.at), y: r.metrics.mean })),
         sd: runs.map((r) => ({ x: dayMonth(r.at), y: r.metrics.sd })),
+        trends: { mean: trendView(timed((m) => m.mean), true, 'мс'), sd: trendView(timed((m) => m.sd), true, 'мс') },
         best,
         runs: runs.length,
       },
@@ -330,11 +470,14 @@ export async function loadProgressModel(repo: Repository, now: Date = new Date()
   const blocksBySession = count(blocks.map((b) => b.sessionId));
   const points = sessionEndPoints(sessions, blocks);
   const past = pastBlocks(blocks, sessions);
+  const today = localDayIso(now.toISOString());
   return {
     readiness: readinessOf(diagnostics),
     assessment: assessModules({ states, meanRating: meanFamilyRating(ratings), history: buildBlockHistory(blocks, sessions), now }),
     diagnostics: diagnosticCharts(diagnostics),
-    formOfDay: formOfDayPoints(warmupDays(past), localDayIso(now.toISOString())),
+    indexChart: indexChart(diagnostics),
+    formOfDay: formOfDayPoints(warmupDays(past), today),
+    formOfDayTrend: formOfDayTrend(warmupDays(past), today),
     testFormats: testFormatProgress(past),
     levels: LEVEL_MODULES.map((module) => levelChart(module, points[module])),
     overload28d: overload28d(blocks, now),

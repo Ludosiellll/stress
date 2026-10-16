@@ -4,7 +4,22 @@ import { block, session } from '../data/repository.contract';
 import { MemoryRepository } from '../data/memoryRepository';
 import { rebuildCaches } from '../data/export';
 import { MODULE_IDS, type BlockFlag } from '../engine/types';
-import { diagnosticCharts, durationText, formOfDayPoints, loadProgressModel, overload28d, ruDate, sessionLines, SESSION_LINES } from './progressModel';
+import { parseResults, type DiagnosticResults } from '../engine/diagnostic';
+import { readinessOfLatest } from '../engine/readiness';
+import { trend, type Trend } from '../engine/trend';
+import {
+  diagnosticCharts,
+  durationText,
+  formOfDayPoints,
+  indexChart,
+  loadProgressModel,
+  overload28d,
+  ruDate,
+  sessionLines,
+  SESSION_LINES,
+  trendText,
+  trendView,
+} from './progressModel';
 
 function row(number: number, results: unknown): DiagnosticRow {
   return { id: `d${String(number)}`, sessionId: 's', number, at: '2026-10-01T10:00:00.000Z', resultsJson: typeof results === 'string' ? results : JSON.stringify(results) };
@@ -309,6 +324,9 @@ describe('the form of the day', () => {
   });
 });
 
+/** The trend of a series of fewer than 3 points (F7). */
+const SHORT = { text: 'Полоса шума и тренд появятся после 3 точек.', band: [] };
+
 describe('the test-format runs (F4)', () => {
   const at = (day: number): string => new Date(2026, 9, day, 10).toISOString();
   const run = (mean: number | null, sd: number | null, errors: number, falseStarts = 0): string =>
@@ -333,10 +351,19 @@ describe('the test-format runs (F4)', () => {
         name: 'ПЗМР',
         mean: [{ x: '01.10', y: 260.4 }, { x: '15.10', y: 250 }],
         sd: [{ x: '01.10', y: 30 }, { x: '15.10', y: null }],
+        trends: { mean: SHORT, sd: SHORT },
         best: { mean: 250, sd: 30, errors: 2, falseStarts: 0 },
         runs: 2,
       },
-      { format: 'rdo', name: 'РДО', mean: [{ x: '08.10', y: 18 }], sd: [{ x: '08.10', y: 25 }], best: { mean: 18, sd: 25, errors: 3, falseStarts: 1 }, runs: 1 },
+      {
+        format: 'rdo',
+        name: 'РДО',
+        mean: [{ x: '08.10', y: 18 }],
+        sd: [{ x: '08.10', y: 25 }],
+        trends: { mean: SHORT, sd: SHORT },
+        best: { mean: 18, sd: 25, errors: 3, falseStarts: 1 },
+        runs: 1,
+      },
     ]);
   });
 
@@ -366,5 +393,110 @@ describe('session lines', () => {
     expect(lines[0]).toMatchObject({ id: `s${String(SESSION_LINES + 4)}`, blocks: 7, type: 'Свободная' });
     expect(lines.slice(0, 3).map((l) => l.type)).toEqual(['Свободная', 'Тренировка', 'Диагностика']);
     expect(lines[1]?.blocks).toBe(0);
+  });
+});
+
+describe('noise band and trend (F7, Р19)', () => {
+  const weekly = (ys: number[]) => trend(ys.map((y, i) => ({ t: 7 * i, y })), true);
+  const made = (o: Partial<Trend>): Trend => ({ slope: 0, intercept: 0, sigma: 0.5, change: -3.71, days: 21, verdict: 'better', ...o });
+
+  it('trendText: the change, the period, the verdict and the noise', () => {
+    expect(trendText(weekly([300, 298, 295, 292, 290, 288]), 'мс')).toBe('Тренд: −12 мс за 5 недель — лучше (шум ±3 мс)');
+    expect(trendText(weekly([300, 310, 300, 310, 300, 310]), 'мс')).toBe('Тренд: +4 мс за 5 недель — в пределах шума (шум ±14 мс)');
+    // Seconds keep one decimal.
+    expect(trendText(made({}), 'с')).toBe('Тренд: −3,7 с за 3 недели — лучше (шум ±1,0 с)');
+    // Below 14 days the period is in days.
+    expect(trendText(made({ days: 9 }), 'с')).toBe('Тренд: −3,7 с за 9 дн. — лучше (шум ±1,0 с)');
+    expect(trendText(made({ days: 13.4, change: 5.4, sigma: 1, verdict: 'worse' }), '%')).toBe('Тренд: +5 % за 13 дн. — хуже (шум ±2 %)');
+    expect(trendText(made({ days: 13.6, change: 5.4, sigma: 1, verdict: 'worse' }), '%')).toBe('Тренд: +5 % за 2 недели — хуже (шум ±2 %)');
+    expect(trendText(made({ days: 147, change: 6, sigma: 1 }), '')).toBe('Тренд: +6 за 21 неделю — лучше (шум ±2)');
+    // A change that rounds to 0 has no sign.
+    expect(trendText(made({ change: -0.4, verdict: 'noise' }), 'мс')).toBe('Тренд: 0 мс за 3 недели — в пределах шума (шум ±1 мс)');
+    expect(trendText(made({ change: 0.04, verdict: 'noise' }), 'с')).toBe('Тренд: 0 с за 3 недели — в пределах шума (шум ±1,0 с)');
+    // A chart of several series: one line each, named, «тренд» in lower case.
+    expect(trendText(made({}), 'с', 'V')).toBe('V: тренд −3,7 с за 3 недели — лучше (шум ±1,0 с)');
+    expect(trendText(null, 'мс')).toBe('Полоса шума и тренд появятся после 3 точек.');
+    expect(trendText(null, 'с', 'V')).toBe('Полоса шума и тренд появятся после 3 точек.');
+  });
+
+  it('trendView: the band is the line ± 2σ̂ at the x of the last points; gaps and undated points are left out', () => {
+    const ys = [999, 300, null, 298, 295, 292, 290, 288];
+    const points = ys.map((y, i) => ({ x: `№${String(i + 1)}`, t: i === 2 ? null : 7 * i, y }));
+    const view = trendView(points, true, 'мс');
+    const t = trend(points.flatMap((p) => (p.y === null ? [] : [{ t: p.t as number, y: p.y }])).slice(-6), true) as Trend;
+    expect(view.text).toBe(trendText(t, 'мс'));
+    expect(view.band.map((b) => b.x)).toEqual(['№2', '№4', '№5', '№6', '№7', '№8']);
+    for (const b of view.band) {
+      const tb = 7 * (Number(b.x.slice(1)) - 1);
+      expect(b.lo).toBeCloseTo(t.intercept + t.slope * tb - 2 * t.sigma, 9);
+      expect(b.hi).toBeCloseTo(t.intercept + t.slope * tb + 2 * t.sigma, 9);
+    }
+    // Two points: no band, the «after 3 points» line.
+    expect(trendView(points.slice(0, 2), true, 'мс')).toEqual({ text: 'Полоса шума и тренд появятся после 3 точек.', band: [] });
+  });
+
+  const weeklyRows = (results: unknown[]): DiagnosticRow[] =>
+    results.map((r, i) => ({ ...row(i + 1, r), at: new Date(2026, 6, 1 + 7 * i, 10).toISOString() }));
+
+  it('every diagnostic chart has a trend per series; Горбов names its series', () => {
+    const rows = weeklyRows([300, 298, 295, 292, 290, 288].map((pzmrMedianRt) => ({ ...fullW2, pzmrMedianRt })));
+    const charts = diagnosticCharts(rows);
+    for (const c of charts) expect(c.trends).toHaveLength(c.series.length);
+    const pzmr = charts.find((c) => c.id === 'pzmr');
+    expect(pzmr?.trends[0]?.text).toBe('Тренд: −12 мс за 5 недель — лучше (шум ±3 мс)');
+    expect(pzmr?.trends[0]?.band.map((b) => b.x)).toEqual(['№1', '№2', '№3', '№4', '№5', '№6']);
+    const gorbov = charts.find((c) => c.id === 'gorbov');
+    expect(gorbov?.trends.map((t) => t.text)).toEqual([
+      'V: тренд 0 с за 5 недель — в пределах шума (шум ±0,0 с)',
+      'P: тренд 0 с за 5 недель — в пределах шума (шум ±0,0 с)',
+      'Π: тренд 0 с за 5 недель — в пределах шума (шум ±0,0 с)',
+    ]);
+    // Go/No-Go in %, the series and the span as counts.
+    expect(charts.find((c) => c.id === 'gonogo')?.trends[0]?.text).toBe('Тренд: 0 % за 5 недель — в пределах шума (шум ±0 %)');
+    expect(charts.find((c) => c.id === 'memory')?.trends[0]?.text).toBe('Тренд: 0 за 5 недель — в пределах шума (шум ±0)');
+    // Fewer than 3 points: the line that says when they come, no band.
+    expect(diagnosticCharts(rows.slice(0, 2))[0]?.trends).toEqual([{ text: 'Полоса шума и тренд появятся после 3 точек.', band: [] }]);
+  });
+
+  it('the index chart: readinessOfLatest(earlier, d).overall by diagnostic; an unreadable row is a gap', () => {
+    const results = [full, { ...full, pzmrMedianRt: 280, gonogoScore: 90 }, '{not json', { ...fullW2, pzmrMedianRt: 270 }];
+    const rows = weeklyRows(results);
+    const chart = indexChart(rows);
+    const parsed = rows.map(parseResults);
+    const earlier = (i: number) => parsed.slice(0, i).flatMap((r) => r ?? []);
+    expect(chart).toMatchObject({ id: 'index', title: 'Общий индекс готовности', lowerIsBetter: false, domain: { min: 0, max: 100 }, whole: true });
+    expect(chart.series[0]?.points).toEqual([
+      { x: '№1', y: readinessOfLatest([], parsed[0] as DiagnosticResults).overall },
+      { x: '№2', y: readinessOfLatest(earlier(1), parsed[1] as DiagnosticResults).overall },
+      { x: '№3', y: null },
+      { x: '№4', y: readinessOfLatest(earlier(3), parsed[3] as DiagnosticResults).overall },
+    ]);
+    expect(chart.trends).toHaveLength(1);
+    expect(chart.trends[0]?.band.map((b) => b.x)).toEqual(['№1', '№2', '№4']);
+    expect(indexChart([]).series[0]?.points).toEqual([]);
+  });
+
+  it('the runs and the form of the day have their trends, by the date of the block', async () => {
+    const repo = new MemoryRepository();
+    const at = (day: number): string => new Date(2026, 9, day, 10).toISOString();
+    const run = (mean: number): string => JSON.stringify({ testFormat: { mean, sd: 30, errors: 0, falseStarts: 0, thirds: [mean, mean, mean] } });
+    for (const [day, mean] of [[1, 300], [8, 298], [15, 295], [22, 292], [29, 290]] as const) {
+      await repo.createSession(session(`s${String(day)}`, at(day), { endedAt: at(day) }));
+      await repo.addBlock(block(`r${String(day)}`, `s${String(day)}`, at(day), { module: 'pzmr', flags: ['test_format'], summaryJson: run(mean) }), [], []);
+      await repo.addBlock(
+        block(`w${String(day)}`, `s${String(day)}`, at(day), { flags: ['warmup'], summaryJson: JSON.stringify({ cleanHitRts: [mean - 50] }) }),
+        [],
+        [],
+      );
+    }
+    const model = await loadProgressModel(repo, new Date(2026, 9, 30, 12));
+    const pzmr = model.testFormats[0];
+    expect(pzmr?.trends.mean.text).toBe('Тренд: −10 мс за 4 недели — лучше (шум ±4 мс)');
+    expect(pzmr?.trends.mean.band.map((b) => b.x)).toEqual(['01.10', '08.10', '15.10', '22.10', '29.10']);
+    expect(pzmr?.trends.sd.text).toBe('Тренд: 0 мс за 4 недели — в пределах шума (шум ±0 мс)');
+    expect(model.formOfDayTrend.text).toBe('Тренд: −10 мс за 4 недели — лучше (шум ±4 мс)');
+    expect(model.formOfDayTrend.band).toHaveLength(5);
+    expect(model.indexChart.series[0]?.points).toEqual([]);
+    expect(model.indexChart.trends[0]?.text).toBe('Полоса шума и тренд появятся после 3 точек.');
   });
 });

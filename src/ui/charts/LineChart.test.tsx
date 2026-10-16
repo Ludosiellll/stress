@@ -406,3 +406,52 @@ describe('niceTicks', () => {
     }
   });
 });
+
+describe('LineChart noise bands (F7)', () => {
+  const two = [
+    { name: 'V', points: [{ x: '№1', y: 40 }, { x: '№2', y: 42 }, { x: '№3', y: 41 }] },
+    { name: 'P', points: [{ x: '№1', y: 80 }, { x: '№2', y: 82 }, { x: '№3', y: 81 }] },
+  ];
+  const band = (lo: number, hi: number) => ['№1', '№2', '№3'].map((x) => ({ x, lo, hi }));
+
+  it('bands draw one polygon per series in its colour, under the lines', () => {
+    const { container } = render(<LineChart series={two} yLabel="с" bands={[band(38, 44), band(78, 84)]} />);
+    const polygons = [...container.querySelectorAll('polygon.chart-band')];
+    expect(polygons).toHaveLength(2);
+    expect(polygons.map((p) => p.parentElement?.getAttribute('class'))).toEqual(['s1', 's2']);
+    // Three slots: three points along the top edge and three back along the bottom.
+    expect(polygons[0]?.getAttribute('points')?.split(' ')).toHaveLength(6);
+    // The bands come before the first line, so the lines draw over them.
+    const svg = container.querySelector('svg') as SVGElement;
+    const order = [...svg.querySelectorAll('polygon.chart-band, path.chart-line')].map((e) => e.tagName);
+    expect(order).toEqual(['polygon', 'polygon', 'path', 'path']);
+  });
+
+  it('the y axis includes the band edges', () => {
+    const { container } = render(<LineChart series={[{ name: 'ПЗМР', points: three }]} yLabel="мс" bands={[band(250, 350)]} />);
+    const ticks = [...container.querySelectorAll('text.y-tick')].map((t) => Number(t.textContent));
+    expect(Math.min(...ticks)).toBeLessThanOrEqual(250);
+    expect(Math.max(...ticks)).toBeGreaterThanOrEqual(350);
+  });
+
+  it('a band stays inside the domain; one on fewer than two slots or on unknown slots is not drawn', () => {
+    const near0 = [{ name: 'a', points: [{ x: '1', y: 2 }, { x: '2', y: 1 }, { x: '3', y: 3 }] }];
+    const { container } = render(<LineChart series={near0} yLabel="мс" domain={{ min: 0 }} whole bands={[[{ x: '1', lo: -5, hi: 6 }, { x: '2', lo: -5, hi: 6 }, { x: '3', lo: -5, hi: 6 }]]} />);
+    const ticks = [...container.querySelectorAll('text.y-tick')].map((t) => Number(t.textContent));
+    expect(Math.min(...ticks)).toBe(0);
+    expect(Math.max(...ticks)).toBeGreaterThanOrEqual(6);
+    const lone = render(<LineChart series={near0} yLabel="мс" whole bands={[[{ x: '1', lo: -50, hi: 60 }, { x: 'нет', lo: -50, hi: 60 }]]} />);
+    expect(lone.container.querySelector('polygon')).toBeNull();
+    // Nor does it stretch the axis.
+    expect(Math.max(...[...lone.container.querySelectorAll('text.y-tick')].map((t) => Number(t.textContent)))).toBeLessThan(60);
+  });
+
+  it('two points with one label (two runs on one day) take one slot each', () => {
+    const sameDay = [{ name: 'a', points: [{ x: '01.10', y: 10 }, { x: '01.10', y: 12 }, { x: '02.10', y: 11 }] }];
+    const { container } = render(
+      <LineChart series={sameDay} yLabel="мс" bands={[[{ x: '01.10', lo: 8, hi: 14 }, { x: '01.10', lo: 8, hi: 14 }, { x: '02.10', lo: 8, hi: 14 }]]} />,
+    );
+    const xs = (container.querySelector('polygon')?.getAttribute('points') ?? '').split(' ').map((p) => p.split(',')[0]);
+    expect(new Set(xs.slice(0, 3)).size).toBe(3);
+  });
+});

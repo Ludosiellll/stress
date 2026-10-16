@@ -530,6 +530,16 @@ legend {
 .chart .s3 .chart-line { stroke: var(--series-3); }
 .chart .s3 .chart-point { fill: var(--series-3); }
 
+/* The noise band of a series (F7): its colour, faint, under the lines. */
+.chart .chart-band {
+  fill-opacity: 0.18;
+  stroke: none;
+}
+
+.chart .s1 .chart-band { fill: var(--series-1); }
+.chart .s2 .chart-band { fill: var(--series-2); }
+.chart .s3 .chart-band { fill: var(--series-3); }
+
 .chart-legend,
 .chart-summary {
   display: flex;
