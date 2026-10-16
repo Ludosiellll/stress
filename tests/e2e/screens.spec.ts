@@ -534,8 +534,9 @@ async function installMarkInk(page: Page): Promise<void> {
 }
 
 /**
- * Shoots the mark after a trial (F15): it is on screen 150 ms. The shot counts when the mark is there before and after
- * it, less than its 150 ms apart, so it was on screen throughout; otherwise the next trial's mark is tried.
+ * Shoots the mark after a trial (F15): it is on screen 150 ms, until the next onset at the latest. The shot counts when
+ * the mark is there before and after it, less than its 150 ms apart, with no stimulus shown in between (the same
+ * stimulus count), so it was on screen throughout; otherwise the next trial's mark is tried.
  */
 async function shootMark(page: Page, name: string): Promise<void> {
   for (let attempt = 0; attempt < 8; attempt++) {
@@ -543,14 +544,17 @@ async function shootMark(page: Page, name: string): Promise<void> {
       page,
       () => {
         const m = window.__markInk?.() ?? null;
-        return m !== null && m.ink > 50 ? m : null;
+        return m !== null && m.ink > 50 ? { ...m, index: window.__bot?.stimuli.length ?? 0 } : null;
       },
       null,
       30_000,
     );
     await shot(page, name);
-    const after = await page.evaluate(() => window.__markInk?.() ?? null);
-    if (after !== null && after.ink > 50 && after.at - before.at < 150) return;
+    const after = await page.evaluate(() => {
+      const m = window.__markInk?.() ?? null;
+      return m === null ? null : { ...m, index: window.__bot?.stimuli.length ?? 0 };
+    });
+    if (after !== null && after.ink > 50 && after.index === before.index && after.at - before.at < 150) return;
   }
   throw new Error(`${name}: no mark stayed on screen through the screenshot`);
 }
@@ -565,7 +569,8 @@ async function shootStimulusRetry(page: Page, module: string, name: string): Pro
     await page.waitForFunction(
       ({ m, n }) => (window.__bot?.stimuli.filter((s) => s.module === m).length ?? 0) > n,
       { m: module, n: seen },
-      { polling: 'raf' },
+      // A block that runs out of trials fails here, not at the test's timeout.
+      { polling: 'raf', timeout: 30_000 },
     );
     await shot(page, name);
     const onScreen = await page.evaluate((m) => {
@@ -708,8 +713,12 @@ test('screens: the 0.3.0 training screens: run, warm-up, errors and floor, marks
   await expect(page.locator('.reaction-legend')).toBeVisible();
   await shootMark(page, 'reaction-mark-legend');
   const legendTop = await page.locator('.reaction-legend').evaluate((el) => el.getBoundingClientRect().top);
-  // The mark: bold text 0.06 of the shorter side high, centred at 5/6 of the height.
-  expect((5 * 800) / 6 + 0.03 * 800, 'the mark ends above the key legend').toBeLessThan(legendTop);
+  // The mark: bold text 0.06 of the canvas's shorter side high, centred at 5/6 of its height.
+  const markBottom = await page.locator('.reaction canvas').evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    return r.top + (5 * r.height) / 6 + 0.03 * Math.min(r.width, r.height);
+  });
+  expect(markBottom, 'the mark ends above the key legend').toBeLessThan(legendTop);
   await cancelPendingPresses(page);
   await setPressDelay(page, 280);
   await pauseWithEscape(page);
