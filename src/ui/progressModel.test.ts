@@ -709,6 +709,52 @@ describe('noise band and trend (F7, Р19)', () => {
     expect(diagnosticCharts(rows).find((c) => c.id === 'pzmr')?.footnote).toBeUndefined();
   });
 
+  it('number series of the old forms: points with a note, the trend from the forms v2 only (F12)', () => {
+    const v2 = { ...full, seriesForm: 'v2' };
+    // Three diagnostics of the old series, then two of the forms v2 with fewer right: the change of tasks is no trend.
+    const rows = weeklyRows([
+      { ...full, numseriesCorrect: 15 },
+      { ...full, numseriesCorrect: 15 },
+      { ...full, numseriesCorrect: 15 },
+      { ...v2, numseriesCorrect: 10 },
+      { ...v2, numseriesCorrect: 10 },
+    ]);
+    const series = diagnosticCharts(rows).find((c) => c.id === 'numseries');
+    const old = 'прежние задачи, до 0.3.0';
+    expect(series?.series[0]?.points).toEqual([
+      { x: '№1', y: 15, note: old },
+      { x: '№2', y: 15, note: old },
+      { x: '№3', y: 15, note: old },
+      { x: '№4', y: 10 },
+      { x: '№5', y: 10 },
+    ]);
+    expect(series?.trends.map((t) => t.text)).toEqual(['Полоса шума и тренд появятся после 3 диагностик с новыми задачами.']);
+    expect(series?.footnote).toBe(
+      'Диагностики №1, №2, №3 — с прежними задачами (до 0.3.0). Тренд и полоса шума — только по диагностикам с новыми задачами.',
+    );
+    // A third v2 point: the trend and the band from №4–№6.
+    const more = [...rows, { ...row(6, { ...v2, numseriesCorrect: 10 }), at: new Date(2026, 6, 36, 10).toISOString() }];
+    const later = diagnosticCharts(more).find((c) => c.id === 'numseries');
+    expect(later?.trends[0]?.text).toBe('Тренд: 0 за 2 недели — в пределах шума (шум ±0)');
+    expect(later?.trends[0]?.band.map((b) => [b.x, b.slot])).toEqual([
+      ['№4', 3],
+      ['№5', 4],
+      ['№6', 5],
+    ]);
+    // Old diagnostics alone: no note, the trend from all of them, no footnote.
+    const before = diagnosticCharts(rows.slice(0, 3)).find((c) => c.id === 'numseries');
+    expect(before?.series[0]?.points.map((p) => p.note)).toEqual([undefined, undefined, undefined]);
+    expect(before?.trends[0]?.band).toHaveLength(3);
+    expect(before?.footnote).toBeUndefined();
+    // One old diagnostic: the footnote names it alone.
+    expect(diagnosticCharts(rows.slice(2)).find((c) => c.id === 'numseries')?.footnote).toBe(
+      'Диагностика №3 — с прежними задачами (до 0.3.0). Тренд и полоса шума — только по диагностикам с новыми задачами.',
+    );
+    // Горбов and the other charts keep their own formats.
+    expect(diagnosticCharts(rows).find((c) => c.id === 'gorbov')?.footnote).toBeUndefined();
+    expect(diagnosticCharts(rows).find((c) => c.id === 'pzmr')?.trends[0]?.band).toHaveLength(5);
+  });
+
   it('the index chart: readinessOfLatest(earlier, d).overall by diagnostic; an unreadable row is a gap', () => {
     const results = [full, { ...full, pzmrMedianRt: 280, gonogoScore: 90 }, '{not json', { ...fullW2, pzmrMedianRt: 270 }];
     const rows = weeklyRows(results);

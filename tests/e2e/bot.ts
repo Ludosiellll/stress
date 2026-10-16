@@ -220,10 +220,12 @@ export async function playTable(page: Page): Promise<void> {
 
 /**
  * Answers every item of the number-series block on screen with the exposed answer: a number typed, a letter item
- * (`data-answer-kind="letter"`) by the key event of the letter's ЙЦУКЕН key (F12).
+ * (`data-answer-kind="letter"`) by the key event of the letter's ЙЦУКЕН key (F12). Returns the kinds of the items it
+ * answered, in order.
  */
-export async function playSeries(page: Page): Promise<void> {
+export async function playSeries(page: Page): Promise<string[]> {
   const input = page.getByRole('textbox', { name: 'Ответ' });
+  const kinds: string[] = [];
   for (;;) {
     const item = await page.evaluate(() => {
       const el = document.querySelector('.series-item');
@@ -234,8 +236,9 @@ export async function playSeries(page: Page): Promise<void> {
         counter: document.querySelector('.series .muted')?.textContent ?? '',
       };
     });
-    if (item === null) return;
+    if (item === null) return kinds;
     expect(item.answer, 'number series exposes data-e2e-answer in e2e mode').not.toBeNull();
+    kinds.push(item.kind ?? '');
     const answer = item.answer ?? '';
     if (item.kind === 'letter') {
       await input.focus();

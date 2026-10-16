@@ -24,7 +24,7 @@ import {
   SERIES_INSTRUCTION_TRAINING,
   SERIES_LETTER_HINT,
   seriesDiagnosticInstruction,
-  seriesLines,
+  seriesLine,
   spanLines,
   speedLine,
   stabilityLine,
@@ -415,16 +415,25 @@ describe('tableLines', () => {
   });
 });
 
-describe('seriesLines', () => {
-  it('correct count and mean time in whole seconds', () => {
-    expect(seriesLines(7, 10, 14_400, null)).toEqual(['Верно: 7 из 10', 'Среднее время: 14 с']);
-    expect(seriesLines(7, 10, 14_400, 40_000)).toEqual(['Верно: 7 из 10', 'Среднее время: 14 с']);
+describe('seriesLine (F12)', () => {
+  it('right, skipped, the mean time to a tenth and the shortest limit (Справочник F12)', () => {
+    expect(seriesLine({ correct: 7, total: 10, skipped: 1, meanTimeMs: 16200, shortestLimitMs: 21000 })).toBe(
+      'Верно 7 из 10 · пропущено 1 · среднее время 16,2 с · самый короткий лимит 21 с',
+    );
+    expect(seriesLine({ correct: 9, total: 10, skipped: 0, meanTimeMs: 6040, shortestLimitMs: 11_900 })).toBe(
+      'Верно 9 из 10 · пропущено 0 · среднее время 6,0 с · самый короткий лимит 11,9 с',
+    );
   });
 
-  it('names the shortest limit when it is under 40 s (limits are whole tenths of a second)', () => {
-    expect(seriesLines(9, 10, 6000, 12_000)).toEqual(['Верно: 9 из 10', 'Среднее время: 6 с', 'Самый короткий лимит: 12 с']);
-    expect(seriesLines(9, 10, 6000, 11_900)).toContain('Самый короткий лимит: 11,9 с');
-    expect(seriesLines(9, 10, 6000, 39_900)).toContain('Самый короткий лимит: 39,9 с');
+  it('no limit part without a limit under 30 s', () => {
+    for (const shortestLimitMs of [null, 30_000, 40_000]) {
+      expect(seriesLine({ correct: 7, total: 10, skipped: 2, meanTimeMs: 14_440, shortestLimitMs })).toBe(
+        'Верно 7 из 10 · пропущено 2 · среднее время 14,4 с',
+      );
+    }
+    expect(seriesLine({ correct: 2, total: 3, skipped: 1, meanTimeMs: 0, shortestLimitMs: 29_900 })).toBe(
+      'Верно 2 из 3 · пропущено 1 · среднее время 0,0 с · самый короткий лимит 29,9 с',
+    );
   });
 });
 
@@ -453,7 +462,10 @@ describe('Russian plurals and the series diagnostic instruction', () => {
   const SKIP = ' Пробел — пропустить задачу (засчитается как неверная).';
 
   it('both instructions name the skip key; a letter item has its hint (Справочник F12)', () => {
-    expect(SERIES_INSTRUCTION_TRAINING.endsWith(SKIP)).toBe(true);
+    expect(SERIES_INSTRUCTION_TRAINING).toBe(
+      'Найди закономерность и введи следующее число. На задачу до 30 секунд, на трудных уровнях меньше: остаток времени показывает полоса.' +
+        SKIP,
+    );
     expect(seriesDiagnosticInstruction(20, 600_000).endsWith(SKIP)).toBe(true);
     expect(SERIES_LETTER_HINT).toBe('Ответ — буква. Алфавит без Ё. Раскладку переключать не нужно.');
   });

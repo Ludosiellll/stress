@@ -213,6 +213,8 @@ function dayOf(iso: string): number | null {
 export const NO_TREND = 'Полоса шума и тренд появятся после 3 точек.';
 /** The Горбов chart's NO_TREND: its trends count the diagnostics on one table only (F10, T-R62). */
 const GORBOV_NO_TREND = 'Полоса шума и тренд появятся после 3 диагностик на одной таблице.';
+/** The number-series chart's NO_TREND: its trends count the diagnostics of the forms v2 only (F12). */
+const SERIES_NO_TREND = 'Полоса шума и тренд появятся после 3 диагностик с новыми задачами.';
 
 const VERDICTS: Record<Trend['verdict'], string> = { better: 'лучше', worse: 'хуже', noise: 'в пределах шума' };
 
@@ -322,33 +324,73 @@ const UNRELIABLE_NOTE = 'замер ненадёжен';
  */
 export const THREE_TABLES = '3 разные таблицы, до 0.3.0';
 
+/** A number-series value of the old series, once later ones play the forms v2 (F12): the note of its point. */
+const OLD_SERIES = 'прежние задачи, до 0.3.0';
+
+/** A chart whose measure changed in 0.3.0 (F10, F12): how its points of the old format are named. */
+interface FormatChange {
+  /** The diagnostic played the new format. */
+  isNew: (r: DiagnosticResults) => boolean;
+  /** The note of an old point. */
+  note: string;
+  /** «на трёх разных таблицах»: how the footnote names the old diagnostics. */
+  old: string;
+  /** «на одной таблице»: how the footnote names the diagnostics the trend counts. */
+  counted: string;
+  noTrend: string;
+}
+
+const GORBOV_FORMAT: FormatChange = {
+  isNew: (r) => r.gorbovOneTable,
+  note: THREE_TABLES,
+  old: 'на трёх разных таблицах',
+  counted: 'на одной таблице',
+  noTrend: GORBOV_NO_TREND,
+};
+
+/** A line of a chart drawn by formatSplit: its name and its value in a diagnostic. */
+interface SplitLine {
+  name: string;
+  pick: (r: DiagnosticResults | null) => number | null;
+}
+
+const SERIES_FORMAT: FormatChange = {
+  isNew: (r) => r.seriesForm === 'v2',
+  note: OLD_SERIES,
+  old: 'с прежними задачами',
+  counted: 'с новыми задачами',
+  noTrend: SERIES_NO_TREND,
+};
+
 /**
- * The Горбов chart (F10): once the latest Горбов result is of one table, the points of three tables carry a note, the
- * footnote names them, and the trends and bands use the one-table points only, so the change of format does not read
- * as a trend. Without a one-table result the chart is as before.
+ * The series of a chart whose measure changed in 0.3.0 (F10, F12): once the latest diagnostic with a value of the first
+ * line is of the new format, the points of the old one carry a note, the footnote names them, and the trends and bands
+ * use the new points only, so the change of format does not read as a trend. Without a new result the chart is as
+ * before.
  */
-function gorbovChart(
+function formatSplit(
   parsed: readonly { x: string; r: DiagnosticResults | null }[],
+  lines: readonly [SplitLine, ...SplitLine[]],
+  format: FormatChange,
 ): Pick<ChartSpec, 'series' | 'footnote'> & { trendSeries: ChartSeries[]; noTrend: string } {
-  const latest = [...parsed].reverse().find(({ r }) => gorbovOf(r).V !== null)?.r;
-  const split = latest?.gorbovOneTable === true;
-  const old = (r: DiagnosticResults | null): boolean => split && r !== null && !r.gorbovOneTable;
-  const line = (name: string, pick: (g: ReturnType<typeof gorbovOf>) => number | null) => {
+  const latest = [...parsed].reverse().find(({ r }) => lines[0].pick(r) !== null)?.r ?? null;
+  const split = latest !== null && format.isNew(latest);
+  const old = (r: DiagnosticResults | null): boolean => split && r !== null && !format.isNew(r);
+  const drawn = lines.map(({ name, pick }) => {
     const points = parsed.map<ChartPoint>(({ x, r }) => {
-      const y = pick(gorbovOf(r));
-      return y !== null && old(r) ? { x, y, note: THREE_TABLES } : { x, y };
+      const y = pick(r);
+      return y !== null && old(r) ? { x, y, note: format.note } : { x, y };
     });
     return { series: { name, points }, trend: { name, points: points.map((p) => (p.note === undefined ? p : { x: p.x, y: null })) } };
-  };
-  const lines = [line('V', (g) => g.V), line('P', (g) => g.P), line('Π', (g) => g.Pi)];
-  const series = lines.map((l) => l.series);
+  });
+  const series = drawn.map((l) => l.series);
   const marked = (series[0]?.points ?? []).flatMap((p) => (p.note === undefined ? [] : [p.x]));
   const which = `${marked.length === 1 ? 'Диагностика' : 'Диагностики'} ${marked.join(', ')}`;
   const footnote =
     marked.length === 0
       ? {}
-      : { footnote: `${which} — на трёх разных таблицах (до 0.3.0). Тренд и полоса шума — только по диагностикам на одной таблице.` };
-  return { series, trendSeries: lines.map((l) => l.trend), noTrend: GORBOV_NO_TREND, ...footnote };
+      : { footnote: `${which} — ${format.old} (до 0.3.0). Тренд и полоса шума — только по диагностикам ${format.counted}.` };
+  return { series, trendSeries: drawn.map((l) => l.trend), noTrend: format.noTrend, ...footnote };
 }
 
 /** The numeric metrics of DiagnosticResults (gorbov is an object). */
@@ -402,7 +444,15 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
       yLabel: 'с',
       unit: 'с',
       lowerIsBetter: true,
-      ...gorbovChart(parsed),
+      ...formatSplit(
+        parsed,
+        [
+          { name: 'V', pick: (r) => gorbovOf(r).V },
+          { name: 'P', pick: (r) => gorbovOf(r).P },
+          { name: 'Π', pick: (r) => gorbovOf(r).Pi },
+        ],
+        GORBOV_FORMAT,
+      ),
       unreliable: [],
       // Π = t3 − (t1 + t2) is usually negative: no bound.
       domain: {},
@@ -414,7 +464,7 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
       yLabel: 'верно из 20',
       unit: '',
       lowerIsBetter: false,
-      series: [line('Числовые ряды', (r) => metric(r, 'numseriesCorrect'))],
+      ...formatSplit(parsed, [{ name: 'Числовые ряды', pick: (r) => metric(r, 'numseriesCorrect') }], SERIES_FORMAT),
       unreliable: [],
       domain: NON_NEGATIVE,
       whole: true,

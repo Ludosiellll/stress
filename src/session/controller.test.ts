@@ -12,6 +12,7 @@ import {
   EMPTY_RESULTS,
   diagnosticSegmentSeed,
   diagnosticSeriesSchedule,
+  diagnosticSeriesSeed,
   parseResults,
   planDiagnostic,
   type DiagnosticResults,
@@ -27,7 +28,7 @@ import { describeChanges } from '../modules/describe';
 import { generateMemoryTrials, spanProtocolTrials, type MemoryTrial } from '../modules/memory/generate';
 import { CARD_AUDIO, CARD_LESSON, memoryInstruction, memoryParams } from '../modules/memory/params';
 import { spanProtocolStops, type MemoryAnswer } from '../modules/memory/score';
-import { ALL_FAMILIES, TRAINING_FAMILIES } from '../modules/numseries/families';
+import { TRAINING_FAMILIES } from '../modules/numseries/families';
 import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
 import { pomeh } from '../modules/reaction/pomeh';
 import { isSwappedSegment } from '../modules/reaction/gonogo';
@@ -443,7 +444,7 @@ describe('SessionController — flow', () => {
       kind: 'instruction',
       module: 'numseries',
       text:
-        'Найди закономерность и введи следующее число. На задачу до 40 секунд, на трудных уровнях меньше: остаток времени показывает полоса. ' +
+        'Найди закономерность и введи следующее число. На задачу до 30 секунд, на трудных уровнях меньше: остаток времени показывает полоса. ' +
         'Пробел — пропустить задачу (засчитается как неверная).',
       keysHint: 'Цифры и Enter',
     });
@@ -3043,26 +3044,27 @@ describe('SessionController — number series', () => {
     h.c.ackInstruction();
     const block = expectStep(h.c, 'numseries_block');
     expect(block.items).toHaveLength(10);
-    // Starting ratings (R0) stay under every family's structural maximum: 40 s per item.
-    expect(block.items.map((it) => it.timeLimitMs)).toEqual(Array<number>(10).fill(40_000));
+    // Starting ratings (R0): targetD below 1000, 30 s per item (F12).
+    expect(block.items.map((it) => it.timeLimitMs)).toEqual(Array<number>(10).fill(30_000));
     expect(block.totalLimitMs).toBeNull();
     const answers = perfectSeriesAnswers(block.items);
     // Right but too slow: not a success for Elo.
-    answers[0] = { itemId: block.items[0]?.id ?? '', given: block.items[0]?.answer ?? 0, timeMs: 41_000 };
+    answers[0] = { itemId: block.items[0]?.id ?? '', given: block.items[0]?.answer ?? 0, timeMs: 31_000 };
     // Wrong answer and no answer.
     answers[1] = { itemId: block.items[1]?.id ?? '', given: (block.items[1]?.answer ?? 0) + 1, timeMs: 9000 };
-    answers[2] = { itemId: block.items[2]?.id ?? '', given: null, timeMs: 40_000 };
+    answers[2] = { itemId: block.items[2]?.id ?? '', given: null, timeMs: 30_000 };
     await h.c.submitNumSeries(answers);
 
     const { view } = expectStep(h.c, 'summary');
     expect(view).toMatchObject({ module: 'numseries', title: 'Числовые ряды', lBefore: 0, lAfter: 0, changes: [], score: 0.7, flags: [], showLevel: false });
-    expect(view.lines).toEqual(['Верно: 7 из 10', `Среднее время: ${String(Math.round((41 + 9 + 40 + 7 * 5) / 10))} с`]);
+    // (31 + 9 + 30 + 7 · 5) / 10 = 10,5 s; every limit is 30 s, so no limit part.
+    expect(view.lines).toEqual(['Верно 7 из 10 · пропущено 0 · среднее время 10,5 с']);
 
     const items = await h.repo.listLogicItems();
     expect(items).toHaveLength(10);
     expect(items.map((i) => i.correct)).toEqual([true, false, false, true, true, true, true, true, true, true]);
-    expect(items[2]).toMatchObject({ given: null, timeMs: 40_000, family: block.items[2]?.family, seed: block.items[2]?.seed });
-    expect(items.map((i) => i.timeLimitMs)).toEqual(Array<number>(10).fill(40_000));
+    expect(items[2]).toMatchObject({ given: null, timeMs: 30_000, family: block.items[2]?.family, seed: block.items[2]?.seed });
+    expect(items.map((i) => i.timeLimitMs)).toEqual(Array<number>(10).fill(30_000));
 
     const ratings = await h.repo.getRatings();
     expect(ratings).toEqual(deriveRatings(items)); // incremental == rebuilt from history
@@ -3082,7 +3084,7 @@ describe('SessionController — number series', () => {
     answers[3] = { itemId: skipped?.id ?? '', given: null, timeMs: 6500, skipped: true };
     await h.c.submitNumSeries(answers);
 
-    expect(expectStep(h.c, 'summary').view.lines[0]).toBe('Верно: 9 из 10');
+    expect(expectStep(h.c, 'summary').view.lines).toEqual([expect.stringMatching(/^Верно 9 из 10 · пропущено 1 · среднее время \d+,\d с$/)]);
     const [row] = await h.repo.listBlocks();
     const summary = JSON.parse(row?.summaryJson ?? '{}') as { correct: number; items: { skipped?: boolean; given: unknown; timeMs: number }[] };
     expect(summary.correct).toBe(9);
@@ -3109,7 +3111,7 @@ describe('SessionController — number series', () => {
     const block = expectStep(h.c, 'numseries_block');
     const limits = block.items.map((it) => it.timeLimitMs ?? Number.NaN);
     for (const limit of limits) {
-      expect(limit).toBeLessThan(40_000);
+      expect(limit).toBeLessThan(30_000);
       expect(limit).toBeGreaterThanOrEqual(8000);
     }
     await h.c.submitNumSeries(perfectSeriesAnswers(block.items));
@@ -3117,7 +3119,7 @@ describe('SessionController — number series', () => {
     const shortest = Math.min(...limits) / 1000;
     const seconds = Number.isInteger(shortest) ? String(shortest) : shortest.toFixed(1).replace('.', ',');
     const { view } = expectStep(h.c, 'summary');
-    expect(view.lines).toEqual(['Верно: 10 из 10', 'Среднее время: 5 с', `Самый короткий лимит: ${seconds} с`]);
+    expect(view.lines).toEqual([`Верно 10 из 10 · пропущено 0 · среднее время 5,0 с · самый короткий лимит ${seconds} с`]);
     expect((await h.repo.listLogicItems()).map((i) => i.timeLimitMs)).toEqual(limits);
     const [stored] = await h.repo.listBlocks();
     expect(JSON.parse(stored?.paramsJson ?? '')).toEqual({ items: 10, itemLimitsMs: limits, totalLimitMs: null });
@@ -3202,10 +3204,10 @@ describe('SessionController — diagnostics', () => {
         levels.push([`${s.module}:${s.task}`, s.L]);
         await h.c.submitTable(perfectTableRun(s));
       } else if (s.kind === 'numseries_block') {
-        const segSeed = diagnosticSegmentSeed(1, 'numseries');
+        // Form 0 of the forms v2 (F12): the schedule of spec §4.8, item seeds from diagnosticSeriesSeed.
         const schedule = diagnosticSeriesSchedule();
         expect(s.items.map((it) => it.family)).toEqual(schedule.map((e) => e.family));
-        expect(s.items.map((it) => it.seed)).toEqual(schedule.map((_, i) => deriveSeed(segSeed, 'item:' + String(i))));
+        expect(s.items.map((it) => it.seed)).toEqual(schedule.map((_, i) => diagnosticSeriesSeed(1, i + 1)));
         expect(s.totalLimitMs).toBe(600_000);
         expect(s.items.every((it) => it.timeLimitMs === null)).toBe(true);
         await h.c.submitNumSeries(perfectSeriesAnswers(s.items, 20_000));
@@ -3236,8 +3238,9 @@ describe('SessionController — diagnostics', () => {
       gorbov: gorbovMetrics(7.2, 7.5, 14.7),
       numseriesCorrect: 20,
       unreliable: [],
-      // F10: the three Горбов tasks on one table.
+      // F10: the three Горбов tasks on one table; F12: the number-series forms v2.
       gorbovOneTable: true,
+      seriesForm: 'v2',
     };
     const done = expectStep(h.c, 'done');
     expect(done.diagnostic).toEqual(expected);
@@ -3483,6 +3486,7 @@ describe('SessionController — diagnostics', () => {
       unreliable: [],
       restarts: {},
       gorbovOneTable: true,
+      seriesForm: 'v2',
     });
     const [row] = await h.repo.listDiagnostics();
     expect(JSON.parse(row?.resultsJson ?? '')).toEqual(done.diagnostic);
@@ -3747,8 +3751,22 @@ describe('SessionController — diagnostics', () => {
     await expect(begin(plan)).rejects.toThrow(/diagnosticNumber/);
   });
 
-  it('family order of the series diagnostic matches the 8 old families (R16; the v2 forms come with Task 21)', () => {
-    expect(diagnosticSeriesSchedule().slice(0, 8).map((e) => e.family)).toEqual(ALL_FAMILIES.slice(0, 8));
+  it('the series task plays the form of the diagnostic seed index; a restart plays the next form (F12)', async () => {
+    const plan = planDiagnostic(2, 5);
+    const h = await begin({ ...plan, segments: [plan.segments[5] as Segment] });
+    h.c.ackInstruction();
+    const seeds = (): number[] => expectStep(h.c, 'numseries_block').items.map((it) => it.seed);
+    // Seed index 5: form 4.
+    expect(seeds()).toEqual(diagnosticSeriesSchedule().map((_, i) => diagnosticSeriesSeed(5, i + 1)));
+    // A focus loss restarts the task with the next form: the items already seen do not come again.
+    expect(await h.c.discardBlock('focus_lost', 0.2)).toEqual({ kind: 'restarted' });
+    expect(seeds()).toEqual(diagnosticSeriesSchedule().map((_, i) => diagnosticSeriesSeed(6, i + 1)));
+    // The Esc restart after it: the form after that (form 0 again, 7 mod 6).
+    expect(await h.c.discardBlock('user', 0.4)).toEqual({ kind: 'restarted' });
+    h.c.ackNotice();
+    expect(seeds()).toEqual(diagnosticSeriesSchedule().map((_, i) => diagnosticSeriesSeed(1, i + 1)));
+    // Every item comes from its scheduled family, whatever the form.
+    expect(expectStep(h.c, 'numseries_block').items.map((it) => it.family)).toEqual(diagnosticSeriesSchedule().map((e) => e.family));
   });
 });
 

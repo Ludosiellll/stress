@@ -1,7 +1,16 @@
 import fc from 'fast-check';
 import { describe, expect, it, vi } from 'vitest';
 import { deriveRatings } from '../engine/derive';
-import { DIAGNOSTIC_VOLUME, EMPTY_METRICS, EMPTY_RESULTS, diagnosticSegmentSeed, diagnosticSeriesSchedule, planDiagnostic } from '../engine/diagnostic';
+import {
+  DIAGNOSTIC_VOLUME,
+  EMPTY_METRICS,
+  EMPTY_RESULTS,
+  SERIES_FORMS,
+  diagnosticSegmentSeed,
+  diagnosticSeriesSchedule,
+  diagnosticSeriesSeed,
+  planDiagnostic,
+} from '../engine/diagnostic';
 import { R0, updateRating, type Rating } from '../engine/elo';
 import { block, session } from '../data/repository.contract';
 import { effectiveDifficulty } from '../engine/itemLimit';
@@ -493,6 +502,25 @@ describe('diagnostic reaction blocks', () => {
     for (const run of [0, 1, 2]) {
       expect(planBlock(gorbov, gorbov.fixedL ?? 0, run, ctx)).toMatchSnapshot(`gorbov run ${String(run)}`);
     }
+  });
+
+  it('the six number-series forms are pinned: shown terms and answer of all 120 items (F12)', () => {
+    // A change of the generator, the checks or the schedule must not change a form unnoticed (spec §4.8).
+    const seg = diagnosticSegment('numseries');
+    const plan = planBlock(seg, 0, 0, ctx);
+    const form = (seedIndex: number): string[] => {
+      const { step } = buildBlock(plan, 0, 'keyboard', new Map(), { seriesSeedIndex: seedIndex });
+      if (step.kind !== 'numseries_block') throw new Error(step.kind);
+      return step.items.map((it, i) => `${String(i + 1)} ${it.family}: ${it.shown.join(', ')} → ${String(it.answer)}`);
+    };
+    for (let seedIndex = 1; seedIndex <= SERIES_FORMS; seedIndex++) {
+      const items = form(seedIndex);
+      expect(items).toHaveLength(20);
+      expect(items).toMatchSnapshot(`series form ${String(seedIndex - 1)}`);
+    }
+    // Diagnostic 7 plays form 0 again.
+    expect(form(7)).toEqual(form(1));
+    expect(form(2)).not.toEqual(form(1));
   });
 
   it('a diagnostic block takes DIAGNOSTIC_PARAMS, never params(fixedL)', () => {
@@ -1290,16 +1318,20 @@ describe('number series', () => {
     ]);
   });
 
-  it('diagnostic items have no per-item limit', () => {
+  it('diagnostic items: the schedule of spec §4.8 from the seeds of their form, no per-item limit (F12)', () => {
     const segment = planDiagnostic(1).segments[5] as Segment;
     const plan = planBlock(segment, 0, 0, { layout: 'keyboard', scale: 1, diagnostic: true, ...PLAIN });
     const seed = diagnosticBlockSeed(1, 'numseries', 0, 0);
-    const { step: built, paramsJson } = buildBlock(plan, seed, 'keyboard', new Map());
+    const { step: built, paramsJson } = buildBlock(plan, seed, 'keyboard', new Map(), { seriesSeedIndex: 3 });
     if (built.kind !== 'numseries_block') throw new Error(built.kind);
     const schedule = diagnosticSeriesSchedule();
     expect(built.items).toEqual(
-      schedule.map((e, i) => ({ ...generateItem(e.family, e.targetD, deriveSeed(seed, 'item:' + String(i))), timeLimitMs: null })),
+      schedule.map((e, i) => ({ ...generateItem(e.family, e.targetD, diagnosticSeriesSeed(3, i + 1)), timeLimitMs: null })),
     );
+    // The block's own seed plays no part: the form is the item seeds.
+    const other = buildBlock(plan, seed + 1, 'keyboard', new Map(), { seriesSeedIndex: 3 }).step;
+    expect(other).toEqual(built);
+    expect(() => buildBlock(plan, seed, 'keyboard', new Map())).toThrow(/seriesSeedIndex/);
     expect(built.totalLimitMs).toBe(600_000);
     expect(JSON.parse(paramsJson)).toEqual({ items: 20, itemLimitsMs: Array<null>(20).fill(null), totalLimitMs: 600_000 });
     // The total limit applies as in W1: a slow answer is still a success while the block time lasts.
@@ -1332,7 +1364,7 @@ describe('Горбов: one table for the three tasks (F10)', () => {
     return plan;
   };
   const cellsOf = (plan: BlockPlan, seed: number, tableSeed?: number) => {
-    const { step } = buildBlock(plan, seed, 'keyboard', new Map(), tableSeed);
+    const { step } = buildBlock(plan, seed, 'keyboard', new Map(), tableSeed === undefined ? {} : { tableSeed });
     if (step.kind !== 'table_block') throw new Error('expected a table block');
     return step;
   };
@@ -1349,7 +1381,7 @@ describe('Горбов: one table for the three tasks (F10)', () => {
       expect(step.cells).toEqual(table);
       // The block's own seed still drives the reshuffles (TableView).
       expect(step.seed).toBe(seed);
-      expect(JSON.parse(buildBlock(plan, seed, 'keyboard', new Map(), tableSeed).paramsJson)).toEqual({
+      expect(JSON.parse(buildBlock(plan, seed, 'keyboard', new Map(), { tableSeed }).paramsJson)).toEqual({
         task: plan.task,
         ...plan.params,
         table: 'series',
@@ -1362,7 +1394,7 @@ describe('Горбов: one table for the three tasks (F10)', () => {
     // An own-table block deals from its own seed, whatever table seed is passed.
     expect(cellsOf(own, ownSeed, tableSeed).cells).toEqual(generateGorbovTable(createRng(ownSeed)));
     expect(cellsOf(own, ownSeed, tableSeed).cells).not.toEqual(table);
-    expect(JSON.parse(buildBlock(own, ownSeed, 'keyboard', new Map(), tableSeed).paramsJson)).toMatchObject({ table: 'own', tableSeed: ownSeed });
+    expect(JSON.parse(buildBlock(own, ownSeed, 'keyboard', new Map(), { tableSeed }).paramsJson)).toMatchObject({ table: 'own', tableSeed: ownSeed });
     expect(tablePlan(seg(), 6, 4).table).toBe('own');
     // Without a table seed a series block deals from its own seed (block 0).
     expect(cellsOf(tablePlan(seg(), 6, 0), tableSeed).cells).toEqual(table);
@@ -1419,7 +1451,7 @@ describe('Горбов: one table for the three tasks (F10)', () => {
     const schulte: Segment = { module: 'schulte', budgetMs: 300_000, purpose: 'attention' };
     const plan = planBlock(schulte, 4, 1, ctx);
     expect(plan).toMatchObject({ kind: 'table', table: 'own' });
-    const { step, paramsJson } = buildBlock(plan, 9, 'keyboard', new Map(), 5);
+    const { step, paramsJson } = buildBlock(plan, 9, 'keyboard', new Map(), { tableSeed: 5 });
     if (step.kind !== 'table_block' || plan.kind !== 'table') throw new Error('expected a table block');
     expect(step.cells).toEqual(generateSchulteTable(plan.params.size, createRng(9)));
     expect(JSON.parse(paramsJson)).toEqual({ task: 'schulte', ...plan.params });
@@ -1491,6 +1523,7 @@ describe('diagnosticResults', () => {
       unreliable: [],
       restarts: {},
       gorbovOneTable: true,
+      seriesForm: 'v2',
     });
     // A condition with fewer than 3 RTs has no median: its difference is missing, the other median is kept.
     const partial = diagnosticResults([{ module: 'stroop', summary: summary({}), hitRts: [], conditions: { congruent: cond(520), incongruent: cond(null) } }]);
@@ -1502,10 +1535,12 @@ describe('diagnosticResults', () => {
     });
     expect(diagnosticResults([{ module: 'gorbov', run: 0, seconds: 30 }, { module: 'gorbov', run: 1, seconds: null }, { module: 'gorbov', run: 2, seconds: 70 }]).gorbov).toBeNull();
     expect(diagnosticResults([{ module: 'gorbov', run: 0, seconds: 30 }, { module: 'gorbov', run: 2, seconds: 70 }]).gorbov).toBeNull();
-    // A diagnostic of 0.3.0 deals Горбов's three tasks from one table (F10); a stored row without the flag reads false.
-    expect(diagnosticResults([])).toEqual({ ...EMPTY_METRICS, unreliable: [], restarts: {}, gorbovOneTable: true });
-    expect(diagnosticResults([])).toEqual({ ...EMPTY_RESULTS, gorbovOneTable: true });
+    // A diagnostic of 0.3.0 deals Горбов's three tasks from one table (F10) and plays the number-series forms v2 (F12);
+    // a stored row without the flags reads three tables and the old series.
+    expect(diagnosticResults([])).toEqual({ ...EMPTY_METRICS, unreliable: [], restarts: {}, gorbovOneTable: true, seriesForm: 'v2' });
+    expect(diagnosticResults([])).toEqual({ ...EMPTY_RESULTS, gorbovOneTable: true, seriesForm: 'v2' });
     expect(EMPTY_RESULTS.gorbovOneTable).toBe(false);
+    expect(EMPTY_RESULTS.seriesForm).toBeNull();
     expect(Object.values(EMPTY_METRICS).every((v) => v === null)).toBe(true);
   });
 

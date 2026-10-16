@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import type { BlockRow } from '../../src/data/rows';
 import type { ModuleId } from '../../src/engine/types';
-import { cancelPendingPresses, historyBundle, openApp, pageDate, playSession, restoreBundle, type Screen } from './bot';
+import { cancelPendingPresses, historyBundle, openApp, pageDate, playSeries, playSession, restoreBundle, type Screen } from './bot';
 import { E2E_URL, escapeUntil, expect, expectFitsWidth, lineCount, pauseWithEscape, shot, test } from './fixtures';
 
 // Whole sessions at scale 0.02 still take tens of seconds each.
@@ -19,10 +19,16 @@ function checkSummaries(page: Page, titles: string[]): (kind: Screen) => Promise
   };
 }
 
-/** A whole diagnostic: the six 0.1.0 segments, then Помехоустойчивость, Струп, Переключение правил and the span protocol. */
+/**
+ * A whole diagnostic: the six 0.1.0 segments, then Помехоустойчивость, Струп, Переключение правил and the span protocol.
+ * Its number series is a form v2 (F12): under the e2e scale items 1–3, arith, a letter series and a digit sum, so the bot
+ * answers a letter item in every run (T-R68).
+ */
 async function runDiagnostic(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Контрольная диагностика' }).click();
   const titles: string[] = [];
+  await playSession(page, { onScreen: checkSummaries(page, titles), stopAt: 'series', timeoutMs: 300_000 });
+  expect(await playSeries(page)).toEqual(['number', 'letter', 'number']);
   await playSession(page, { onScreen: checkSummaries(page, titles), timeoutMs: 300_000 });
   await expect(page.getByRole('heading', { name: 'Сессия завершена' })).toBeVisible();
   const results = page.getByRole('table', { name: 'Результаты диагностики' });
@@ -331,7 +337,7 @@ test('number series: a skipped item counts as wrong', async ({ page }) => {
   await input.press('Space');
   await expect(counter).toHaveText('Задача 2 из 3');
   await playSession(page, { stopAt: 'summary' });
-  await expect(page.locator('.summary')).toContainText('Верно: 2 из 3');
+  await expect(page.locator('.summary')).toContainText(/Верно 2 из 3 · пропущено 1 · среднее время \d+,\d\sс/);
 });
 
 test('settings layout pult changes key hints to arrows', async ({ page }) => {

@@ -2,7 +2,7 @@ import { LAPSE_HOLD_CAP } from '../engine/adaptive';
 import type { AudioStressorParams } from '../engine/audio/stressors';
 import { DAY_FORM_DAYS, DAY_FORM_MIN_DAYS, type DayForm } from '../engine/dayForm';
 import type { DiagnosticResults } from '../engine/diagnostic';
-import { BASE_ITEM_LIMIT_MS } from '../engine/itemLimit';
+import { ITEM_LIMIT_START_MS } from '../engine/itemLimit';
 import { LAYOUT_NAMES } from '../engine/layouts';
 import { condPairOf, type ConditionStats } from '../engine/reaction/conditions';
 import { LAPSE_MEDIAN_FACTOR, type Stability } from '../engine/reaction/stability';
@@ -206,7 +206,7 @@ export const AUDIO_NOT_PLAYED = 'Звук не воспроизводился: �
 /** The end of both number-series instructions (Справочник F12). */
 const SERIES_SKIP_NOTE = ' Пробел — пропустить задачу (засчитается как неверная).';
 export const SERIES_INSTRUCTION_TRAINING =
-  'Найди закономерность и введи следующее число. На задачу до 40 секунд, на трудных уровнях меньше: остаток времени показывает полоса.' +
+  'Найди закономерность и введи следующее число. На задачу до 30 секунд, на трудных уровнях меньше: остаток времени показывает полоса.' +
   SERIES_SKIP_NOTE;
 /** Under a letter item (Справочник F12). */
 export const SERIES_LETTER_HINT = 'Ответ — буква. Алфавит без Ё. Раскладку переключать не нужно.';
@@ -491,11 +491,12 @@ function limitSeconds(ms: number): string {
   return Number.isInteger(s) ? String(s) : decimal(s, 1);
 }
 
-/** Plus «Самый короткий лимит: 12 с» when an item of the block had less than 40 s (R36). */
-export function seriesLines(correct: number, total: number, meanTimeMs: number, shortestLimitMs: number | null): string[] {
-  const lines = [`Верно: ${String(correct)} из ${String(total)}`, `Среднее время: ${String(whole(meanTimeMs / 1000))} с`];
-  if (shortestLimitMs !== null && shortestLimitMs < BASE_ITEM_LIMIT_MS) {
-    lines.push(`Самый короткий лимит: ${limitSeconds(shortestLimitMs)} с`);
-  }
-  return lines;
+/**
+ * «Верно 7 из 10 · пропущено 1 · среднее время 16,2 с · самый короткий лимит 21 с» (Справочник F12): the mean time to a
+ * tenth of a second; the limit part only when an item of the block had less than 30 s.
+ */
+export function seriesLine(o: { correct: number; total: number; skipped: number; meanTimeMs: number; shortestLimitMs: number | null }): string {
+  const head = `Верно ${String(o.correct)} из ${String(o.total)} · пропущено ${String(o.skipped)} · среднее время ${decimal(o.meanTimeMs / 1000, 1)} с`;
+  const shortest = o.shortestLimitMs;
+  return shortest !== null && shortest < ITEM_LIMIT_START_MS ? `${head} · самый короткий лимит ${limitSeconds(shortest)} с` : head;
 }

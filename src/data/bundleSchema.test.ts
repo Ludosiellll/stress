@@ -3,7 +3,7 @@ import { localDayNumber } from '../engine/dates';
 import { EMPTY_RESULTS, parseResults } from '../engine/diagnostic';
 import { recordHistory } from '../testing/history';
 import { parseExportBundle, type ExportBundle } from './bundleSchema';
-import { exportBundle } from './export';
+import { exportBundle, rebuildCaches } from './export';
 import { importBundle } from './importBundle';
 import { MemoryRepository } from './memoryRepository';
 import type { Repository } from './repository';
@@ -256,6 +256,57 @@ describe('parseExportBundle: errors (the first one found)', () => {
       ['digitsum', 162, null],
       ['letters', 32, 31],
     ]);
+  });
+
+  it('a 0.3.0 file restores whole: new flags, the 3×3 card, the new families, a diagnostic with every new field (F12)', async () => {
+    const repo = new MemoryRepository();
+    const at = (minute: number): string => `2026-10-01T08:${String(minute).padStart(2, '0')}:00.000Z`;
+    await repo.createSession(session('s1', at(0), { endedAt: at(40), appVersion: '0.3.0' }));
+    await repo.createSession(session('s2', '2026-10-02T08:00:00.000Z', { kind: 'diagnostic', endedAt: '2026-10-02T08:40:00.000Z' }));
+    const band = (b: number): string => JSON.stringify({ band: b, bandLabel: 'красный круг', windowMs: 600, nominalWindowMs: 600, floorMs: null });
+    await repo.addBlock(block('warm', 's1', at(1), { lBefore: 7, lAfter: 7, flags: ['warmup'], paramsJson: band(1) }), [trial('t1', 'warm', 0)], []);
+    await repo.addBlock(block('run', 's1', at(3), { lBefore: 8, lAfter: 8, flags: ['test_format'], paramsJson: band(2) }), [trial('t2', 'run', 0)], []);
+    await repo.addBlock(block('esc', 's1', at(6), { lBefore: 8, lAfter: 6, score: 0, flags: ['discarded'], paramsJson: band(2) }), [], []);
+    const card = JSON.stringify({ mode: 'card3x3', length: 9, exposureMs: 5000, sound: false, exact: 2, positionsCorrect: 70, partial: 70 / 90, answers: [] });
+    await repo.addBlock(block('card', 's1', at(9), { module: 'memory', lBefore: 21, lAfter: 21.5, paramsJson: '{"mode":"card3x3","sound":true}', summaryJson: card }), [], []);
+    const items = [
+      item('i1', 'series', at(12), { family: 'letters', answer: 32, given: 32, timeLimitMs: 30_000 }),
+      item('i2', 'series', at(13), { family: 'digitsum', answer: 162, given: null, correct: false, timeLimitMs: 25_200 }),
+    ];
+    const seriesSummary = JSON.stringify({ correct: 1, total: 2, items: [{ itemId: 'letters:1', answer: 32, given: 32, timeMs: 9000 }, { itemId: 'digitsum:2', answer: 162, given: null, timeMs: 4000, skipped: true }] });
+    await repo.addBlock(block('series', 's1', at(11), { module: 'numseries', lBefore: 0, lAfter: 0, score: 0.5, paramsJson: '{"items":2}', summaryJson: seriesSummary }), [], items);
+    const resultsJson = JSON.stringify({
+      ...EMPTY_RESULTS,
+      pzmrMedianRt: 280,
+      pzmrSdRt: 31.5,
+      szmrWrong: 2,
+      rdoSignedBiasMs: -4.2,
+      gorbov: { V: 38, P: 75, Pi: -3 },
+      numseriesCorrect: 13,
+      restarts: { numseries: { user: 1, focus: 0 } },
+      gorbovOneTable: true,
+      seriesForm: 'v2',
+    });
+    await repo.addDiagnostic({ id: 'd1', sessionId: 's2', number: 1, at: '2026-10-02T08:40:00.000Z', resultsJson });
+
+    const bundle = parsed(await exportBundle(repo, '0.3.0'));
+    const restored = new MemoryRepository();
+    const report = await importBundle(restored, bundle, { pause: () => Promise.resolve() });
+    // Every row is added and the caches are rebuilt (rebuildCaches runs at the end of the restore and does not fail).
+    expect(report).toMatchObject({ error: null, sessions: { imported: 2 }, blocks: { imported: 5, failed: 0 }, diagnostics: { imported: 1 } });
+    expect(await listsOf(restored)).toEqual(await listsOf(repo));
+    const [diagnostic] = await restored.listDiagnostics();
+    expect(parseResults(diagnostic ?? { resultsJson: '' })).toMatchObject({
+      seriesForm: 'v2',
+      gorbovOneTable: true,
+      restarts: { numseries: { user: 1, focus: 0 } },
+      pzmrSdRt: 31.5,
+      szmrWrong: 2,
+      rdoSignedBiasMs: -4.2,
+    });
+    // The ratings rebuilt from the restored items: the letter item and the digit-sum one count by their families.
+    expect([...(await restored.getRatings()).keys()].sort()).toEqual(['digitsum', 'letters']);
+    await expect(rebuildCaches(restored)).resolves.toBeUndefined();
   });
 
   it('unknown module, kind and family; flags outside BlockFlag; mood outside 1…5', () => {

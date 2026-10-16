@@ -65,7 +65,8 @@ export function diffScore(v: number, v0: number, scale: number): number {
 
 /**
  * Baseline per metric (M2): the first non-null value across the diagnostics, in order. With a `format`, Горбов comes
- * only from the diagnostics of that format (one table or three, F10): a result of the other one is no baseline.
+ * only from the diagnostics of that table format (one table or three, F10) and the number series only from those of
+ * that series form (the old series or the forms v2, F12): a result of the other one is no baseline.
  */
 export function mergedBaseline(results: readonly DiagnosticResults[], format?: DiagnosticFormat): DiagnosticMetrics {
   const first = <K extends keyof DiagnosticMetrics>(k: K, from: readonly DiagnosticMetrics[] = results): DiagnosticMetrics[K] => {
@@ -76,6 +77,7 @@ export function mergedBaseline(results: readonly DiagnosticResults[], format?: D
     return null;
   };
   const sameTables = format === undefined ? results : results.filter((r) => r.gorbovOneTable === format.gorbovOneTable);
+  const sameSeries = format === undefined ? results : results.filter((r) => r.seriesForm === format.seriesForm);
   return {
     pzmrMedianRt: first('pzmrMedianRt'),
     pzmrMeanRt: first('pzmrMeanRt'),
@@ -96,7 +98,7 @@ export function mergedBaseline(results: readonly DiagnosticResults[], format?: D
     gonogoScore: first('gonogoScore'),
     rdoMeanAbsErrorMs: first('rdoMeanAbsErrorMs'),
     gorbov: first('gorbov', sameTables),
-    numseriesCorrect: first('numseriesCorrect'),
+    numseriesCorrect: first('numseriesCorrect', sameSeries),
     pomehQuietRt: first('pomehQuietRt'),
     pomehNoisyRt: first('pomehNoisyRt'),
     pomehDeltaMs: first('pomehDeltaMs'),
@@ -188,8 +190,9 @@ export interface Readiness {
  * pulls a 97 down to 81 while the W1 results stay the same), so it is left out of its ability and of the overall
  * index until the next diagnostic, unless every part is (the very first diagnostic counts all of them at 60, as
  * in W1). Gorbov Π is such a part; a deferred Π gets a null baseline, and V keeps its band. Spec deviation, see §7.5
- * (W2-R31, 2026-10-15). Π's baseline comes only from the diagnostics of the latest one's format (F10): the first
- * diagnostic on one table is its own baseline, after any number on three tables.
+ * (W2-R31, 2026-10-15). Π's baseline comes only from the diagnostics of the latest one's format (F10), and the number
+ * series' only from those of its series form (F12): the first diagnostic on one table, or the first one of the forms
+ * v2, is its own baseline there, after any number of the old format, and that part waits.
  */
 export function readinessOfLatest(earlier: readonly DiagnosticResults[], latest: DiagnosticResults): Readiness {
   const before = mergedBaseline(earlier, latest);

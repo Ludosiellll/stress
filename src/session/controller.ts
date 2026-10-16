@@ -68,7 +68,7 @@ import {
   memoryLine,
   reactionLines,
   saveErrorMessage,
-  seriesLines,
+  seriesLine,
   spanLines,
   stabilityLine,
   tableLines,
@@ -589,6 +589,7 @@ export class SessionController {
     const meanTimeMs = outcomes.reduce((sum, o) => sum + o.answer.timeMs, 0) / total;
     const limits = outcomes.flatMap((o) => (o.item.timeLimitMs === null ? [] : [o.item.timeLimitMs]));
     const shortestLimitMs = limits.length > 0 ? Math.min(...limits) : null;
+    const skipped = outcomes.filter((o) => o.answer.skipped === true).length;
     const items = outcomes.map((o) => ({
       itemId: o.item.id,
       answer: o.item.answer,
@@ -603,7 +604,7 @@ export class SessionController {
       level: null,
       hitRts: [],
       summary: { correct: successes, total, items },
-      lines: seriesLines(successes, total, meanTimeMs, shortestLimitMs),
+      lines: [seriesLine({ correct: successes, total, skipped, meanTimeMs, shortestLimitMs })],
       ...(ratings === null ? {} : { meanRating: meanFamilyRating(ratings) }),
       rows: (blockId) => ({ trials: [], items: logicItemRows(blockId, outcomes, at) }),
       ...(discardedAt === undefined ? {} : { discardedAt }),
@@ -1022,14 +1023,24 @@ export class SessionController {
 
   // ---------- blocks ----------
 
+  /**
+   * Builds the block from its seed. A Горбов series block deals the table of block 0's counted attempt (F10). A
+   * diagnostic plays the number-series form of its seed index, and each restart of the task the next form (F12): the
+   * items already seen never come again at once.
+   */
   private startBlock(plan: BlockPlan): void {
     const seg = this.segment();
-    const seed = this.counted
-      ? trainingBlockSeed(this.plan.seed, seg.index, seg.blocksDone, seg.attempt)
-      : diagnosticBlockSeed(this.plan.diagnosticSeedIndex ?? this.diagnosticNumber(), seg.segment.module, seg.blocksDone, seg.attempt);
+    const seedIndex = this.counted ? null : (this.plan.diagnosticSeedIndex ?? this.diagnosticNumber());
+    const seed =
+      seedIndex === null
+        ? trainingBlockSeed(this.plan.seed, seg.index, seg.blocksDone, seg.attempt)
+        : diagnosticBlockSeed(seedIndex, seg.segment.module, seg.blocksDone, seg.attempt);
     const series = plan.kind === 'table' && plan.table === 'series';
     if (series && seg.blocksDone === 0) seg.tableSeed = seed;
-    const { step, paramsJson } = buildBlock(plan, seed, this.blockLayout(seg.segment), this.ratings, series ? (seg.tableSeed ?? seed) : undefined);
+    const { step, paramsJson } = buildBlock(plan, seed, this.blockLayout(seg.segment), this.ratings, {
+      ...(series ? { tableSeed: seg.tableSeed ?? seed } : {}),
+      ...(seedIndex === null ? {} : { seriesSeedIndex: seedIndex + seg.attempt }),
+    });
     this.next = null;
     this.active = { plan, startedAt: this.now().toISOString(), paramsJson };
     this.current = step;

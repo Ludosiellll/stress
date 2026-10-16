@@ -3,6 +3,7 @@ import type { LayoutId, ModuleId } from '../../engine/types';
 import { moduleTitles } from '../../modules/registry';
 import {
   DIAGNOSTIC_ROW_IDS,
+  GORBOV_ROWS,
   diagnosticChange,
   diagnosticComparable,
   diagnosticDetailLines,
@@ -37,7 +38,7 @@ const NO_DATA = 'нет данных';
 const NONE = '—';
 /** Added to a value whose block kept dropping frames after its replay (I1). */
 const UNRELIABLE = 'замер ненадёжен';
-/** The change of a row whose two values were measured differently (Р25). */
+/** The change of a row whose two values were measured differently (Р25): Горбов's tables, the number-series forms. */
 const INCOMPARABLE = 'несравнимо: формат изменён в 0.3.0';
 /** Under the table of the first diagnostic on one table after one on three (F10). */
 const FIRST_ONE_TABLE = 'Горбов: первая диагностика на одной таблице — сравнение с прошлыми условное.';
@@ -98,10 +99,14 @@ function cellText(d: DiagnosticResults, id: DiagnosticRowId, seriesTotal: number
   return isReactionId(id) && d.unreliable.includes(id) ? `${text}, ${UNRELIABLE}` : text;
 }
 
-/** The previous diagnostic's cell (cellText); a Горбов value of three tables says so when this one played one (Р25). */
+/**
+ * The previous diagnostic's cell (cellText); a Горбов value of three tables says so when this one played one (Р25).
+ * The number series of another form has only its change marked.
+ */
 function previousCellText(d: DiagnosticResults, previous: DiagnosticResults, id: DiagnosticRowId, seriesTotal: number | null): string {
   const text = cellText(previous, id, seriesTotal);
-  const threeTables = d.gorbovOneTable && !diagnosticComparable(id, d, previous) && diagnosticValue(previous, id) !== null;
+  const threeTables =
+    GORBOV_ROWS.has(id) && d.gorbovOneTable && !diagnosticComparable(id, d, previous) && diagnosticValue(previous, id) !== null;
   return threeTables ? `${text} (${THREE_TABLES})` : text;
 }
 

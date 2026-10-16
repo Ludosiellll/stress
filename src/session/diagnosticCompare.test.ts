@@ -46,6 +46,17 @@ describe('diagnosticCompare', () => {
     }
   });
 
+  it('the number-series row is not comparable between the old series and the forms v2 (F12); the other rows always are', () => {
+    const v2 = { ...EMPTY_RESULTS, ...D, seriesForm: 'v2' as const };
+    const old = { ...EMPTY_RESULTS, ...D, seriesForm: null };
+    for (const id of DIAGNOSTIC_ROW_IDS) {
+      expect(diagnosticComparable(id, v2, old), id).toBe(id !== 'numseries');
+      expect(diagnosticComparable(id, old, v2), id).toBe(id !== 'numseries');
+      expect(diagnosticComparable(id, v2, v2), id).toBe(true);
+      expect(diagnosticComparable(id, old, old), id).toBe(true);
+    }
+  });
+
   it('changes: 2 % or 5 ms is no change; the direction decides better or worse', () => {
     expect(diagnosticChange('pzmr', 251, 264)).toBe('−13 мс, лучше');
     expect(diagnosticChange('pzmr', 245, 250)).toBe('−5 мс, лучше');

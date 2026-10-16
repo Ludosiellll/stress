@@ -1,7 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { R0, targetDifficulty } from '../../engine/elo';
-import { itemTimeLimit } from '../../engine/itemLimit';
+import { ITEM_LIMIT_START_MS, itemTimeLimit, structTarget } from '../../engine/itemLimit';
 import { createRng, deriveSeed } from '../../engine/rng';
 import { fitPredictions, isUnique } from './check';
 import {
@@ -17,6 +17,7 @@ import {
 } from './families';
 import {
   STRUCT_D_MAX,
+  TRAINING_WINDOW,
   attemptItem,
   candidateItem,
   difficultyOf,
@@ -83,6 +84,18 @@ describe('selectCandidate', () => {
     const { attempt, calls } = attempts({ 700: 2000, 701: 1000 });
     expect(selectCandidate(attempt, 1000)).toEqual({ attempt: 700, difficulty: 2000 });
     expect(calls).toHaveLength(701);
+  });
+
+  it('a window takes the first candidate from targetD − below to targetD + above (F12)', () => {
+    const { attempt, calls } = attempts({ 0: 1100, 1: 1030, 2: 900, 3: 1000 });
+    // 1100 and 1030 lie above 1000 + 25; 900 is within 150 below.
+    expect(selectCandidate(attempt, 1000, { below: 150, above: 25 })).toEqual({ attempt: 2, difficulty: 900 });
+    expect(calls).toEqual([0, 1, 2]);
+    expect(selectCandidate(attempts({ 0: 1100, 1: 1025 }).attempt, 1000, { below: 150, above: 25 })).toEqual({ attempt: 1, difficulty: 1025 });
+    expect(selectCandidate(attempts({ 0: 849, 1: 850 }).attempt, 1000, { below: 150, above: 25 })).toEqual({ attempt: 1, difficulty: 850 });
+    // Without one in the window, the closest of the first 200 attempts, above or below.
+    expect(selectCandidate(attempts({ 0: 1100, 5: 1060, 9: 700 }).attempt, 1000, { below: 150, above: 25 })).toEqual({ attempt: 5, difficulty: 1060 });
+    expect(TRAINING_WINDOW).toEqual({ below: 150, above: 25 });
   });
 
   it('throws after 2000 attempts with nothing accepted', () => {
@@ -279,16 +292,16 @@ describe('generateBlockItems', () => {
     expect(() => generateBlockItems(new Map(), 2.5, createRng(1))).toThrow(RangeError);
   });
 
-  it('keeps 40 s on every item while all ratings are 1000', () => {
+  it('gives every item 30 s while all ratings are 1000 (F12)', () => {
     const items = generateBlockItems(others(1000, {}), 60, createRng(13));
-    for (const item of items) expect(item.timeLimitMs, item.id).toBe(40000);
+    for (const item of items) expect(item.timeLimitMs, item.id).toBe(ITEM_LIMIT_START_MS);
   });
 
   it('shortens the limit of every arith item for an arith rating of 1700', () => {
     const items = generateBlockItems(others(1000, { arith: 1700 }), 300, createRng(17));
     const arith = items.filter((it) => it.family === 'arith');
     expect(arith.length).toBeGreaterThan(0);
-    for (const item of arith) expect(item.timeLimitMs, item.id).toBeLessThan(40000);
+    for (const item of arith) expect(item.timeLimitMs, item.id).toBeLessThan(ITEM_LIMIT_START_MS);
   }, 60_000);
 });
 
@@ -322,17 +335,24 @@ describe('STRUCT_D_MAX', () => {
 });
 
 describe('generateTrainingItem', () => {
-  it('training items keep 40 s up to the family maximum', () => {
-    for (let seed = 0; seed <= 20; seed++) expect(generateTrainingItem('arith', 900, seed).timeLimitMs).toBe(40000);
+  it('training items get 30 s below targetD 1000 (F12)', () => {
+    for (let seed = 0; seed <= 20; seed++) expect(generateTrainingItem('arith', 900, seed).timeLimitMs).toBe(30000);
   });
 
-  it('training items shorten the limit above it', () => {
+  it('training items aim at structTarget and shorten the limit from targetD 1000 (F12)', () => {
+    // arith tops out at 950: the target is its ceiling, the limit makes up the rest of targetD 1300.
     const item = generateTrainingItem('arith', 1300, 7);
-    expect(item.difficulty).toBe(950);
-    expect(item.timeLimitMs).toBe(11900);
+    expect(item.difficulty).toBe(900);
+    expect(item.timeLimitMs).toBe(10_000);
+    expect(itemTimeLimit(1300, 950)).toBe(11_900);
+    // geom at targetD 1300 aims at 0,5·1300 + 417 = 1067, under its ceiling of 1300, and takes 917…1092.
+    const geom = generateTrainingItem('geom', 1300, 3);
+    expect(geom.difficulty).toBeGreaterThanOrEqual(917);
+    expect(geom.difficulty).toBeLessThanOrEqual(1092);
+    expect(geom.timeLimitMs).toBeLessThanOrEqual(itemTimeLimit(1300, 1092));
   });
 
-  it('the lever leaves the item itself unchanged', () => {
+  it('a training item is the first candidate within TRAINING_WINDOW of structTarget, with the limit of its own difficulty (F12)', () => {
     fc.assert(
       fc.property(
         family,
@@ -340,11 +360,11 @@ describe('generateTrainingItem', () => {
         fc.integer({ min: 0, max: 2 ** 31 - 1 }),
         (f, targetD, seed) => {
           const { timeLimitMs, ...item } = generateTrainingItem(f, targetD, seed);
-          expect(item).toEqual(generateItem(f, targetD, seed));
+          expect(item).toEqual(selectCandidate((i) => attemptItem(f, seed, i), structTarget(targetD, STRUCT_D_MAX[f]), TRAINING_WINDOW));
           expect(isUnique(item.shown, item.answer)).toBe(true);
           // A training item always has its own limit (the type says so): the one itemTimeLimit gives.
           const limit: number = timeLimitMs;
-          expect(limit).toBe(itemTimeLimit(targetD, item.difficulty, STRUCT_D_MAX[f]));
+          expect(limit).toBe(itemTimeLimit(targetD, item.difficulty));
         },
       ),
       { numRuns: 1000 },

@@ -1,5 +1,5 @@
 import { R0, familyWeights, pickWeighted, targetDifficulty } from '../../engine/elo';
-import { itemTimeLimit } from '../../engine/itemLimit';
+import { itemTimeLimit, structTarget } from '../../engine/itemLimit';
 import { createRng, deriveSeed, type Rng } from '../../engine/rng';
 import { isUnique } from './check';
 import { TRAINING_FAMILIES, fitFamily, generateTerms, structDifficulty, type FamilyId } from './families';
@@ -31,6 +31,20 @@ const MAX_ABS_TERM = 100000;
 const MIN_DISTINCT_VALUES = 3;
 /** A candidate this close to the target difficulty is taken at once. */
 const D_TOLERANCE = 150;
+
+/** Which candidates selectCandidate takes at once: D from targetD − below to targetD + above. */
+export interface DWindow {
+  below: number;
+  above: number;
+}
+
+const ANY_NEAR: DWindow = { below: D_TOLERANCE, above: D_TOLERANCE };
+/**
+ * A training item is taken at most 25 above its structural target (F12): its limit follows its own D_struct, and each 25
+ * above the target lengthen it by 9 % (2^(25/200)); 150 above would give 1.7 times the limit of the target (a geom item
+ * of 1100 at rating 1480: 20.8 s instead of 18.2 s). Below the target the limit only gets shorter.
+ */
+export const TRAINING_WINDOW: DWindow = { below: D_TOLERANCE, above: 25 };
 const PREFERRED_ATTEMPTS = 200;
 const MAX_ATTEMPTS = 2000;
 
@@ -98,21 +112,23 @@ export function attemptItem(family: FamilyId, seed: number, attempt: number): Se
 }
 
 /**
- * The first accepted candidate within D_TOLERANCE of `targetD`; failing that, the closest one
- * accepted in the first 200 attempts (the earliest on ties). If none of those was accepted,
- * the next accepted candidate up to attempt 2000. Exported for tests.
+ * The first accepted candidate within `window` of `targetD` (default D_TOLERANCE either side); failing that, the
+ * closest one accepted in the first 200 attempts (the earliest on ties). If none of those was accepted, the next
+ * accepted candidate up to attempt 2000. Exported for tests.
  */
 export function selectCandidate<T extends { difficulty: number }>(
   attempt: (i: number) => T | null,
   targetD: number,
+  window: DWindow = ANY_NEAR,
 ): T {
   let best: T | null = null;
   let bestGap = Infinity;
   for (let i = 0; i < MAX_ATTEMPTS; i++) {
     const candidate = attempt(i);
     if (candidate !== null) {
-      const gap = Math.abs(candidate.difficulty - targetD);
-      if (gap <= D_TOLERANCE) return candidate;
+      const offset = candidate.difficulty - targetD;
+      if (offset >= -window.below && offset <= window.above) return candidate;
+      const gap = Math.abs(offset);
       if (gap < bestGap) {
         best = candidate;
         bestGap = gap;
@@ -132,12 +148,13 @@ export function generateItem(family: FamilyId, targetD: number, seed: number): S
 }
 
 /**
- * generateItem plus its time limit: 40 s up to STRUCT_D_MAX of the family, shorter above it so that
- * the effective difficulty reaches `targetD` (R36). The series itself is exactly generateItem's.
+ * A training item for `targetD` (F12): a series aimed at structTarget(targetD, STRUCT_D_MAX of the family), taken within
+ * TRAINING_WINDOW of it, with the time limit of its own difficulty — 30 s below targetD 1000, shorter from it on, so that
+ * the effective difficulty reaches `targetD` (R36). Deterministic.
  */
 export function generateTrainingItem(family: FamilyId, targetD: number, seed: number): TrainingSeriesItem {
-  const item = generateItem(family, targetD, seed);
-  return { ...item, timeLimitMs: itemTimeLimit(targetD, item.difficulty, STRUCT_D_MAX[family]) };
+  const item = selectCandidate((i) => attemptItem(family, seed, i), structTarget(targetD, STRUCT_D_MAX[family]), TRAINING_WINDOW);
+  return { ...item, timeLimitMs: itemTimeLimit(targetD, item.difficulty) };
 }
 
 /**

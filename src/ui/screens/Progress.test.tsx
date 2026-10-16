@@ -55,6 +55,18 @@ describe('Progress: Горбов on one table after three (F10)', () => {
   });
 });
 
+describe('Progress: number series of the forms v2 after the old ones (F12)', () => {
+  it('names the old diagnostics under the series chart; the other charts have no such line', async () => {
+    const repo = new MemoryRepository();
+    await seedDiagnostic(repo, 1, {});
+    await seedDiagnostic(repo, 2, { seriesForm: 'v2', numseriesCorrect: 8 });
+    await renderProgress(repo);
+    const note = 'Диагностика №1 — с прежними задачами (до 0.3.0). Тренд и полоса шума — только по диагностикам с новыми задачами.';
+    expect(within(chartOf('Числовые ряды, верно из 20')).getByText(note)).toBeTruthy();
+    expect(within(chartOf('ПЗМР, медиана, мс')).queryByText(/с прежними задачами/)).toBeNull();
+  });
+});
+
 describe('Progress with two diagnostics', () => {
   async function seeded() {
     const repo = new MemoryRepository();

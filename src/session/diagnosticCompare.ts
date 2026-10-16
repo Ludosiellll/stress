@@ -129,14 +129,16 @@ export function diagnosticChange(id: DiagnosticRowId, now: number, before: numbe
   return `${value}, ${better ? 'лучше' : 'хуже'}`;
 }
 
-const GORBOV_ROWS: ReadonlySet<DiagnosticRowId> = new Set(['gorbovV', 'gorbovP', 'gorbovPi']);
+export const GORBOV_ROWS: ReadonlySet<DiagnosticRowId> = new Set(['gorbovV', 'gorbovP', 'gorbovPi']);
 
 /**
  * Whether a row of two diagnostics can be compared: Горбов's rows only between diagnostics of the same table format
- * (one table or three, F10); the other rows always.
+ * (one table or three, F10), the number series only between those of the same series form (the old series or the forms
+ * v2, F12); the other rows always.
  */
 export function diagnosticComparable(id: DiagnosticRowId, now: DiagnosticFormat, before: DiagnosticFormat): boolean {
-  return !GORBOV_ROWS.has(id) || now.gorbovOneTable === before.gorbovOneTable;
+  if (GORBOV_ROWS.has(id)) return now.gorbovOneTable === before.gorbovOneTable;
+  return id !== 'numseries' || now.seriesForm === before.seriesForm;
 }
 
 /** The norm of a row graded by its shown value; ПЗМР and СЗМР by their mean RT instead (О7). */

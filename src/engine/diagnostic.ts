@@ -108,20 +108,26 @@ export interface DiagnosticResults extends DiagnosticMetrics {
    * comparable with one).
    */
   gorbovOneTable: boolean;
+  /**
+   * The number series played the six fixed forms v2 (F12). Rows stored before 0.3.0 lack it: read as null (the old
+   * series, not comparable with v2).
+   */
+  seriesForm: 'v2' | null;
 }
 
-/** What makes two diagnostics comparable: Горбов on one table or on three (F10). */
-export type DiagnosticFormat = Pick<DiagnosticResults, 'gorbovOneTable'>;
+/** What makes two diagnostics comparable: Горбов on one table or on three (F10), the number-series forms (F12). */
+export type DiagnosticFormat = Pick<DiagnosticResults, 'gorbovOneTable' | 'seriesForm'>;
 
 /**
- * Results with every metric missing, nothing unreliable, no restarts and Горбов on three tables (a stored row without
- * the flag): the base of results built in tests and code.
+ * Results with every metric missing, nothing unreliable, no restarts, Горбов on three tables and the old number series
+ * (a stored row without the flags): the base of results built in tests and code.
  */
 export const EMPTY_RESULTS: Readonly<DiagnosticResults> = Object.freeze({
   ...EMPTY_METRICS,
   unreliable: Object.freeze([]),
   restarts: Object.freeze({}),
   gorbovOneTable: false,
+  seriesForm: null,
 });
 
 const REACTION_IDS: readonly string[] = REACTION_MODULE_IDS;
@@ -164,8 +170,8 @@ function gorbovOf(v: unknown): DiagnosticMetrics['gorbov'] {
  * reads as null (the W2 metrics of a 0.1.0 row, the mean RTs and F7 metrics of a 0.2.0 one: missing, never 0); rows written before `unreliable` existed
  * read as reliable (I1), rows without `restarts` as having none (F11). A damaged or imported row is read field by field
  * (FW9, T-R22): a metric that is not a finite number, or a Горбов result without numeric V, P and Π, reads as null; damaged
- * restarts as restartsOf reads them; a gorbovOneTable that is not `true` reads false (F10); unknown entries are dropped.
- * Structural: DiagnosticRow fits.
+ * restarts as restartsOf reads them; a gorbovOneTable that is not `true` reads false (F10), a seriesForm that is not
+ * 'v2' null (F12); unknown entries are dropped. Structural: DiagnosticRow fits.
  */
 export function parseResults(row: { readonly resultsJson: string }): DiagnosticResults | null {
   let value: unknown;
@@ -179,24 +185,62 @@ export function parseResults(row: { readonly resultsJson: string }): DiagnosticR
   const metrics = { ...EMPTY_METRICS, gorbov: gorbovOf(r['gorbov']) };
   for (const k of NUMBER_METRICS) metrics[k] = finite(r[k]);
   const unreliable = Array.isArray(r['unreliable']) ? (r['unreliable'] as unknown[]).filter(isReactionId) : [];
-  return { ...metrics, unreliable, restarts: restartsOf(r['restarts']), gorbovOneTable: r['gorbovOneTable'] === true };
+  return {
+    ...metrics,
+    unreliable,
+    restarts: restartsOf(r['restarts']),
+    gorbovOneTable: r['gorbovOneTable'] === true,
+    seriesForm: r['seriesForm'] === 'v2' ? 'v2' : null,
+  };
 }
 
-/** Family order of the number-series diagnostic: the first 8 of the module's ALL_FAMILIES (engine must not import src/modules). */
-const SERIES_FAMILIES: readonly FamilyId[] = ['arith', 'geom', 'second', 'alt', 'fib', 'linrec', 'powers', 'opcycle'];
-const SERIES_ITEMS = 20;
+/**
+ * The families of the 20 number-series items of the diagnostic (spec §4.8): the 11 training families once, the three
+ * held out three times each. The module's family lists stay in src/modules (the engine does not import them).
+ */
+const SERIES_FAMILIES: readonly FamilyId[] = [
+  'arith',
+  'letters',
+  'digitsum',
+  'geom',
+  'addsub',
+  'powstep',
+  'second',
+  'primes',
+  'twostep',
+  'alt',
+  'digitsum',
+  'fib',
+  'powstep',
+  'linrec',
+  'twostep',
+  'powers',
+  'digitsum',
+  'opcycle',
+  'powstep',
+  'twostep',
+];
+const SERIES_ITEMS = SERIES_FAMILIES.length;
+/** The diagnostic's number series come in six fixed forms (F12): diagnostic seed index 1…6 plays form 0…5, then again. */
+export const SERIES_FORMS = 6;
 
 /** Seed of one diagnostic segment: hashString('diag:' + n + ':' + module). */
 export function diagnosticSegmentSeed(n: number, module: ModuleId): number {
   return hashString('diag:' + String(n) + ':' + module);
 }
 
-/** Family and target difficulty for each of the 20 diagnostic number-series items. */
+/** Family and target difficulty of each of the 20 diagnostic number-series items: targetD = 900 + 30·(№ − 1). */
 export function diagnosticSeriesSchedule(): { family: FamilyId; targetD: number }[] {
-  return Array.from({ length: SERIES_ITEMS }, (_, i) => ({
-    family: SERIES_FAMILIES[i % SERIES_FAMILIES.length] as FamilyId,
-    targetD: 900 + 30 * i,
-  }));
+  return SERIES_FAMILIES.map((family, i) => ({ family, targetD: 900 + 30 * i }));
+}
+
+/**
+ * The seed of item `itemNumber` (1…20) of the number series of the diagnostic with seed index `seedIndex`:
+ * hashString('series-form:' + form + ':' + №), form = (seedIndex − 1) mod 6 (F12). The items of a form never change.
+ */
+export function diagnosticSeriesSeed(seedIndex: number, itemNumber: number): number {
+  const form = (((seedIndex - 1) % SERIES_FORMS) + SERIES_FORMS) % SERIES_FORMS;
+  return hashString('series-form:' + String(form) + ':' + String(itemNumber));
 }
 
 /**

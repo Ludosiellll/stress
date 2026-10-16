@@ -3,8 +3,10 @@ import {
   DIAGNOSTIC_VOLUME,
   EMPTY_METRICS,
   EMPTY_RESULTS,
+  SERIES_FORMS,
   diagnosticSegmentSeed,
   diagnosticSeriesSchedule,
+  diagnosticSeriesSeed,
   isReactionId,
   parseResults,
   planDiagnostic,
@@ -86,16 +88,30 @@ describe('diagnosticSegmentSeed', () => {
   });
 });
 
-describe('diagnosticSeriesSchedule', () => {
-  it('has 20 entries cycling the 8 families with rising target difficulty', () => {
+describe('diagnosticSeriesSchedule (F12)', () => {
+  it('the 20 items of spec §4.8: the 11 training families once, the 3 held-out ones three times, targetD 900…1470', () => {
     const s = diagnosticSeriesSchedule();
-    expect(s).toHaveLength(20);
-    const order = ['arith', 'geom', 'second', 'alt', 'fib', 'linrec', 'powers', 'opcycle'];
-    s.forEach((e, i) => {
-      expect(e.family).toBe(order[i % 8]);
-      expect(e.targetD).toBe(900 + 30 * i);
-    });
-    expect(s[19]).toEqual({ family: 'alt', targetD: 1470 });
+    expect(s.map((e) => e.family)).toEqual([
+      'arith', 'letters', 'digitsum', 'geom', 'addsub', 'powstep', 'second', 'primes', 'twostep', 'alt',
+      'digitsum', 'fib', 'powstep', 'linrec', 'twostep', 'powers', 'digitsum', 'opcycle', 'powstep', 'twostep',
+    ]);
+    expect(s.map((e) => e.targetD)).toEqual(Array.from({ length: 20 }, (_, i) => 900 + 30 * i));
+    expect(s[19]).toEqual({ family: 'twostep', targetD: 1470 });
+    // R_FORMAT of the assessment plan rests on the mean targetD: 1185, as before.
+    expect(s.reduce((sum, e) => sum + e.targetD, 0) / s.length).toBe(1185);
+  });
+});
+
+describe('diagnosticSeriesSeed (F12)', () => {
+  it('six fixed forms: seedIndex 1…6 play forms 0…5, seedIndex 7 form 0 again', () => {
+    expect(SERIES_FORMS).toBe(6);
+    expect([1, 2, 3, 4, 5, 6, 7, 13].map((seedIndex) => diagnosticSeriesSeed(seedIndex, 4))).toEqual(
+      [0, 1, 2, 3, 4, 5, 0, 0].map((form) => hashString(`series-form:${String(form)}:4`)),
+    );
+    expect(diagnosticSeriesSeed(1, 1)).toBe(hashString('series-form:0:1'));
+    expect(diagnosticSeriesSeed(6, 20)).toBe(hashString('series-form:5:20'));
+    // Every item of a form has a seed of its own.
+    expect(new Set(Array.from({ length: 20 }, (_, i) => diagnosticSeriesSeed(2, i + 1))).size).toBe(20);
   });
 });
 
@@ -148,8 +164,9 @@ describe('parseResults', () => {
       switchCostMs: null,
       memorySpan: null,
       restarts: {},
-      // A row before 0.3.0 played Горбов on three tables (F10).
+      // A row before 0.3.0 played Горбов on three tables (F10) and the old number series (F12).
       gorbovOneTable: false,
+      seriesForm: null,
     });
   });
 
@@ -190,8 +207,8 @@ describe('parseResults', () => {
     expect(now).toMatchObject({ pzmrSdRt: 38.5, szmrWrong: 2, rdoSignedBiasMs: -6.2, gonogoOmissions: null });
   });
 
-  it('EMPTY_RESULTS: every metric missing, nothing unreliable, no restarts, three Горбов tables; frozen', () => {
-    expect(EMPTY_RESULTS).toEqual({ ...EMPTY_METRICS, unreliable: [], restarts: {}, gorbovOneTable: false });
+  it('EMPTY_RESULTS: every metric missing, nothing unreliable, no restarts, three Горбов tables, the old series; frozen', () => {
+    expect(EMPTY_RESULTS).toEqual({ ...EMPTY_METRICS, unreliable: [], restarts: {}, gorbovOneTable: false, seriesForm: null });
     expect(Object.isFrozen(EMPTY_RESULTS)).toBe(true);
     expect(Object.isFrozen(EMPTY_RESULTS.unreliable)).toBe(true);
     expect(Object.isFrozen(EMPTY_RESULTS.restarts)).toBe(true);
@@ -236,6 +253,19 @@ describe('parseResults', () => {
   it('a damaged gorbovOneTable reads false (T-R22)', () => {
     for (const bad of ['true', 1, null, [], {}, [true], 'yes']) {
       expect(parseResults({ resultsJson: JSON.stringify({ ...EMPTY, gorbovOneTable: bad }) })?.gorbovOneTable, JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it('a row stored before F12 played the old number series: seriesForm reads null', () => {
+    const old = Object.fromEntries(Object.entries({ ...EMPTY, numseriesCorrect: 14 }).filter(([k]) => k !== 'seriesForm'));
+    expect(old).not.toHaveProperty('seriesForm');
+    expect(parseResults({ resultsJson: JSON.stringify(old) })?.seriesForm).toBeNull();
+    expect(parseResults({ resultsJson: JSON.stringify({ ...EMPTY, seriesForm: 'v2' }) })?.seriesForm).toBe('v2');
+  });
+
+  it('a damaged seriesForm reads null (T-R22)', () => {
+    for (const bad of ['v1', 'V2', 'v3', 2, true, null, [], {}, ['v2']]) {
+      expect(parseResults({ resultsJson: JSON.stringify({ ...EMPTY, seriesForm: bad }) })?.seriesForm, JSON.stringify(bad)).toBeNull();
     }
   });
 

@@ -39,6 +39,7 @@ const RESULTS: DiagnosticResults = {
   rdoSignedBiasMs: null,
   unreliable: [],
   gorbovOneTable: true,
+  seriesForm: 'v2',
 };
 
 /** The F7 values (Справочник F7). */
@@ -213,6 +214,22 @@ describe('Done', () => {
     // The other rows compare as before.
     expect(rows[0]?.slice(2, 4)).toEqual(['264 мс', '−13 мс, лучше']);
     expect(screen.getByText('Горбов: первая диагностика на одной таблице — сравнение с прошлыми условное.')).toBeTruthy();
+  });
+
+  it('a previous diagnostic of the old number series: the change says the format changed (F12, Р25)', () => {
+    const previous = { ...PAST, metrics: { ...PREVIOUS, seriesForm: null } };
+    render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} comparison={{ ...WITH_PREVIOUS, previous }} onHome={vi.fn()} />);
+    const rows = cells();
+    expect(rows[7]).toEqual(['Числовые ряды — решено верно', '14 из 20', '12 из 20', 'несравнимо: формат изменён в 0.3.0', '—']);
+    // The Горбов rows of the same format and the other rows compare as before.
+    expect(rows[4]?.slice(2, 4)).toEqual(['45,0 с', '−3,7 с, лучше']);
+    expect(rows[0]?.slice(2, 4)).toEqual(['264 мс', '−13 мс, лучше']);
+    expect(screen.queryByText(/первая диагностика на одной таблице/)).toBeNull();
+    // A previous result without a series value has no change, whatever its format.
+    cleanup();
+    const missing = { ...PAST, metrics: { ...PREVIOUS, seriesForm: null, numseriesCorrect: null } };
+    render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} comparison={{ ...WITH_PREVIOUS, previous: missing }} onHome={vi.fn()} />);
+    expect(cells()[7]?.slice(2, 4)).toEqual(['нет данных', '—']);
   });
 
   it('no Горбов note when the previous diagnostic had no Горбов result or played one table too (F10)', () => {

@@ -417,11 +417,29 @@ describe('mergedBaseline by format (F10)', () => {
       { ...EMPTY, pzmrMedianRt: 320, gorbov: { V: 50, P: 90, Pi: 30 } },
       { ...EMPTY, pzmrMedianRt: 300, gorbovOneTable: true, gorbov: { V: 40, P: 80, Pi: -10 } },
     ];
-    expect(mergedBaseline(results, { gorbovOneTable: true })).toEqual({ ...EMPTY_METRICS, pzmrMedianRt: 320, gorbov: { V: 40, P: 80, Pi: -10 } });
-    expect(mergedBaseline(results, { gorbovOneTable: false })).toEqual({ ...EMPTY_METRICS, pzmrMedianRt: 320, gorbov: { V: 50, P: 90, Pi: 30 } });
-    expect(mergedBaseline([results[0] as DiagnosticResults], { gorbovOneTable: true }).gorbov).toBeNull();
+    expect(mergedBaseline(results, { gorbovOneTable: true, seriesForm: null })).toEqual({ ...EMPTY_METRICS, pzmrMedianRt: 320, gorbov: { V: 40, P: 80, Pi: -10 } });
+    expect(mergedBaseline(results, { gorbovOneTable: false, seriesForm: null })).toEqual({ ...EMPTY_METRICS, pzmrMedianRt: 320, gorbov: { V: 50, P: 90, Pi: 30 } });
+    expect(mergedBaseline([results[0] as DiagnosticResults], { gorbovOneTable: true, seriesForm: null }).gorbov).toBeNull();
     // Without a format: every diagnostic, as before.
     expect(mergedBaseline(results).gorbov).toEqual({ V: 50, P: 90, Pi: 30 });
+  });
+});
+
+describe('mergedBaseline by the number-series form (F12)', () => {
+  it('takes the series only from the diagnostics of the same form; the other metrics from all', () => {
+    const results: DiagnosticResults[] = [
+      { ...EMPTY, pzmrMedianRt: 320, numseriesCorrect: 12 },
+      { ...EMPTY, pzmrMedianRt: 300, seriesForm: 'v2', numseriesCorrect: 9 },
+      { ...EMPTY, seriesForm: 'v2', numseriesCorrect: 11 },
+    ];
+    expect(mergedBaseline(results, { gorbovOneTable: false, seriesForm: 'v2' })).toEqual({ ...EMPTY_METRICS, pzmrMedianRt: 320, numseriesCorrect: 9 });
+    expect(mergedBaseline(results, { gorbovOneTable: false, seriesForm: null })).toEqual({ ...EMPTY_METRICS, pzmrMedianRt: 320, numseriesCorrect: 12 });
+    expect(mergedBaseline([results[0] as DiagnosticResults], { gorbovOneTable: false, seriesForm: 'v2' }).numseriesCorrect).toBeNull();
+    // Without a format: every diagnostic, as before.
+    expect(mergedBaseline(results).numseriesCorrect).toBe(12);
+    // Each format filters its own metric only.
+    const mixed: DiagnosticResults[] = [{ ...EMPTY, gorbovOneTable: true, gorbov: { V: 40, P: 80, Pi: 0 }, numseriesCorrect: 12 }];
+    expect(mergedBaseline(mixed, { gorbovOneTable: true, seriesForm: 'v2' })).toEqual({ ...EMPTY_METRICS, gorbov: { V: 40, P: 80, Pi: 0 } });
   });
 });
 
@@ -518,6 +536,24 @@ describe('readinessOfLatest (W2-R31)', () => {
     // Old diagnostics among themselves keep comparing as before.
     const old = readinessOfLatest([full({ gorbov: { V: 40, P: 80, Pi: -10 } })], full({ gorbov: { V: 33, P: 70, Pi: -12 } }));
     expect(old.abilities.switching).toBe(64);
+  });
+
+  it('the logic part takes its baseline only from diagnostics of the same series form; the first v2 one waits (F12)', () => {
+    const v1 = (numseriesCorrect: number) => full({ numseriesCorrect });
+    const v2 = (numseriesCorrect: number) => full({ seriesForm: 'v2', numseriesCorrect });
+    // Upgrade day: 14 of 20 on the old forms, 9 on the new ones. Counted against 14, the logic part would drop to 40.
+    const first = readinessOfLatest([v1(12), v1(14)], v2(9));
+    expect(first.deferred).toBe(true);
+    expect(first.abilities.logic).toBeNull();
+    expect(first.overall).toBe(readiness({ ...v2(9), numseriesCorrect: null }, v1(12)).overall);
+    // The next v2 diagnostic counts against the first one only.
+    const second = readinessOfLatest([v1(12), v1(14), v2(9)], v2(11));
+    expect(second.deferred).toBe(false);
+    expect(second.abilities.logic).toBeCloseTo(60 + (40 * 2) / (0.25 * 9), 12);
+    // Old diagnostics among themselves keep comparing as before.
+    expect(readinessOfLatest([v1(12)], v1(15)).abilities.logic).toBe(100);
+    // The very first diagnostic, v2 already, counts every part at 60.
+    expect(readinessOfLatest([], v2(9))).toEqual({ ...readiness(v2(9), v2(9)), deferred: false });
   });
 
   it('BASELINE_METRICS are exactly the metrics readiness scores against a baseline', () => {
