@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { EMPTY_RESULTS, parseResults, type DiagnosticResults } from '../../engine/diagnostic';
 import { conditionLines, type BlockSummaryView, type DiagnosticComparison } from '../../session/steps';
@@ -38,6 +38,7 @@ const RESULTS: DiagnosticResults = {
   rdoLate: null,
   rdoSignedBiasMs: null,
   unreliable: [],
+  gorbovOneTable: true,
 };
 
 /** The F7 values (Справочник F7). */
@@ -193,6 +194,37 @@ describe('Done', () => {
     ]);
     expect(screen.getByText('Индекс: 72 (прошлый — 65)')).toBeTruthy();
     expect(screen.queryByText(/Первая диагностика/)).toBeNull();
+  });
+
+  it('a previous diagnostic on three tables: its Горбов values are marked and not compared (F10, Р25)', () => {
+    const previous = { ...PAST, metrics: { ...PREVIOUS, gorbovOneTable: false } };
+    render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} comparison={{ ...WITH_PREVIOUS, previous }} onHome={vi.fn()} />);
+    const rows = cells();
+    expect(rows.slice(4, 7)).toEqual([
+      ['Горбов — V, среднее время 1-й и 2-й таблиц', '41,3 с', '45,0 с (3 разные таблицы, до 0.3.0)', 'несравнимо: формат изменён в 0.3.0', 'средний'],
+      ['Горбов — P, время 3-й таблицы', '70,5 с', '70,0 с (3 разные таблицы, до 0.3.0)', 'несравнимо: формат изменён в 0.3.0', 'высокий'],
+      ['Горбов — Π, переключение внимания', '−12,0 с', '−10,0 с (3 разные таблицы, до 0.3.0)', 'несравнимо: формат изменён в 0.3.0', '—'],
+    ]);
+    // The other rows compare as before.
+    expect(rows[0]?.slice(2, 4)).toEqual(['264 мс', '−13 мс, лучше']);
+    expect(screen.getByText('Горбов: первая диагностика на одной таблице — сравнение с прошлыми условное.')).toBeTruthy();
+  });
+
+  it('no Горбов note when the previous diagnostic had no Горбов result or played one table too (F10)', () => {
+    const noGorbov = { ...PAST, metrics: { ...PREVIOUS, gorbovOneTable: false, gorbov: null } };
+    render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} comparison={{ ...WITH_PREVIOUS, previous: noGorbov }} onHome={vi.fn()} />);
+    expect(cells()[4]?.slice(2, 4)).toEqual(['нет данных', '—']);
+    expect(screen.queryByText(/первая диагностика на одной таблице/)).toBeNull();
+    cleanup();
+    render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} comparison={WITH_PREVIOUS} onHome={vi.fn()} />);
+    expect(cells()[4]?.slice(2, 4)).toEqual(['45,0 с', '−3,7 с, лучше']);
+    expect(screen.queryByText(/первая диагностика на одной таблице/)).toBeNull();
+    // A diagnostic without a Горбов result of its own says nothing either.
+    cleanup();
+    const previous = { ...PAST, metrics: { ...PREVIOUS, gorbovOneTable: false } };
+    render(<Done diagnostic={{ ...RESULTS, gorbov: null }} seriesTotal={20} summaries={[]} comparison={{ ...WITH_PREVIOUS, previous }} onHome={vi.fn()} />);
+    expect(screen.queryByText(/первая диагностика на одной таблице/)).toBeNull();
+    expect(cells()[4]?.slice(1, 4)).toEqual(['нет данных', '45,0 с (3 разные таблицы, до 0.3.0)', '—']);
   });
 
   it('the first diagnostic says there is nothing to compare with', () => {

@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { EMPTY_METRICS } from '../engine/diagnostic';
+import { EMPTY_METRICS, EMPTY_RESULTS } from '../engine/diagnostic';
 import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
 import { isTwoChoice } from './blockHistory';
-import { DIAGNOSTIC_ROW_IDS, diagnosticChange, diagnosticDetailLines, diagnosticNorm, diagnosticValue, diagnosticValueText } from './diagnosticCompare';
+import {
+  DIAGNOSTIC_ROW_IDS,
+  diagnosticChange,
+  diagnosticComparable,
+  diagnosticDetailLines,
+  diagnosticNorm,
+  diagnosticValue,
+  diagnosticValueText,
+} from './diagnosticCompare';
 
 const D = { ...EMPTY_METRICS, pzmrMedianRt: 251.4, pzmrMeanRt: 262.4, szmrMedianRt: 402, szmrMeanRt: 401.6, gonogoScore: 93.3,
   rdoMeanAbsErrorMs: 18.6, gorbov: { V: 41.25, P: 70.5, Pi: -12 }, numseriesCorrect: 14, pomehQuietRt: 300, pomehNoisyRt: 335.2,
@@ -23,6 +31,19 @@ describe('diagnosticCompare', () => {
     expect(diagnosticValueText('stroop', -12)).toBe('−12 мс');
     expect(diagnosticValueText('pomeh', 0)).toBe('0 мс');
     expect(diagnosticValueText('gorbovPi', 0.4)).toBe('0,4 с');
+  });
+
+  it('the Горбов rows are not comparable between one table and three (F10); the other rows always are', () => {
+    const one = { ...EMPTY_RESULTS, ...D, gorbovOneTable: true };
+    const three = { ...EMPTY_RESULTS, ...D, gorbovOneTable: false };
+    const gorbov = ['gorbovV', 'gorbovP', 'gorbovPi'] as const;
+    for (const id of DIAGNOSTIC_ROW_IDS) {
+      const isGorbov = (gorbov as readonly string[]).includes(id);
+      expect(diagnosticComparable(id, one, three), id).toBe(!isGorbov);
+      expect(diagnosticComparable(id, three, one), id).toBe(!isGorbov);
+      expect(diagnosticComparable(id, one, one), id).toBe(true);
+      expect(diagnosticComparable(id, three, three), id).toBe(true);
+    }
   });
 
   it('changes: 2 % or 5 ms is no change; the direction decides better or worse', () => {

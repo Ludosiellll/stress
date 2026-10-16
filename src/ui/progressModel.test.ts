@@ -19,6 +19,7 @@ import {
   ruDate,
   sessionLines,
   SESSION_LINES,
+  NO_TREND,
   trendText,
   trendView,
 } from './progressModel';
@@ -537,6 +538,47 @@ describe('noise band and trend (F7, Р19)', () => {
     expect(charts.find((c) => c.id === 'memory')?.trends[0]?.text).toBe('Тренд: 0 за 5 недель — в пределах шума (шум ±0)');
     // Fewer than 3 points: the line that says when they come, no band.
     expect(diagnosticCharts(rows.slice(0, 2))[0]?.trends).toEqual([{ text: 'Полоса шума и тренд появятся после 3 точек.', band: [] }]);
+  });
+
+  it('Горбов of old diagnostics: points with a note, the trend from the one-table ones only (F10)', () => {
+    const one = { ...full, gorbovOneTable: true };
+    // Three diagnostics on three tables, slower, then three on one table: the format change is no trend.
+    const rows = weeklyRows([
+      { ...full, gorbov: { V: 50, P: 100, Pi: 0 } },
+      { ...full, gorbov: { V: 50, P: 100, Pi: 0 } },
+      { ...full, gorbov: { V: 50, P: 100, Pi: 0 } },
+      { ...one, gorbov: { V: 40, P: 80, Pi: 0 } },
+      { ...one, gorbov: { V: 40, P: 80, Pi: 0 } },
+    ]);
+    const gorbov = diagnosticCharts(rows).find((c) => c.id === 'gorbov');
+    expect(gorbov?.series[0]?.points).toEqual([
+      { x: '№1', y: 50, note: '3 разные таблицы, до 0.3.0' },
+      { x: '№2', y: 50, note: '3 разные таблицы, до 0.3.0' },
+      { x: '№3', y: 50, note: '3 разные таблицы, до 0.3.0' },
+      { x: '№4', y: 40 },
+      { x: '№5', y: 40 },
+    ]);
+    expect(gorbov?.unreliable).toEqual([]);
+    // Two one-table points: no trend yet, though five points are drawn.
+    expect(gorbov?.trends.map((t) => t.text)).toEqual([NO_TREND, NO_TREND, NO_TREND]);
+    expect(gorbov?.footnote).toBe('На трёх разных таблицах (до 0.3.0): №1, №2, №3. Тренд и полоса шума — только по диагностикам на одной таблице.');
+    // A third one-table point: the trend and the band from №4–№6.
+    const more = [...rows, ...weeklyRows([{ ...one, gorbov: { V: 40, P: 80, Pi: 0 } }]).map((r) => ({ ...r, id: 'd6', number: 6, at: new Date(2026, 6, 36, 10).toISOString() }))];
+    const later = diagnosticCharts(more).find((c) => c.id === 'gorbov');
+    expect(later?.trends[0]?.text).toBe('V: тренд 0 с за 2 недели — в пределах шума (шум ±0,0 с)');
+    expect(later?.trends[0]?.band.map((b) => [b.x, b.slot])).toEqual([
+      ['№4', 3],
+      ['№5', 4],
+      ['№6', 5],
+    ]);
+    // Old diagnostics alone: no note, the trend from all of them, no footnote.
+    const old = diagnosticCharts(rows.slice(0, 3)).find((c) => c.id === 'gorbov');
+    expect(old?.series[0]?.points.map((p) => p.note)).toEqual([undefined, undefined, undefined]);
+    expect(old?.trends[0]?.band).toHaveLength(3);
+    expect(old?.footnote).toBeUndefined();
+    // The other charts mix the formats as before.
+    expect(diagnosticCharts(rows).find((c) => c.id === 'pzmr')?.trends[0]?.band).toHaveLength(5);
+    expect(diagnosticCharts(rows).find((c) => c.id === 'pzmr')?.footnote).toBeUndefined();
   });
 
   it('the index chart: readinessOfLatest(earlier, d).overall by diagnostic; an unreadable row is a gap', () => {

@@ -43,6 +43,18 @@ const chartOf = (title: string): HTMLElement => {
   return card;
 };
 
+describe('Progress: Горбов on one table after three (F10)', () => {
+  it('names the three-table diagnostics under the Горбов chart; the other charts have no such line', async () => {
+    const repo = new MemoryRepository();
+    await seedDiagnostic(repo, 1, {});
+    await seedDiagnostic(repo, 2, { gorbovOneTable: true, gorbov: { V: 40, P: 80, Pi: 20 } });
+    await renderProgress(repo);
+    const note = 'На трёх разных таблицах (до 0.3.0): №1. Тренд и полоса шума — только по диагностикам на одной таблице.';
+    expect(within(chartOf('Таблица Горбова: V, P, Π, с')).getByText(note)).toBeTruthy();
+    expect(within(chartOf('ПЗМР, медиана, мс')).queryByText(/На трёх разных таблицах/)).toBeNull();
+  });
+});
+
 describe('Progress with two diagnostics', () => {
   async function seeded() {
     const repo = new MemoryRepository();

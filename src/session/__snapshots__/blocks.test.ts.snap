@@ -18191,6 +18191,7 @@ exports[`diagnostic reaction blocks > the span protocol and the Горбов run
     "size": 7,
     "timeLimitMs": 120000,
   },
+  "table": "series",
   "task": "black_up",
 }
 `;
@@ -18206,6 +18207,7 @@ exports[`diagnostic reaction blocks > the span protocol and the Горбов run
     "size": 7,
     "timeLimitMs": 120000,
   },
+  "table": "series",
   "task": "red_down",
 }
 `;
@@ -18221,6 +18223,7 @@ exports[`diagnostic reaction blocks > the span protocol and the Горбов run
     "size": 7,
     "timeLimitMs": 192000,
   },
+  "table": "series",
   "task": "alternate",
 }
 `;

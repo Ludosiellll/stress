@@ -148,6 +148,8 @@ describe('parseResults', () => {
       switchCostMs: null,
       memorySpan: null,
       restarts: {},
+      // A row before 0.3.0 played Горбов on three tables (F10).
+      gorbovOneTable: false,
     });
   });
 
@@ -188,8 +190,8 @@ describe('parseResults', () => {
     expect(now).toMatchObject({ pzmrSdRt: 38.5, szmrWrong: 2, rdoSignedBiasMs: -6.2, gonogoOmissions: null });
   });
 
-  it('EMPTY_RESULTS: every metric missing, nothing unreliable, no restarts; frozen', () => {
-    expect(EMPTY_RESULTS).toEqual({ ...EMPTY_METRICS, unreliable: [], restarts: {} });
+  it('EMPTY_RESULTS: every metric missing, nothing unreliable, no restarts, three Горбов tables; frozen', () => {
+    expect(EMPTY_RESULTS).toEqual({ ...EMPTY_METRICS, unreliable: [], restarts: {}, gorbovOneTable: false });
     expect(Object.isFrozen(EMPTY_RESULTS)).toBe(true);
     expect(Object.isFrozen(EMPTY_RESULTS.unreliable)).toBe(true);
     expect(Object.isFrozen(EMPTY_RESULTS.restarts)).toBe(true);
@@ -222,6 +224,19 @@ describe('parseResults', () => {
         schulte: [1, 2],
       }),
     ).toEqual({ pzmr: { user: 1, focus: 0 }, gonogo: { user: 0, focus: 2 }, memory: { user: 0, focus: 3 } });
+  });
+
+  it('a row stored before F10 played Горбов on three tables: gorbovOneTable reads false', () => {
+    const old = Object.fromEntries(Object.entries({ ...EMPTY, gorbov: { V: 40, P: 80, Pi: 0 } }).filter(([k]) => k !== 'gorbovOneTable'));
+    expect(old).not.toHaveProperty('gorbovOneTable');
+    expect(parseResults({ resultsJson: JSON.stringify(old) })?.gorbovOneTable).toBe(false);
+    expect(parseResults({ resultsJson: JSON.stringify({ ...EMPTY, gorbovOneTable: true }) })?.gorbovOneTable).toBe(true);
+  });
+
+  it('a damaged gorbovOneTable reads false (T-R22)', () => {
+    for (const bad of ['true', 1, null, [], {}, [true], 'yes']) {
+      expect(parseResults({ resultsJson: JSON.stringify({ ...EMPTY, gorbovOneTable: bad }) })?.gorbovOneTable, JSON.stringify(bad)).toBe(false);
+    }
   });
 
   it('keeps only reaction module ids in `unreliable`', () => {

@@ -45,6 +45,7 @@ import {
   gorbovMetrics,
   gorbovParams,
   gorbovTaskForRun,
+  SAME_TABLE_NOTE,
   tableInstruction,
   type TableParams,
   type TableTaskId,
@@ -174,7 +175,11 @@ export type BlockPlan =
        */
       feedback: FeedbackRate;
     }
-  | { kind: 'table'; module: TableModuleId; L: number; task: TableTaskId; params: TableParams; overload: boolean }
+  /**
+   * `table` (F10): blocks 0–2 of a Горбов segment are a series on one table, dealt from the seed of block 0's counted
+   * attempt (buildBlock's tableSeed); later Горбов blocks and every Шульте block deal a table of their own.
+   */
+  | { kind: 'table'; module: TableModuleId; L: number; task: TableTaskId; params: TableParams; overload: boolean; table: 'series' | 'own' }
   /**
    * Memory blocks cycle their mode by block index (by pairs of blocks in a plateau mix); `count` trials. A diagnostic
    * plays the span protocol instead: digits, its first `count` trials, ending early when it stops.
@@ -202,6 +207,9 @@ export interface PlanContext {
 
 /** The modules whose training and free blocks mark a trial after it (F15); not РДО: its dial shows the error. */
 export const FEEDBACK_MODULES: readonly ReactionModuleId[] = ['pzmr', 'szmr', 'gonogo', 'stroop', 'taskswitch', 'pomeh'];
+
+/** Blocks 0–2 of a Горбов segment: the three tasks of the test on one table (F10). */
+export const GORBOV_SERIES_BLOCKS = 3;
 
 /** Every block of a finisher; the odd blocks (1, 3, …) of a plateau mix. */
 export function isOverloadBlock(segment: Segment, blockIndex: number): boolean {
@@ -240,11 +248,8 @@ export function planBlock(segment: Segment, segmentL: number, blockIndex: number
       feedback: marked ? ctx.feedback : 'none',
     };
   }
-  if (module === 'gorbov') {
-    const task = gorbovTaskForRun(blockIndex);
-    return { kind: 'table', module, L, task, params: gorbovParams(L, task), overload };
-  }
-  if (module === 'schulte') return { kind: 'table', module, L, task: 'schulte', params: schulteParams(L), overload };
+  if (module === 'gorbov') return gorbovPlan(L, blockIndex, overload);
+  if (module === 'schulte') return { kind: 'table', module, L, task: 'schulte', params: schulteParams(L), overload, table: 'own' };
   if (module === 'memory') {
     if (ctx.diagnostic) {
       const count = scaledCount(SPAN_PROTOCOL_TRIALS, ctx.scale);
@@ -339,6 +344,18 @@ function bandParams(module: BandModuleId, L: number, loadBand: number, ctx: Plan
 }
 
 /**
+ * A Горбов block (F10): blocks 0–2 are the series of the test on one table, a normal one never reshuffles, an overload
+ * one plays gorbovParams(L) at its raised level and reshuffles from 15; later blocks have a table of their own and
+ * gorbovParams(L). The time limits are gorbovParams(L)'s.
+ */
+function gorbovPlan(L: number, blockIndex: number, overload: boolean): BlockPlan {
+  const task = gorbovTaskForRun(blockIndex);
+  const params = gorbovParams(L, task);
+  if (blockIndex >= GORBOV_SERIES_BLOCKS) return { kind: 'table', module: 'gorbov', L, task, params, overload, table: 'own' };
+  return { kind: 'table', module: 'gorbov', L, task, params: overload ? params : { ...params, reshuffleEvery: null }, overload, table: 'series' };
+}
+
+/**
  * The instruction before a block. A band module's block ends with its load line (F3). An overload block's text starts
  * with OVERLOAD_PREFIX, or in a reaction block, which plays the finisher sound (overloadStressors), with
  * OVERLOAD_SOUND_PREFIX; a band module's with overloadBandPrefix, naming the next band's load (Р16). A test-format run
@@ -364,8 +381,11 @@ function plainInstruction(plan: BlockPlan, layout: LayoutId): { text: string; ke
         text: reactionModules[plan.module].instruction(layout, plan.params, plan.overload),
         keysHint: plan.keys.map(keyLabel).join(', '),
       };
-    case 'table':
-      return { text: tableInstruction(plan.task, plan.params.size), keysHint: TABLE_KEYS_HINT };
+    case 'table': {
+      // Tasks 2–3 of a series (every series task but the first) play the table of task 1 (F10).
+      const same = plan.table === 'series' && plan.task !== gorbovTaskForRun(0);
+      return { text: tableInstruction(plan.task, plan.params.size) + (same ? SAME_TABLE_NOTE : ''), keysHint: TABLE_KEYS_HINT };
+    }
     case 'memory':
       return {
         text: plan.protocol === 'span' ? MEMORY_SPAN_INSTRUCTION : memoryInstruction(plan.mode, plan.params),
@@ -394,12 +414,17 @@ export function diagnosticBlockSeed(n: number, module: ModuleId, blockIndex: num
   return attempt === 0 ? base : deriveSeed(base, 'retry:' + String(attempt));
 }
 
-/** The block step for `plan` from `seed` (and the ratings, for training number series), plus its params JSON. */
+/**
+ * The block step for `plan` from `seed` (and the ratings, for training number series), plus its params JSON. A Горбов
+ * series block deals its cells from `tableSeed` (the seed of block 0's counted attempt; its own seed without one) and
+ * stores `table` and `tableSeed` (F10); reshuffles still follow the block's own seed.
+ */
 export function buildBlock(
   plan: BlockPlan,
   seed: number,
   layout: LayoutId,
   ratings: ReadonlyMap<FamilyId, Rating>,
+  tableSeed?: number,
 ): { step: BlockStep; paramsJson: string } {
   switch (plan.kind) {
     case 'reaction': {
@@ -427,11 +452,15 @@ export function buildBlock(
       };
     }
     case 'table': {
-      const rng = createRng(seed);
-      const cells = plan.module === 'gorbov' ? generateGorbovTable(rng) : generateSchulteTable(plan.params.size, rng);
+      const step = { kind: 'table_block', module: plan.module, L: plan.L, task: plan.task, params: plan.params, seed } as const;
+      if (plan.module === 'schulte') {
+        const cells = generateSchulteTable(plan.params.size, createRng(seed));
+        return { step: { ...step, cells }, paramsJson: JSON.stringify({ task: plan.task, ...plan.params }) };
+      }
+      const dealt = plan.table === 'series' ? (tableSeed ?? seed) : seed;
       return {
-        step: { kind: 'table_block', module: plan.module, L: plan.L, task: plan.task, cells, params: plan.params, seed },
-        paramsJson: JSON.stringify({ task: plan.task, ...plan.params }),
+        step: { ...step, cells: generateGorbovTable(createRng(dealt)) },
+        paramsJson: JSON.stringify({ task: plan.task, ...plan.params, table: plan.table, tableSeed: dealt }),
       };
     }
     case 'memory': {
@@ -611,12 +640,13 @@ function spreadOf(hitRts: readonly number[]): [sd: number | null, iqr: number | 
  * СЗМР, presses on no-go and misses + late answers of Go/No-Go, `early`, `timing_late` and the signed bias of РДО.
  * Missing parts stay null.
  * Reaction blocks stored with timingUnreliable (after their replay) list their module in `unreliable`; `restarts` are the
- * restarts of each module's tasks (F11), copied.
+ * restarts of each module's tasks (F11), copied; `gorbovOneTable` is true: the three Горбов tasks share one table (F10).
  */
 export function diagnosticResults(parts: readonly DiagnosticPart[], restarts: DiagnosticResults['restarts'] = {}): DiagnosticResults {
   const copied = Object.fromEntries(Object.entries(restarts).map(([m, r]) => [m, { ...r }])) as DiagnosticResults['restarts'];
   const unreliable: ReactionModuleId[] = [];
-  const r: DiagnosticResults = { ...EMPTY_METRICS, unreliable, restarts: copied };
+  // Горбов's three tasks play one table (F10).
+  const r: DiagnosticResults = { ...EMPTY_METRICS, unreliable, restarts: copied, gorbovOneTable: true };
   const seconds: Array<number | null> = [];
   for (const p of parts) {
     if ('summary' in p && p.summary.timingUnreliable) unreliable.push(p.module);

@@ -52,6 +52,16 @@ describe('variantOf', () => {
       'gorbov:red_down',
     );
     expect(variantOf(row({ module: 'gorbov', paramsJson: '{}', summaryJson: '{"timeMs":1000}' }))).toBeNull();
+    // F10, T-R24: a block on a table of its own (block 3 and later of a segment) is a variant of its own.
+    expect(variantOf(row({ module: 'gorbov', paramsJson: '{"task":"red_down","table":"own"}', summaryJson: '{"timeMs":1000}' }))).toBe(
+      'gorbov:red_down:own',
+    );
+    expect(variantOf(row({ module: 'gorbov', paramsJson: '{"task":"red_down","table":"series"}', summaryJson: '{"timeMs":1000}' }))).toBe(
+      'gorbov:red_down',
+    );
+    expect(variantOf(row({ module: 'gorbov', paramsJson: '{"task":"red_down","table":"x"}', summaryJson: '{"timeMs":1000}' }))).toBe(
+      'gorbov:red_down',
+    );
     expect(variantOf(row({ module: 'gorbov', paramsJson: '{"task":"xx"}', summaryJson: '{"task":"yy"}' }))).toBeNull();
     expect(variantOf(row({ module: 'schulte', paramsJson: '{"size":6}' }))).toBe('schulte:6');
     expect(variantOf(row({ module: 'schulte', paramsJson: '{"size":"x"}' }))).toBeNull();
@@ -296,6 +306,14 @@ describe('normSamples', () => {
     expect(normSamples(played(9, 2, 2), 'diagnostic')).toEqual([{ id: 'szmrMean', value: 402 }]);
     expect(normSamples(played(5, 3, 2), 'diagnostic')).toEqual([]);
     expect(normSamples(played(5, 2, 3), 'diagnostic')).toEqual([]);
+  });
+
+  it('Горбов: norms only for the series blocks, not for a table of its own (F10, T-R24)', () => {
+    const params = (table: unknown) => JSON.stringify({ task: 'alternate', timeLimitMs: 300_000, reshuffleEvery: null, size: 7, table, tableSeed: 5 });
+    expect(normSamples(table('alternate', 150_240, { paramsJson: params('series') }), 'training')).toEqual([{ id: 'gorbovAlternate', value: 150.2 }]);
+    expect(normSamples(table('alternate', 150_240, { paramsJson: params('own') }), 'training')).toEqual([]);
+    // A damaged table reads as a series block (as a row stored before F10).
+    expect(normSamples(table('alternate', 150_240, { paramsJson: params(7) }), 'training')).toEqual([{ id: 'gorbovAlternate', value: 150.2 }]);
   });
 
   it('Горбов: by task, only a finished table', () => {

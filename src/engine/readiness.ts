@@ -1,5 +1,5 @@
 import { mean } from './stats';
-import type { DiagnosticMetrics } from './diagnostic';
+import type { DiagnosticFormat, DiagnosticMetrics, DiagnosticResults } from './diagnostic';
 
 export type Ability = 'reaction' | 'attention' | 'switching' | 'memory' | 'logic';
 
@@ -63,15 +63,19 @@ export function diffScore(v: number, v0: number, scale: number): number {
   return Math.min(100, Math.max(0, raw));
 }
 
-/** Baseline per metric (M2): the first non-null value across the diagnostics, in order. */
-export function mergedBaseline(results: readonly DiagnosticMetrics[]): DiagnosticMetrics {
-  const first = <K extends keyof DiagnosticMetrics>(k: K): DiagnosticMetrics[K] => {
-    for (const r of results) {
+/**
+ * Baseline per metric (M2): the first non-null value across the diagnostics, in order. With a `format`, Горбов comes
+ * only from the diagnostics of that format (one table or three, F10): a result of the other one is no baseline.
+ */
+export function mergedBaseline(results: readonly DiagnosticResults[], format?: DiagnosticFormat): DiagnosticMetrics {
+  const first = <K extends keyof DiagnosticMetrics>(k: K, from: readonly DiagnosticMetrics[] = results): DiagnosticMetrics[K] => {
+    for (const r of from) {
       const v = r[k];
       if (v !== null) return v;
     }
     return null;
   };
+  const sameTables = format === undefined ? results : results.filter((r) => r.gorbovOneTable === format.gorbovOneTable);
   return {
     pzmrMedianRt: first('pzmrMedianRt'),
     pzmrMeanRt: first('pzmrMeanRt'),
@@ -91,7 +95,7 @@ export function mergedBaseline(results: readonly DiagnosticMetrics[]): Diagnosti
     rdoSignedBiasMs: first('rdoSignedBiasMs'),
     gonogoScore: first('gonogoScore'),
     rdoMeanAbsErrorMs: first('rdoMeanAbsErrorMs'),
-    gorbov: first('gorbov'),
+    gorbov: first('gorbov', sameTables),
     numseriesCorrect: first('numseriesCorrect'),
     pomehQuietRt: first('pomehQuietRt'),
     pomehNoisyRt: first('pomehNoisyRt'),
@@ -184,10 +188,11 @@ export interface Readiness {
  * pulls a 97 down to 81 while the W1 results stay the same), so it is left out of its ability and of the overall
  * index until the next diagnostic, unless every part is (the very first diagnostic counts all of them at 60, as
  * in W1). Gorbov Π is such a part; a deferred Π gets a null baseline, and V keeps its band. Spec deviation, see §7.5
- * (W2-R31, 2026-10-15).
+ * (W2-R31, 2026-10-15). Π's baseline comes only from the diagnostics of the latest one's format (F10): the first
+ * diagnostic on one table is its own baseline, after any number on three tables.
  */
-export function readinessOfLatest(earlier: readonly DiagnosticMetrics[], latest: DiagnosticMetrics): Readiness {
-  const before = mergedBaseline(earlier);
+export function readinessOfLatest(earlier: readonly DiagnosticResults[], latest: DiagnosticResults): Readiness {
+  const before = mergedBaseline(earlier, latest);
   const scored = BASELINE_METRICS.filter((k) => latest[k] !== null);
   const ownBaseline = scored.filter((k) => before[k] === null);
   const piScored = latest.gorbov !== null;
@@ -197,7 +202,7 @@ export function readinessOfLatest(earlier: readonly DiagnosticMetrics[], latest:
   const deferred = nOwnBaseline > 0 && nOwnBaseline < nScored;
   const counted: DiagnosticMetrics = { ...latest };
   if (deferred) for (const k of ownBaseline) counted[k] = null;
-  const baseline = mergedBaseline([...earlier, latest]);
+  const baseline = mergedBaseline([...earlier, latest], latest);
   // Only Π's baseline is dropped: V is still scored from its band.
   if (deferred && piOwnBaseline) baseline.gorbov = null;
   return { ...readiness(counted, baseline), deferred };

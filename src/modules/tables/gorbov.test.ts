@@ -6,6 +6,7 @@ import {
   gorbovMetrics,
   gorbovParams,
   gorbovTaskForRun,
+  SAME_TABLE_NOTE,
   taskSequence,
   tableInstruction,
   type TableCell,
@@ -174,5 +175,9 @@ describe('tableInstruction', () => {
 
   it('schulte requires a size', () => {
     expect(() => tableInstruction('schulte')).toThrow(RangeError);
+  });
+
+  it('tasks 2–3 of a series add that the table is the same (F10)', () => {
+    expect(tableInstruction('red_down') + SAME_TABLE_NOTE).toBe('Находи и нажимай красные числа от 25 до 1. Таблица та же, что в прошлом задании.');
   });
 });

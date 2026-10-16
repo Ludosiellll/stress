@@ -1,4 +1,4 @@
-import type { DiagnosticMetrics } from '../engine/diagnostic';
+import type { DiagnosticFormat, DiagnosticMetrics } from '../engine/diagnostic';
 import { NORMS, gradeByBands, type NormId } from '../engine/norms';
 import { decimal, round1, shownCost, signedMs, whole } from './steps';
 
@@ -126,6 +126,16 @@ export function diagnosticChange(id: DiagnosticRowId, now: number, before: numbe
   const better = HIGHER_IS_BETTER.has(id) ? delta > 0 : delta < 0;
   const value = withUnit(unit === 'с' ? secondsText(delta, true) : signedMs(delta), unit);
   return `${value}, ${better ? 'лучше' : 'хуже'}`;
+}
+
+const GORBOV_ROWS: ReadonlySet<DiagnosticRowId> = new Set(['gorbovV', 'gorbovP', 'gorbovPi']);
+
+/**
+ * Whether a row of two diagnostics can be compared: Горбов's rows only between diagnostics of the same table format
+ * (one table or three, F10); the other rows always.
+ */
+export function diagnosticComparable(id: DiagnosticRowId, now: DiagnosticFormat, before: DiagnosticFormat): boolean {
+  return !GORBOV_ROWS.has(id) || now.gorbovOneTable === before.gorbovOneTable;
 }
 
 /** The norm of a row graded by its shown value; ПЗМР and СЗМР by their mean RT instead (О7). */

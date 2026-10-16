@@ -148,6 +148,11 @@ interface SegmentRun {
   restarts: RestartEntry[];
   /** Diagnostics: the current task was restarted by Esc; another Esc is refused (F11). */
   escUsed: boolean;
+  /**
+   * The seed of the Горбов series table (F10): block 0's seed, renewed by each restart of block 0, so the table of its
+   * counted attempt; blocks 1–2 deal from it. null before block 0 starts.
+   */
+  tableSeed: number | null;
 }
 
 /** What the start pass read: the block history in its two forms and the level-moving blocks per module. */
@@ -784,6 +789,7 @@ export class SessionController {
       lastInstruction: null,
       restarts: [],
       escUsed: false,
+      tableSeed: null,
     };
     this.presentNext();
   }
@@ -922,7 +928,9 @@ export class SessionController {
     const seed = this.counted
       ? trainingBlockSeed(this.plan.seed, seg.index, seg.blocksDone, seg.attempt)
       : diagnosticBlockSeed(this.plan.diagnosticSeedIndex ?? this.diagnosticNumber(), seg.segment.module, seg.blocksDone, seg.attempt);
-    const { step, paramsJson } = buildBlock(plan, seed, this.layout, this.ratings);
+    const series = plan.kind === 'table' && plan.table === 'series';
+    if (series && seg.blocksDone === 0) seg.tableSeed = seed;
+    const { step, paramsJson } = buildBlock(plan, seed, this.layout, this.ratings, series ? (seg.tableSeed ?? seed) : undefined);
     this.next = null;
     this.active = { plan, startedAt: this.now().toISOString(), paramsJson };
     this.current = step;

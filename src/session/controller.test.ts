@@ -34,7 +34,7 @@ import { pzmr } from '../modules/reaction/pzmr';
 import { rdoPeriod } from '../modules/reaction/rdo';
 import { szmr } from '../modules/reaction/szmr';
 import { reactionModules } from '../modules/registry';
-import { gorbovMetrics } from '../modules/tables/gorbov';
+import { generateGorbovTable, gorbovMetrics } from '../modules/tables/gorbov';
 import {
   perfectMemoryAnswers,
   perfectPlayer,
@@ -45,6 +45,7 @@ import {
 } from '../testing/sessionPlayers';
 import { assessBlock } from './assessment';
 import { appendBlock } from './blockHistory';
+import { diagnosticBlockSeed, trainingBlockSeed } from './blocks';
 import { SessionController, type DiscardOutcome, type SessionStartOptions } from './controller';
 import { testFormatInstruction } from './testFormat';
 import {
@@ -2357,6 +2358,47 @@ describe('SessionController — tables', () => {
     expect(view.changes.map((ch) => ch.label)).toEqual(['Лимит времени']);
   });
 
+  it('a restart of block 0 deals a new table, of blocks 1–2 keeps it; block 3 has its own (F10)', async () => {
+    const h = await begin(planFree('gorbov', 4));
+    const next = (): StepOf<'table_block'> => {
+      if (h.c.step.kind === 'instruction') h.c.ackInstruction();
+      return expectStep(h.c, 'table_block');
+    };
+    const finish = async (step: StepOf<'table_block'>): Promise<void> => {
+      await h.c.submitTable(perfectTableRun(step));
+      await h.c.continueAfterSummary();
+    };
+    const first = next();
+    expect(first.cells).toEqual(generateGorbovTable(createRng(trainingBlockSeed(4, 0, 0, 0))));
+    expect(await h.c.discardBlock('focus_lost', 0.5)).toEqual({ kind: 'restarted' });
+    const again = next();
+    const tableSeed = trainingBlockSeed(4, 0, 0, 1);
+    expect(again.seed).toBe(tableSeed);
+    expect(again.cells).toEqual(generateGorbovTable(createRng(tableSeed)));
+    expect(again.cells).not.toEqual(first.cells);
+    await finish(again);
+    const second = next();
+    expect(second).toMatchObject({ task: 'red_down', seed: trainingBlockSeed(4, 0, 1, 0), cells: again.cells });
+    await h.c.discardBlock('focus_lost', 0.5);
+    const secondAgain = next();
+    expect(secondAgain.seed).toBe(trainingBlockSeed(4, 0, 1, 1));
+    expect(secondAgain.cells).toEqual(again.cells);
+    await finish(secondAgain);
+    const third = next();
+    expect(third).toMatchObject({ task: 'alternate', cells: again.cells });
+    await finish(third);
+    const own = next();
+    expect(own.cells).toEqual(generateGorbovTable(createRng(trainingBlockSeed(4, 0, 3, 0))));
+    await finish(own);
+    const params = (await h.repo.listBlocks()).map((b) => JSON.parse(b.paramsJson) as { table: string; tableSeed: number });
+    expect(params.map((p) => [p.table, p.tableSeed])).toEqual([
+      ['series', tableSeed],
+      ['series', tableSeed],
+      ['series', tableSeed],
+      ['own', trainingBlockSeed(4, 0, 3, 0)],
+    ]);
+  });
+
   it('a run of another task or time limit is rejected', async () => {
     const h = await begin(planFree('gorbov', 4));
     h.c.ackInstruction();
@@ -2651,6 +2693,8 @@ describe('SessionController — diagnostics', () => {
       gorbov: gorbovMetrics(7.2, 7.5, 14.7),
       numseriesCorrect: 20,
       unreliable: [],
+      // F10: the three Горбов tasks on one table.
+      gorbovOneTable: true,
     };
     const done = expectStep(h.c, 'done');
     expect(done.diagnostic).toEqual(expected);
@@ -2895,6 +2939,7 @@ describe('SessionController — diagnostics', () => {
       memorySpan: 7,
       unreliable: [],
       restarts: {},
+      gorbovOneTable: true,
     });
     const [row] = await h.repo.listDiagnostics();
     expect(JSON.parse(row?.resultsJson ?? '')).toEqual(done.diagnostic);
@@ -2979,7 +3024,7 @@ describe('SessionController — diagnostics', () => {
     expect(expectStep(h.c, 'done').diagnostic?.memorySpan).toBe(12);
   });
 
-  it('the three diagnostic Gorbov tables come from different seeds', async () => {
+  it('the three diagnostic Горбов tasks keep their own seeds and share one table (F10)', async () => {
     const plan: SessionPlan = { ...planDiagnostic(4), segments: [planDiagnostic(4).segments[4] as Segment] };
     const h = await begin(plan);
     const seeds: number[] = [];
@@ -2994,8 +3039,52 @@ describe('SessionController — diagnostics', () => {
       } else await h.c.continueAfterSummary();
     }
     const seg = diagnosticSegmentSeed(4, 'gorbov');
+    // The task seeds drive nothing but reshuffles, which the diagnostic never has.
     expect(seeds).toEqual([seg, deriveSeed(seg, 'run:1'), deriveSeed(seg, 'run:2')]);
-    expect(tables.size).toBe(3);
+    expect([...tables]).toEqual([JSON.stringify(generateGorbovTable(createRng(seg)))]);
+    expect(expectStep(h.c, 'done').diagnostic?.gorbovOneTable).toBe(true);
+    const [row] = await h.repo.listDiagnostics();
+    expect(parseResults(row ?? { resultsJson: '' })?.gorbovOneTable).toBe(true);
+  });
+
+  it('a restart of Горбов task 1 deals a new table, of tasks 2–3 keeps it (F10)', async () => {
+    const plan: SessionPlan = { ...planDiagnostic(4), segments: [planDiagnostic(4).segments[4] as Segment] };
+    const h = await begin(plan);
+    const next = (): StepOf<'table_block'> => {
+      if (h.c.step.kind === 'instruction') h.c.ackInstruction();
+      if (h.c.step.kind === 'notice') h.c.ackNotice();
+      return expectStep(h.c, 'table_block');
+    };
+    const first = next();
+    await h.c.discardBlock('focus_lost', 0.5);
+    const again = next();
+    const tableSeed = diagnosticBlockSeed(4, 'gorbov', 0, 1);
+    expect(again.cells).toEqual(generateGorbovTable(createRng(tableSeed)));
+    expect(again.cells).not.toEqual(first.cells);
+    // The restart by Esc of task 1 deals another one again.
+    await h.c.discardBlock('user', 0.5);
+    const third = next();
+    const counted = diagnosticBlockSeed(4, 'gorbov', 0, 2);
+    expect(third.cells).toEqual(generateGorbovTable(createRng(counted)));
+    await h.c.submitTable(perfectTableRun(third));
+    await h.c.continueAfterSummary();
+    const task2 = next();
+    expect(task2.cells).toEqual(third.cells);
+    await h.c.discardBlock('user', 0.5);
+    const task2Again = next();
+    expect(task2Again.seed).toBe(diagnosticBlockSeed(4, 'gorbov', 1, 1));
+    expect(task2Again.cells).toEqual(third.cells);
+    await h.c.submitTable(perfectTableRun(task2Again));
+    await h.c.continueAfterSummary();
+    expect(next().cells).toEqual(third.cells);
+    await drive(h);
+    const params = (await h.repo.listBlocks()).map((b) => JSON.parse(b.paramsJson) as { table: string; tableSeed: number });
+    expect(params.map((p) => [p.table, p.tableSeed])).toEqual([
+      ['series', counted],
+      ['series', counted],
+      ['series', counted],
+    ]);
+    expect(expectStep(h.c, 'done').diagnostic?.gorbovOneTable).toBe(true);
   });
 
   it('a discarded diagnostic block is replaced by one from a derived seed, same L', async () => {

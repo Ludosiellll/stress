@@ -103,13 +103,25 @@ export interface DiagnosticResults extends DiagnosticMetrics {
   unreliable: readonly ReactionModuleId[];
   /** The modules whose tasks were restarted (F11); rows stored before 0.3.0 lack it: read as {}. */
   restarts: Partial<Record<ModuleId, ModuleRestarts>>;
+  /**
+   * Горбов's three tasks played one table (F10). Rows stored before 0.3.0 lack it: read as false (three tables, not
+   * comparable with one).
+   */
+  gorbovOneTable: boolean;
 }
 
-/** Results with every metric missing, nothing unreliable and no restarts: the base of results built in tests and code. */
+/** What makes two diagnostics comparable: Горбов on one table or on three (F10). */
+export type DiagnosticFormat = Pick<DiagnosticResults, 'gorbovOneTable'>;
+
+/**
+ * Results with every metric missing, nothing unreliable, no restarts and Горбов on three tables (a stored row without
+ * the flag): the base of results built in tests and code.
+ */
 export const EMPTY_RESULTS: Readonly<DiagnosticResults> = Object.freeze({
   ...EMPTY_METRICS,
   unreliable: Object.freeze([]),
   restarts: Object.freeze({}),
+  gorbovOneTable: false,
 });
 
 const REACTION_IDS: readonly string[] = REACTION_MODULE_IDS;
@@ -152,7 +164,8 @@ function gorbovOf(v: unknown): DiagnosticMetrics['gorbov'] {
  * reads as null (the W2 metrics of a 0.1.0 row, the mean RTs and F7 metrics of a 0.2.0 one: missing, never 0); rows written before `unreliable` existed
  * read as reliable (I1), rows without `restarts` as having none (F11). A damaged or imported row is read field by field
  * (FW9, T-R22): a metric that is not a finite number, or a Горбов result without numeric V, P and Π, reads as null; damaged
- * restarts as restartsOf reads them; unknown entries are dropped. Structural: DiagnosticRow fits.
+ * restarts as restartsOf reads them; a gorbovOneTable that is not `true` reads false (F10); unknown entries are dropped.
+ * Structural: DiagnosticRow fits.
  */
 export function parseResults(row: { readonly resultsJson: string }): DiagnosticResults | null {
   let value: unknown;
@@ -166,7 +179,7 @@ export function parseResults(row: { readonly resultsJson: string }): DiagnosticR
   const metrics = { ...EMPTY_METRICS, gorbov: gorbovOf(r['gorbov']) };
   for (const k of NUMBER_METRICS) metrics[k] = finite(r[k]);
   const unreliable = Array.isArray(r['unreliable']) ? (r['unreliable'] as unknown[]).filter(isReactionId) : [];
-  return { ...metrics, unreliable, restarts: restartsOf(r['restarts']) };
+  return { ...metrics, unreliable, restarts: restartsOf(r['restarts']), gorbovOneTable: r['gorbovOneTable'] === true };
 }
 
 /** Family order of the number-series diagnostic; mirrors the module's FAMILIES (engine must not import src/modules). */

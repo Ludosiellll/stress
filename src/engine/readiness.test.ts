@@ -17,8 +17,8 @@ import {
 import { EMPTY_METRICS, EMPTY_RESULTS, type DiagnosticMetrics, type DiagnosticResults } from './diagnostic';
 
 /** A 0.1.0 diagnostic: the W2 metrics are null. */
-const full = (over: Partial<DiagnosticMetrics> = {}): DiagnosticMetrics => ({
-  ...EMPTY_METRICS,
+const full = (over: Partial<DiagnosticResults> = {}): DiagnosticResults => ({
+  ...EMPTY_RESULTS,
   pzmrMedianRt: 250,
   szmrMedianRt: 400,
   gonogoScore: 80,
@@ -29,7 +29,7 @@ const full = (over: Partial<DiagnosticMetrics> = {}): DiagnosticMetrics => ({
 });
 
 /** A 0.2.0 diagnostic with every metric. */
-const fullW2 = (over: Partial<DiagnosticMetrics> = {}): DiagnosticMetrics =>
+const fullW2 = (over: Partial<DiagnosticResults> = {}): DiagnosticResults =>
   full({
     pomehQuietRt: 280,
     pomehNoisyRt: 330,
@@ -411,6 +411,20 @@ describe('mergedBaseline (M2)', () => {
   });
 });
 
+describe('mergedBaseline by format (F10)', () => {
+  it('takes Горбов only from the diagnostics of the format given; the other metrics from all', () => {
+    const results: DiagnosticResults[] = [
+      { ...EMPTY, pzmrMedianRt: 320, gorbov: { V: 50, P: 90, Pi: 30 } },
+      { ...EMPTY, pzmrMedianRt: 300, gorbovOneTable: true, gorbov: { V: 40, P: 80, Pi: -10 } },
+    ];
+    expect(mergedBaseline(results, { gorbovOneTable: true })).toEqual({ ...EMPTY_METRICS, pzmrMedianRt: 320, gorbov: { V: 40, P: 80, Pi: -10 } });
+    expect(mergedBaseline(results, { gorbovOneTable: false })).toEqual({ ...EMPTY_METRICS, pzmrMedianRt: 320, gorbov: { V: 50, P: 90, Pi: 30 } });
+    expect(mergedBaseline([results[0] as DiagnosticResults], { gorbovOneTable: true }).gorbov).toBeNull();
+    // Without a format: every diagnostic, as before.
+    expect(mergedBaseline(results).gorbov).toEqual({ V: 50, P: 90, Pi: 30 });
+  });
+});
+
 describe('readinessOfLatest (W2-R31)', () => {
   // The 0.1.0 pair of the W1 Home test: overall 97 from the W1 parts alone.
   const w1First = full({ pzmrMedianRt: 400, szmrMedianRt: 600, rdoMeanAbsErrorMs: 50, gonogoScore: 80, numseriesCorrect: 10, gorbov: { V: 60, P: 100, Pi: 40 } });
@@ -477,10 +491,33 @@ describe('readinessOfLatest (W2-R31)', () => {
     expect(sdScore(38 * 1.3, 38)).toBeCloseTo(40, 12);
     expect(r2.abilities.reaction).toBeCloseTo((4 * withoutSd + 40 + 60) / 6, 10);
     // Old diagnostics alone never get an SD part.
-    expect(readinessOfLatest([earlier[0] as DiagnosticMetrics], earlier[1] as DiagnosticMetrics)).toEqual({
-      ...readiness(earlier[1] as DiagnosticMetrics, earlier[0] as DiagnosticMetrics),
+    expect(readinessOfLatest([earlier[0] as DiagnosticResults], earlier[1] as DiagnosticResults)).toEqual({
+      ...readiness(earlier[1] as DiagnosticResults, earlier[0] as DiagnosticResults),
       deferred: false,
     });
+  });
+
+  it('Π takes its baseline only from one-table diagnostics (F10)', () => {
+    const latest = full({ gorbovOneTable: true, gorbov: { V: 33, P: 70, Pi: -12 } });
+    // The earlier result is of three tables: Π of the latest is its own baseline and waits (W2-R31); V keeps its band.
+    const three = readinessOfLatest([full({ gorbovOneTable: false, gorbov: { V: 40, P: 80, Pi: -10 } })], latest);
+    expect(three.deferred).toBe(true);
+    expect(three.abilities.switching).toBeNull();
+    expect(three.abilities.attention).toBe((bandScore(33, BAND_GORBOV_V) + 60) / 2);
+    // An earlier one-table diagnostic is Π's baseline.
+    const one = readinessOfLatest([full({ gorbovOneTable: true, gorbov: { V: 40, P: 80, Pi: -10 } })], latest);
+    expect(diffScore(-12, -10, GORBOV_PI_SCALE_S)).toBe(64);
+    expect(one.deferred).toBe(false);
+    expect(one.abilities.switching).toBe(64);
+    // An old one first, then a one-table one: the one-table result is the baseline, the old one never.
+    const both = readinessOfLatest(
+      [full({ gorbov: { V: 40, P: 80, Pi: 30 } }), full({ gorbovOneTable: true, gorbov: { V: 40, P: 80, Pi: -10 } })],
+      latest,
+    );
+    expect(both.abilities.switching).toBe(64);
+    // Old diagnostics among themselves keep comparing as before.
+    const old = readinessOfLatest([full({ gorbov: { V: 40, P: 80, Pi: -10 } })], full({ gorbov: { V: 33, P: 70, Pi: -12 } }));
+    expect(old.abilities.switching).toBe(64);
   });
 
   it('BASELINE_METRICS are exactly the metrics readiness scores against a baseline', () => {

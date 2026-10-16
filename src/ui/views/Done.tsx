@@ -4,6 +4,7 @@ import { moduleTitles } from '../../modules/registry';
 import {
   DIAGNOSTIC_ROW_IDS,
   diagnosticChange,
+  diagnosticComparable,
   diagnosticDetailLines,
   diagnosticNorm,
   diagnosticValue,
@@ -34,6 +35,12 @@ const NO_DATA = 'нет данных';
 const NONE = '—';
 /** Added to a value whose block kept dropping frames after its replay (I1). */
 const UNRELIABLE = 'замер ненадёжен';
+/** Added to a previous Горбов value played on three tables, before 0.3.0 (F10, Р25). */
+const THREE_TABLES = '(3 разные таблицы, до 0.3.0)';
+/** The change of a row whose two values were measured differently (Р25). */
+const INCOMPARABLE = 'несравнимо: формат изменён в 0.3.0';
+/** Under the table of the first diagnostic on one table after one on three (F10). */
+const FIRST_ONE_TABLE = 'Горбов: первая диагностика на одной таблице — сравнение с прошлыми условное.';
 
 /** The module whose restarts a row reports (F11): Горбов's three rows share one. */
 const ROW_MODULE: Readonly<Record<DiagnosticRowId, ModuleId>> = {
@@ -91,10 +98,24 @@ function cellText(d: DiagnosticResults, id: DiagnosticRowId, seriesTotal: number
   return isReactionId(id) && d.unreliable.includes(id) ? `${text}, ${UNRELIABLE}` : text;
 }
 
+/** The previous diagnostic's cell (cellText); a Горбов value of three tables says so when this one played one (Р25). */
+function previousCellText(d: DiagnosticResults, previous: DiagnosticResults, id: DiagnosticRowId, seriesTotal: number | null): string {
+  const text = cellText(previous, id, seriesTotal);
+  const threeTables = d.gorbovOneTable && !diagnosticComparable(id, d, previous) && diagnosticValue(previous, id) !== null;
+  return threeTables ? `${text} ${THREE_TABLES}` : text;
+}
+
 function changeText(id: DiagnosticRowId, d: DiagnosticResults, previous: DiagnosticResults): string {
   const now = diagnosticValue(d, id);
   const before = diagnosticValue(previous, id);
-  return now === null || before === null ? NONE : diagnosticChange(id, now, before);
+  if (now === null || before === null) return NONE;
+  return diagnosticComparable(id, d, previous) ? diagnosticChange(id, now, before) : INCOMPARABLE;
+}
+
+/** This diagnostic is the first with Горбов on one table, and the previous one has a Горбов result of three tables (F10). */
+function firstOneTable(d: DiagnosticResults, c: DiagnosticComparison | null): boolean {
+  const previous = c?.previous?.metrics;
+  return previous !== undefined && d.gorbovOneTable && d.gorbov !== null && !previous.gorbovOneTable && previous.gorbov !== null;
 }
 
 /** «Индекс: 72 (прошлый — 65)»; null without an index. */
@@ -146,8 +167,11 @@ function ResultsTable({ d, seriesTotal, comparison }: { d: DiagnosticResults; se
             <td className="num">{noBreakUnits(cellText(d, id, seriesTotal))}</td>
             {previous !== null && (
               <>
-                <td className="num">{noBreakUnits(cellText(previous.metrics, id, seriesTotal))}</td>
-                <td className="nowrap">{noBreakUnits(changeText(id, d, previous.metrics))}</td>
+                <td className="num">{noBreakUnits(previousCellText(d, previous.metrics, id, seriesTotal))}</td>
+                {/* A change stays on one line; the long «несравнимо…» may wrap. */}
+                <td className={diagnosticComparable(id, d, previous.metrics) ? 'nowrap' : undefined}>
+                  {noBreakUnits(changeText(id, d, previous.metrics))}
+                </td>
               </>
             )}
             <td>{noBreakUnits(diagnosticNorm(d, id) ?? NONE)}</td>
@@ -183,6 +207,7 @@ export default function Done({ diagnostic, seriesTotal, summaries, indexDeferred
       <h2 tabIndex={-1}>Сессия завершена</h2>
       {diagnostic !== null && <ResultsTable d={diagnostic} seriesTotal={seriesTotal} comparison={comparison} />}
       {diagnostic !== null && <DetailLines d={diagnostic} />}
+      {diagnostic !== null && firstOneTable(diagnostic, comparison) && <p className="muted">{FIRST_ONE_TABLE}</p>}
       {diagnostic !== null && comparison !== null && comparison.previous === null && (
         <p>{comparison.earlierUnreadable ? 'Прошлые диагностики не прочитаны — сравнивать не с чем.' : 'Первая диагностика — сравнивать пока не с чем'}</p>
       )}

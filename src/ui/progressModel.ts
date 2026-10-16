@@ -37,6 +37,8 @@ export interface ChartSpec {
   whole: boolean;
   /** One per series, in series order (F7). */
   trends: TrendView[];
+  /** A line under the chart: Горбов's diagnostics on three tables when later ones played one (F10). */
+  footnote?: string;
 }
 
 /** The unit of a trend line: ms, %, s, or none (counts, index points). */
@@ -281,6 +283,34 @@ function gorbovOf(r: DiagnosticResults | null): { V: number | null; P: number | 
 }
 
 const UNRELIABLE_NOTE = 'замер ненадёжен';
+/** A Горбов point of a diagnostic on three tables, once later ones play one (F10, Р25). */
+const THREE_TABLES_NOTE = '3 разные таблицы, до 0.3.0';
+
+/**
+ * The Горбов chart (F10): once the latest Горбов result is of one table, the points of three tables carry a note, the
+ * footnote names them, and the trends and bands use the one-table points only, so the change of format does not read
+ * as a trend. Without a one-table result the chart is as before.
+ */
+function gorbovChart(parsed: readonly { x: string; r: DiagnosticResults | null }[]): Pick<ChartSpec, 'series' | 'footnote'> & { trendSeries: ChartSeries[] } {
+  const latest = [...parsed].reverse().find(({ r }) => gorbovOf(r).V !== null)?.r;
+  const split = latest?.gorbovOneTable === true;
+  const old = (r: DiagnosticResults | null): boolean => split && r !== null && !r.gorbovOneTable;
+  const line = (name: string, pick: (g: ReturnType<typeof gorbovOf>) => number | null) => {
+    const points = parsed.map<ChartPoint>(({ x, r }) => {
+      const y = pick(gorbovOf(r));
+      return y !== null && old(r) ? { x, y, note: THREE_TABLES_NOTE } : { x, y };
+    });
+    return { series: { name, points }, trend: { name, points: points.map((p) => (p.note === undefined ? p : { x: p.x, y: null })) } };
+  };
+  const lines = [line('V', (g) => g.V), line('P', (g) => g.P), line('Π', (g) => g.Pi)];
+  const series = lines.map((l) => l.series);
+  const marked = (series[0]?.points ?? []).flatMap((p) => (p.note === undefined ? [] : [p.x]));
+  const footnote =
+    marked.length === 0
+      ? {}
+      : { footnote: `На трёх разных таблицах (до 0.3.0): ${marked.join(', ')}. Тренд и полоса шума — только по диагностикам на одной таблице.` };
+  return { series, trendSeries: lines.map((l) => l.trend), ...footnote };
+}
 
 /** The numeric metrics of DiagnosticResults (gorbov is an object). */
 type NumericMetric = Exclude<keyof DiagnosticMetrics, 'gorbov'>;
@@ -307,8 +337,8 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
   /** A difference as Done and the block summary show it (shownCost). */
   const cost = (fast: NumericMetric, slow: NumericMetric, stored: NumericMetric) => (r: DiagnosticResults | null): number | null =>
     shownCost(metric(r, fast), metric(r, slow), metric(r, stored));
-  /** A chart before its trends; the unit of its trend lines is its y label, or none for counts. */
-  type Draft = Omit<ChartSpec, 'trends'> & { unit: TrendUnit };
+  /** A chart before its trends; the unit of its trend lines is its y label, or none for counts; trendSeries: what the trends use. */
+  type Draft = Omit<ChartSpec, 'trends'> & { unit: TrendUnit; trendSeries?: ChartSeries[] };
   const reaction = (
     id: ReactionModuleId,
     title: string,
@@ -333,7 +363,7 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
       yLabel: 'с',
       unit: 'с',
       lowerIsBetter: true,
-      series: [line('V', (r) => gorbovOf(r).V), line('P', (r) => gorbovOf(r).P), line('Π', (r) => gorbovOf(r).Pi)],
+      ...gorbovChart(parsed),
       unreliable: [],
       // Π = t3 − (t1 + t2) is usually negative: no bound.
       domain: {},
@@ -365,7 +395,7 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
       whole: true,
     },
   ];
-  return drafts.map(({ unit, ...c }) => ({ ...c, trends: seriesTrends(c.series, ts, c.lowerIsBetter, unit) }));
+  return drafts.map(({ unit, trendSeries, ...c }) => ({ ...c, trends: seriesTrends(trendSeries ?? c.series, ts, c.lowerIsBetter, unit) }));
 }
 
 /**
@@ -374,7 +404,7 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
  */
 export function indexChart(rows: readonly DiagnosticRow[]): ChartSpec {
   const labels = diagnosticLabels(rows);
-  const earlier: DiagnosticMetrics[] = [];
+  const earlier: DiagnosticResults[] = [];
   const points = rows.map<ChartPoint>((row, i) => {
     const x = labels[i] as string;
     const r = parseResults(row);

@@ -25,7 +25,8 @@ import { pzmr } from '../modules/reaction/pzmr';
 import { RDO_PERIODS, rdo, rdoPeriod } from '../modules/reaction/rdo';
 import { szmr } from '../modules/reaction/szmr';
 import { bandModules, reactionModules } from '../modules/registry';
-import { gorbovMetrics } from '../modules/tables/gorbov';
+import { generateGorbovTable, gorbovMetrics, gorbovParams, tableInstruction } from '../modules/tables/gorbov';
+import { generateSchulteTable } from '../modules/tables/schulte';
 import { perfectPlayer, playTimeline } from '../testing/sessionPlayers';
 import {
   blockInstruction,
@@ -44,6 +45,7 @@ import {
   scoreSeries,
   trainingBlockSeed,
   updatedRatings,
+  GORBOV_SERIES_BLOCKS,
   type BlockPlan,
   type PlanContext,
   type WindowFloors,
@@ -401,6 +403,7 @@ describe('diagnostic reaction blocks', () => {
     expect(SPAN_PROTOCOL_PARAMS).toMatchSnapshot('span protocol params');
     expect(planBlock(diagnosticSegment('memory'), 0, 0, ctx)).toMatchSnapshot('memory plan');
     const gorbov = diagnosticSegment('gorbov');
+    // F10 adds `table: 'series'` (the three tasks share one table); the parameters are those of 0.2.0.
     for (const run of [0, 1, 2]) {
       expect(planBlock(gorbov, gorbov.fixedL ?? 0, run, ctx)).toMatchSnapshot(`gorbov run ${String(run)}`);
     }
@@ -1071,6 +1074,114 @@ describe('number series', () => {
   });
 });
 
+describe('Горбов: one table for the three tasks (F10)', () => {
+  const ctx: PlanContext = { layout: 'keyboard', scale: 1, diagnostic: false, ...PLAIN };
+  const seg = (overload?: 'finisher' | 'mix'): Segment => ({
+    module: 'gorbov',
+    budgetMs: 600_000,
+    purpose: 'attention',
+    ...(overload === undefined ? {} : { overload }),
+  });
+  const tablePlan = (segment: Segment, L: number, i: number, c: PlanContext = ctx): Extract<BlockPlan, { kind: 'table' }> => {
+    const plan = planBlock(segment, L, i, c);
+    if (plan.kind !== 'table') throw new Error('expected a table plan');
+    return plan;
+  };
+  const cellsOf = (plan: BlockPlan, seed: number, tableSeed?: number) => {
+    const { step } = buildBlock(plan, seed, 'keyboard', new Map(), tableSeed);
+    if (step.kind !== 'table_block') throw new Error('expected a table block');
+    return step;
+  };
+
+  it('blocks 0–2 share one table, block 3 gets its own', () => {
+    expect(GORBOV_SERIES_BLOCKS).toBe(3);
+    const tableSeed = trainingBlockSeed(7, 2, 0, 1);
+    const table = generateGorbovTable(createRng(tableSeed));
+    for (const i of [0, 1, 2]) {
+      const plan = tablePlan(seg(), 6, i);
+      expect(plan.table).toBe('series');
+      const seed = trainingBlockSeed(7, 2, i, 0);
+      const step = cellsOf(plan, seed, tableSeed);
+      expect(step.cells).toEqual(table);
+      // The block's own seed still drives the reshuffles (TableView).
+      expect(step.seed).toBe(seed);
+      expect(JSON.parse(buildBlock(plan, seed, 'keyboard', new Map(), tableSeed).paramsJson)).toEqual({
+        task: plan.task,
+        ...plan.params,
+        table: 'series',
+        tableSeed,
+      });
+    }
+    const own = tablePlan(seg(), 6, 3);
+    expect(own.table).toBe('own');
+    const ownSeed = trainingBlockSeed(7, 2, 3, 0);
+    // An own-table block deals from its own seed, whatever table seed is passed.
+    expect(cellsOf(own, ownSeed, tableSeed).cells).toEqual(generateGorbovTable(createRng(ownSeed)));
+    expect(cellsOf(own, ownSeed, tableSeed).cells).not.toEqual(table);
+    expect(JSON.parse(buildBlock(own, ownSeed, 'keyboard', new Map(), tableSeed).paramsJson)).toMatchObject({ table: 'own', tableSeed: ownSeed });
+    expect(tablePlan(seg(), 6, 4).table).toBe('own');
+    // Without a table seed a series block deals from its own seed (block 0).
+    expect(cellsOf(tablePlan(seg(), 6, 0), tableSeed).cells).toEqual(table);
+  });
+
+  it('normal series blocks never reshuffle, even at L 20; an overload series block does at L + 3 ≥ 15', () => {
+    expect(tablePlan(seg(), 20, 1).params).toEqual({ ...gorbovParams(20, 'red_down'), reshuffleEvery: null });
+    expect(tablePlan(seg(), 20, 0).params.reshuffleEvery).toBeNull();
+    expect(tablePlan(seg(), 20, 2).params).toEqual({ ...gorbovParams(20, 'alternate'), reshuffleEvery: null });
+    // A plateau mix: block 1 is an overload block at L + 3 = 15, on the series table, reshuffling.
+    const overload = tablePlan(seg('mix'), 12, 1);
+    expect(overload).toMatchObject({ L: 15, overload: true, table: 'series' });
+    expect(overload.params.reshuffleEvery).toBe(gorbovParams(15, 'red_down').reshuffleEvery);
+    expect(overload.params.reshuffleEvery).not.toBeNull();
+    expect(tablePlan(seg('mix'), 11, 1).params.reshuffleEvery).toBeNull();
+    // A finisher plays every block as an overload block.
+    expect(tablePlan(seg('finisher'), 18, 0).params).toEqual(gorbovParams(18, 'black_up'));
+    // Block 3 has its own table and reshuffles from L 15, as before.
+    expect(tablePlan(seg(), 15, 3).params).toEqual(gorbovParams(15, 'black_up'));
+    expect(tablePlan(seg(), 15, 3).params.reshuffleEvery).not.toBeNull();
+    // The time limits are those of gorbovParams(L).
+    expect(tablePlan(seg(), 20, 1).params.timeLimitMs).toBe(gorbovParams(20, 'red_down').timeLimitMs);
+  });
+
+  it('tasks 2–3 of a series say the table is the same', () => {
+    expect(blockInstruction(tablePlan(seg(), 4, 0), 'keyboard').text).toBe(tableInstruction('black_up'));
+    expect(blockInstruction(tablePlan(seg(), 4, 1), 'keyboard').text).toBe(
+      'Находи и нажимай красные числа от 25 до 1. Таблица та же, что в прошлом задании.',
+    );
+    expect(blockInstruction(tablePlan(seg(), 4, 2), 'keyboard').text).toBe(`${tableInstruction('alternate')} Таблица та же, что в прошлом задании.`);
+    expect(blockInstruction(tablePlan(seg(), 4, 3), 'keyboard').text).toBe(tableInstruction('black_up'));
+    expect(blockInstruction(tablePlan(seg(), 4, 4), 'keyboard').text).toBe(tableInstruction('red_down'));
+    expect(blockInstruction(tablePlan(seg('mix'), 4, 1), 'keyboard').text).toBe(
+      `${OVERLOAD_PREFIX}${tableInstruction('red_down')} Таблица та же, что в прошлом задании.`,
+    );
+    // The diagnostic says it too.
+    const diagnostic = planDiagnostic(1).segments.find((s) => s.module === 'gorbov') as Segment;
+    const dctx = { ...ctx, diagnostic: true };
+    expect(blockInstruction(tablePlan(diagnostic, 0, 1, dctx), 'keyboard').text).toMatch(/ Таблица та же, что в прошлом задании\.$/);
+  });
+
+  it('the diagnostic: one table for the three tasks, without reshuffles', () => {
+    const diagnostic = planDiagnostic(3).segments.find((s) => s.module === 'gorbov') as Segment;
+    const dctx = { ...ctx, diagnostic: true };
+    const tableSeed = diagnosticBlockSeed(3, 'gorbov', 0, 0);
+    for (const i of [0, 1, 2]) {
+      const plan = tablePlan(diagnostic, 0, i, dctx);
+      expect(plan).toMatchObject({ table: 'series', params: gorbovParams(0, plan.task) });
+      expect(cellsOf(plan, diagnosticBlockSeed(3, 'gorbov', i, 0), tableSeed).cells).toEqual(generateGorbovTable(createRng(tableSeed)));
+    }
+  });
+
+  it('Шульте keeps a table of its own per block', () => {
+    const schulte: Segment = { module: 'schulte', budgetMs: 300_000, purpose: 'attention' };
+    const plan = planBlock(schulte, 4, 1, ctx);
+    expect(plan).toMatchObject({ kind: 'table', table: 'own' });
+    const { step, paramsJson } = buildBlock(plan, 9, 'keyboard', new Map(), 5);
+    if (step.kind !== 'table_block' || plan.kind !== 'table') throw new Error('expected a table block');
+    expect(step.cells).toEqual(generateSchulteTable(plan.params.size, createRng(9)));
+    expect(JSON.parse(paramsJson)).toEqual({ task: 'schulte', ...plan.params });
+  });
+});
+
 describe('diagnosticResults', () => {
   it('lists the reaction modules whose stored block was timingUnreliable, keeping their values (I1)', () => {
     const r = diagnosticResults([
@@ -1135,6 +1246,7 @@ describe('diagnosticResults', () => {
       memorySpan: 7,
       unreliable: [],
       restarts: {},
+      gorbovOneTable: true,
     });
     // A condition with fewer than 3 RTs has no median: its difference is missing, the other median is kept.
     const partial = diagnosticResults([{ module: 'stroop', summary: summary({}), hitRts: [], conditions: { congruent: cond(520), incongruent: cond(null) } }]);
@@ -1146,8 +1258,10 @@ describe('diagnosticResults', () => {
     });
     expect(diagnosticResults([{ module: 'gorbov', run: 0, seconds: 30 }, { module: 'gorbov', run: 1, seconds: null }, { module: 'gorbov', run: 2, seconds: 70 }]).gorbov).toBeNull();
     expect(diagnosticResults([{ module: 'gorbov', run: 0, seconds: 30 }, { module: 'gorbov', run: 2, seconds: 70 }]).gorbov).toBeNull();
-    expect(diagnosticResults([])).toEqual({ ...EMPTY_METRICS, unreliable: [], restarts: {} });
-    expect(diagnosticResults([])).toEqual(EMPTY_RESULTS);
+    // A diagnostic of 0.3.0 deals Горбов's three tasks from one table (F10); a stored row without the flag reads false.
+    expect(diagnosticResults([])).toEqual({ ...EMPTY_METRICS, unreliable: [], restarts: {}, gorbovOneTable: true });
+    expect(diagnosticResults([])).toEqual({ ...EMPTY_RESULTS, gorbovOneTable: true });
+    expect(EMPTY_RESULTS.gorbovOneTable).toBe(false);
     expect(Object.values(EMPTY_METRICS).every((v) => v === null)).toBe(true);
   });
 

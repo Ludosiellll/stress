@@ -17,7 +17,7 @@ import { displayedCost, round1, whole } from './steps';
  * left out, never thrown on.
  */
 
-/** 'pzmr', 'pzmr:b2', 'pzmr:warmup', 'szmr:test', 'rdo:3000', 'gorbov:alternate', 'schulte:6', 'memory:digits'. */
+/** 'pzmr', 'pzmr:b2', 'pzmr:warmup', 'szmr:test', 'rdo:3000', 'gorbov:alternate', 'gorbov:alternate:own', 'schulte:6', 'memory:digits'. */
 export type VariantKey = string;
 
 export interface KeyMetric {
@@ -74,6 +74,7 @@ const MEMORY_SPAN_MIN_EXACT = 4;
 const MS_PER_DAY = 86_400_000;
 
 const GORBOV_TASKS = ['black_up', 'red_down', 'alternate'] as const;
+const GORBOV_TABLES = ['series', 'own'] as const;
 const SCHULTE_PREFIX = 'schulte:';
 const MEMORY_MODES = ['digits', 'letters', 'positions', 'card'] as const;
 
@@ -164,6 +165,11 @@ function gorbovTask(summary: Json | null, paramsJson: string): GorbovTask | null
   return oneOf(summary, 'task', GORBOV_TASKS) ?? oneOf(parseObject(paramsJson), 'task', GORBOV_TASKS);
 }
 
+/** A Горбов block on a table of its own (F10: block 3 and later of a segment); a series block or one before F10 is not. */
+function ownTable(paramsJson: string): boolean {
+  return oneOf(parseObject(paramsJson), 'table', GORBOV_TABLES) === 'own';
+}
+
 /** The task of a Горбов block, as its variant names it; null: unreadable. */
 export function gorbovTaskOf(row: Pick<BlockRow, 'paramsJson' | 'summaryJson'>): GorbovTask | null {
   return gorbovTask(parseObject(row.summaryJson), row.paramsJson);
@@ -190,14 +196,16 @@ function bandVariant(module: ModuleId, flags: readonly BlockFlag[], paramsJson: 
 
 /** A test-format run is a variant of its own (F4, Р29): the frozen diagnostic parameters, not a training band. */
 const TEST_SUFFIX = ':test';
+const OWN_SUFFIX = ':own';
 
 function variantFrom(module: ModuleId, flags: readonly BlockFlag[], summary: Json | null, paramsJson: string): VariantKey | null {
   if (flags.includes('test_format')) return `${module}${TEST_SUFFIX}`;
   if (isBandModule(module)) return bandVariant(module, flags, paramsJson);
   switch (module) {
     case 'gorbov': {
+      // A table of its own is not the test's series (T-R24): `gorbov:{task}:own`.
       const task = gorbovTask(summary, paramsJson);
-      return task === null ? null : `gorbov:${task}`;
+      return task === null ? null : `gorbov:${task}${ownTable(paramsJson) ? OWN_SUFFIX : ''}`;
     }
     case 'schulte': {
       const size = num(parseObject(paramsJson), 'size');
@@ -329,9 +337,10 @@ function normsFrom(row: NormRow, summary: Json | null, kind: SessionKind): NormS
       return mean !== null && isTwoChoice(szmrPlayed(paramsJson, lBefore)) ? [{ id: 'szmrMean', value: mean }] : [];
     }
     case 'gorbov': {
+      // The norms are of the test's series on one table (T-R24).
       const task = gorbovTask(summary, paramsJson);
       const seconds = tableSeconds(summary);
-      if (task === null || seconds === null) return [];
+      if (task === null || seconds === null || ownTable(paramsJson)) return [];
       return [{ id: task === 'alternate' ? 'gorbovAlternate' : 'gorbovSimple', value: seconds }];
     }
     case 'memory':

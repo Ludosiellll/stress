@@ -81,6 +81,9 @@ export function gorbovMetrics(t1: number, t2: number, t3: number): { V: number; 
   return { V: (t1 + t2) / 2, P: t3, Pi: t3 - (t1 + t2) };
 }
 
+/** Added to the instruction of tasks 2–3 of a Горбов series, which play the table of task 1 (F10). */
+export const SAME_TABLE_NOTE = ' Таблица та же, что в прошлом задании.';
+
 export function tableInstruction(task: TableTaskId, size?: number): string {
   switch (task) {
     case 'black_up':

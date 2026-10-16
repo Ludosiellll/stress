@@ -226,6 +226,7 @@ function Diagnostics({ model }: { model: ProgressModel }) {
             domain={c.domain}
             whole={c.whole}
             trends={c.trends}
+            {...(c.footnote === undefined ? {} : { footnote: c.footnote })}
           />
         ))}
       </div>
