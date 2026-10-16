@@ -15,7 +15,7 @@ import Done from '../views/Done';
 import Instruction from '../views/Instruction';
 import MemoryView from '../views/MemoryView';
 import NumSeriesView from '../views/NumSeriesView';
-import { FatiguePrompt, Lesson, Notice, PauseMenu, SaveError } from '../views/Prompts';
+import { FatiguePrompt, HistoryError, Lesson, Notice, PauseMenu, SaveError } from '../views/Prompts';
 import ReactionView from '../views/ReactionView';
 import TableView from '../views/TableView';
 import Warnings from '../views/Warnings';
@@ -34,6 +34,7 @@ export type SessionDriver = Pick<
   | 'continueAfterSummary'
   | 'answerFatigue'
   | 'retrySave'
+  | 'retryHistory'
   | 'abandonPending'
   | 'submitWellbeing'
   | 'ackNotice'
@@ -253,12 +254,13 @@ function SessionFlow({
   };
 
   // A running reaction block handles Escape itself, unless its diagnostic restart is used up (the hint is shown from
-  // here); a save error must be resolved first.
+  // here); a save error must be resolved first, and a history read error offers its own way home.
   const escapeListens =
     step !== null &&
     pause === null &&
     !busy &&
-    (notice !== null || (step.kind !== 'save_error' && step.kind !== 'done' && (step.kind !== 'reaction_block' || !escAllowed)));
+    (notice !== null ||
+      (step.kind !== 'save_error' && step.kind !== 'history_error' && step.kind !== 'done' && (step.kind !== 'reaction_block' || !escAllowed)));
   useKeyDown((e) => {
     if (e.key !== 'Escape' || step === null) return;
     e.preventDefault();
@@ -492,6 +494,16 @@ function SessionFlow({
           }}
           onAbandon={() => {
             run((c) => c.abandonPending());
+          }}
+        />
+      );
+    case 'history_error':
+      return (
+        <HistoryError
+          busy={busy}
+          onExit={exit}
+          onRetry={() => {
+            run((c) => c.retryHistory());
           }}
         />
       );

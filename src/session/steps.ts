@@ -75,6 +75,11 @@ export type Step =
   | { kind: 'fatigue_prompt'; module: ModuleId }
   /** canAbandon: abandonPending() may drop the unsaved writes (not for the session row itself). */
   | { kind: 'save_error'; message: string; canAbandon: boolean; what: SaveErrorWhat }
+  /**
+   * A training or free session could read neither its block history nor the light level rows, so it would have no
+   * window floor (T-R78): nothing is stored yet; retryHistory() reads again and starts the session.
+   */
+  | { kind: 'history_error' }
   | { kind: 'wellbeing' }
   /**
    * seriesTotal: number-series items of a diagnostic (for «14 из 20»); null otherwise or if that block was not stored.

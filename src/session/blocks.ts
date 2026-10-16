@@ -1,3 +1,5 @@
+import type { BlockLevelRow } from '../data/rows';
+import { isCountedSession, storedBand } from '../engine/derive';
 import { EMPTY_METRICS, diagnosticSegmentSeed, diagnosticSeriesSchedule, type DiagnosticResults } from '../engine/diagnostic';
 import { R0, updateRating, type Rating } from '../engine/elo';
 import { itemEffectiveDifficulty } from '../engine/itemLimit';
@@ -19,6 +21,7 @@ import {
   type LayoutId,
   type ModuleId,
   type ReactionModuleId,
+  type SessionKind,
   type TableModuleId,
 } from '../engine/types';
 import { bandFloors } from '../engine/windowFloor';
@@ -65,6 +68,7 @@ import {
   type SeriesAnswer,
   type StepOf,
 } from './steps';
+import { parseObject } from './blockHistory';
 import { cleanHitsByBand, type PastBlocks } from './pastBlocks';
 import { testFormatInstruction } from './testFormat';
 
@@ -132,6 +136,45 @@ export function floorsFrom(past: PastBlocks): WindowFloors {
       byModule.set(module, floorOf);
     }
     return floorOf(band);
+  };
+}
+
+/** paramsJson.windowMs, the window a stored block played: a positive finite number; null otherwise. */
+function storedWindowMs(paramsJson: string): number | null {
+  const w = parseObject(paramsJson)?.['windowMs'];
+  return typeof w === 'number' && Number.isFinite(w) && w > 0 ? w : null;
+}
+
+/**
+ * The window floors of a training or free session whose block history could not be read (Р18, T-R78), from the light
+ * rows of listBlockLevels: on a band, the window (paramsJson.windowMs) of the module's latest block on it in a training
+ * or free session, a test-format run left out (it plays the frozen parameters, F4); without one, that of the nearest
+ * band below that has one, the direction of the floor chain; without any below, of the nearest band above, so that a
+ * band module never plays the nominal window of a high level. Each stored window was already at least its band's floor
+ * then. `rows` in listBlockLevels order (by startedAt); null: the module has no such window, or no bands.
+ */
+export function levelFloors(
+  sessions: readonly { id: string; kind: SessionKind }[],
+  rows: readonly Pick<BlockLevelRow, 'sessionId' | 'module' | 'flags' | 'paramsJson'>[],
+): WindowFloors {
+  const counted = new Set(sessions.flatMap((s) => (isCountedSession(s.kind) ? [s.id] : [])));
+  const windows = new Map<ModuleId, Map<number, number>>();
+  for (const row of rows) {
+    if (!isBandModule(row.module) || !counted.has(row.sessionId) || row.flags.includes('test_format')) continue;
+    const band = storedBand(row.paramsJson);
+    const windowMs = storedWindowMs(row.paramsJson);
+    if (band === null || windowMs === null) continue;
+    const byBand = windows.get(row.module) ?? new Map<number, number>();
+    // Later rows replace earlier ones: the latest block of the band.
+    byBand.set(band, windowMs);
+    windows.set(row.module, byBand);
+  }
+  return (module, band) => {
+    const byBand = windows.get(module);
+    if (byBand === undefined) return null;
+    const bands = [...byBand.keys()];
+    const below = bands.filter((b) => b <= band);
+    return byBand.get(below.length > 0 ? Math.max(...below) : Math.min(...bands)) ?? null;
   };
 }
 
@@ -209,7 +252,10 @@ export interface PlanContext {
   /** The plan's seed and the segment's index in it: what a segment draws once (the Go/No-Go colour swap, F8). */
   planSeed: number;
   segmentIndex: number;
-  /** The personal window floors (F3); null: a diagnostic, a test-format run, or the history could not be read (Р18). */
+  /**
+   * The personal window floors (F3), or levelFloors when the history could not be read (Р18, T-R78); null: a diagnostic
+   * or a test-format run.
+   */
   floors: WindowFloors | null;
   /** The plan's mark rate (F15); planBlock keeps it to the blocks that have marks. */
   feedback: FeedbackRate;

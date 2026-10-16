@@ -72,6 +72,29 @@ export function SaveError({ message, canAbandon, what, busy, onRetry, onAbandon,
   );
 }
 
+/**
+ * A training or free session could read neither its block history nor its level rows (T-R78): it has not started and
+ * nothing is stored; «Повторить» reads again.
+ */
+export function HistoryError({ busy, onRetry, onExit }: { busy: boolean; onRetry: () => void; onExit: () => void }) {
+  return (
+    <div className="screen-center">
+      <h2 tabIndex={-1}>Ошибка чтения</h2>
+      <p role="alert" className="warning">
+        Не удалось прочитать историю тренировок. Данные не изменены.
+      </p>
+      <div className="actions">
+        <button type="button" className="primary" autoFocus disabled={busy} onClick={onRetry}>
+          Повторить
+        </button>
+        <button type="button" disabled={busy} onClick={onExit}>
+          На главную
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export interface NoticeProps {
   /** Heading; default «Блок прерван». */
   title?: string;

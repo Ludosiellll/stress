@@ -1621,6 +1621,104 @@ describe('SessionController — the personal window floor and the load bands (F3
     h.c.ackInstruction();
     expect(new Set(expectStep(h.c, 'reaction_block').specs.map((t) => t.windowMs))).toEqual(new Set([DIAGNOSTIC_PARAMS.pzmr.windowMs]));
   });
+
+  /** ПЗМР at L_saved 30, last trained yesterday: today's segment starts at L 29, band 7, nominal window 153 ms (T-R78). */
+  async function highPzmr(windows: ReadonlyArray<readonly [band: number, windowMs: number, kind?: 'diagnostic']>): Promise<MemoryRepository> {
+    const repo = new MemoryRepository();
+    await repo.createSession(session('y', YESTERDAY, { endedAt: minutesAfter(YESTERDAY, 30) }));
+    await repo.createSession(session('yd', minutesAfter(YESTERDAY, 40), { kind: 'diagnostic', endedAt: minutesAfter(YESTERDAY, 50) }));
+    for (const [i, [band, windowMs, kind]] of windows.entries()) {
+      const sessionId = kind === 'diagnostic' ? 'yd' : 'y';
+      const paramsJson = JSON.stringify({ ...pzmr.params(4 * band), windowMs });
+      await repo.addBlock(block(`y${String(i)}`, sessionId, minutesAfter(YESTERDAY, kind === 'diagnostic' ? 41 + i : 1 + i), { module: 'pzmr', lBefore: 30, lAfter: 30, paramsJson }), [], []);
+    }
+    await repo.saveModuleState(stateWith('pzmr', { lSaved: 30, lastTrainedAt: YESTERDAY, lifetimeBlocks: 20 }));
+    return repo;
+  }
+  const at260: Respond = (spec, idx) => {
+    const r = perfectPlayer(spec, idx);
+    return r === null ? null : { ...r, rtMs: 260 };
+  };
+
+  it('a failed history read takes the floor from the light rows: the stored window of the band (T-R78)', async () => {
+    // The final review's probe: L_saved 30 and listBlocks failing played windows of 153–197 ms.
+    const repo = await highPzmr([
+      [6, 300],
+      [7, 330],
+    ]);
+    vi.spyOn(repo, 'listBlocks').mockRejectedValueOnce(new Error('disk I/O error'));
+    const h = await begin(planFree('pzmr', 1), { repo });
+    h.c.ackInstruction();
+    const step = expectStep(h.c, 'reaction_block');
+    expect([step.L, pzmr.params(29).windowMs]).toEqual([29, 153]);
+    expect(new Set(step.specs.map((t) => t.windowMs))).toEqual(new Set([330]));
+    // A steady 260 ms player hits every signal.
+    await h.c.submitReaction(playTimeline(step.specs, at260));
+    const { view } = expectStep(h.c, 'summary');
+    expect(view.score).toBe(1);
+    expect(view.lines).toContain('Окно ответа: 330 мс — твой минимум для этой нагрузки (по уровню — 153 мс).');
+    // The next block rests on the same floor, so «what changed» names no narrower window.
+    expect(view.lAfter).toBeGreaterThan(29);
+    expect(view.changes.some((c) => c.label === 'Окно ответа')).toBe(false);
+    const [row] = (await repo.listBlocks()).filter((b) => b.sessionId === h.c.sessionId);
+    expect(JSON.parse(row?.paramsJson ?? '')).toMatchObject({ band: 7, windowMs: 330, nominalWindowMs: 153, floorMs: 330 });
+  });
+
+  it('without a window on the band the fallback takes the nearest band below; diagnostics and runs are no source (T-R78)', async () => {
+    const repo = await highPzmr([
+      [5, 400],
+      [7, 1000, 'diagnostic'],
+    ]);
+    vi.spyOn(repo, 'listBlocks').mockRejectedValueOnce(new Error('disk I/O error'));
+    const h = await begin(planFree('pzmr', 1), { repo });
+    h.c.ackInstruction();
+    expect(new Set(expectStep(h.c, 'reaction_block').specs.map((t) => t.windowMs))).toEqual(new Set([400]));
+  });
+
+  it('without the block history and the light rows training does not start: an error step, nothing stored (T-R78)', async () => {
+    const repo = await highPzmr([[7, 330]]);
+    const sessionsBefore = await repo.listSessions();
+    const blocks = vi.spyOn(repo, 'listBlocks').mockRejectedValue(new Error('disk I/O error'));
+    const levels = vi.spyOn(repo, 'listBlockLevels').mockRejectedValue(new Error('disk I/O error'));
+    const h = await begin(planFree('pzmr', 1), { repo });
+    expect(h.c.step).toEqual({ kind: 'history_error' });
+    expect(await repo.listSessions()).toEqual(sessionsBefore);
+    // Newest first.
+    expect((await repo.listLog(5)).map((l) => l.message)).toEqual([
+      'session: block levels could not be read',
+      'session: block history could not be read',
+    ]);
+    // «Повторить» while the reads still fail: the step stays, nothing is stored.
+    await h.c.retryHistory();
+    expect(h.c.step).toEqual({ kind: 'history_error' });
+    expect(await repo.listSessions()).toEqual(sessionsBefore);
+    // The light rows read again: the session starts, on their floor.
+    levels.mockRestore();
+    await h.c.retryHistory();
+    expectStep(h.c, 'instruction');
+    expect((await repo.listSessions()).map((s) => s.id)).toEqual([...sessionsBefore.map((s) => s.id), h.c.sessionId]);
+    h.c.ackInstruction();
+    expect(expectStep(h.c, 'reaction_block').specs[0]?.windowMs).toBe(330);
+    // The whole history reads again: the session starts on the floors of the stored hits (the rows here have none).
+    vi.spyOn(repo, 'listBlockLevels').mockRejectedValue(new Error('disk I/O error'));
+    const again = await begin(planFree('pzmr', 1), { repo });
+    expectStep(again.c, 'history_error');
+    blocks.mockRestore();
+    await again.c.retryHistory();
+    again.c.ackInstruction();
+    expect(expectStep(again.c, 'reaction_block').specs[0]?.windowMs).toBe(153);
+    await expect(again.c.retryHistory()).rejects.toThrow('expected step history_error');
+  });
+
+  it('a diagnostic reads neither: it starts on its frozen windows when both reads fail (T-R78)', async () => {
+    const repo = await highPzmr([[7, 330]]);
+    vi.spyOn(repo, 'listBlocks').mockRejectedValue(new Error('disk I/O error'));
+    vi.spyOn(repo, 'listBlockLevels').mockRejectedValue(new Error('disk I/O error'));
+    const pzmrSegment = planDiagnostic(1).segments.find((s) => s.module === 'pzmr') as Segment;
+    const h = await begin({ ...planDiagnostic(1), segments: [pzmrSegment] }, { repo });
+    h.c.ackInstruction();
+    expect(new Set(expectStep(h.c, 'reaction_block').specs.map((t) => t.windowMs))).toEqual(new Set([DIAGNOSTIC_PARAMS.pzmr.windowMs]));
+  });
 });
 
 describe('SessionController — assessment', () => {

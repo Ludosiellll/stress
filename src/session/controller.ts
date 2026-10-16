@@ -12,7 +12,7 @@ import { OVERLOAD_LEVEL_STEP, isTestFormat, warmupLevel, type ModuleState, type 
 import { stabilityOf } from '../engine/reaction/stability';
 import type { BlockTimeline, TrialResult } from '../engine/reaction/types';
 import { readinessOfLatest } from '../engine/readiness';
-import { isBandModule, isReactionModule, type BlockFlag, type FamilyId, type LayoutId, type ModuleId } from '../engine/types';
+import { BAND_MODULES, isBandModule, isReactionModule, type BlockFlag, type FamilyId, type LayoutId, type ModuleId } from '../engine/types';
 import { CARD_LESSON } from '../modules/memory/params';
 import { memorySpan, scoreMemoryBlock, type MemoryAnswer } from '../modules/memory/score';
 import { bandIndex } from '../modules/reaction/common';
@@ -29,6 +29,7 @@ import {
   diagnosticResults,
   floorsFrom,
   levelChanges,
+  levelFloors,
   planBlock,
   scoreReaction,
   scoreSeries,
@@ -289,7 +290,8 @@ function compareWithPrevious(earlier: readonly PastDiagnostic[], readiness: numb
  *   block's lAfter goes to history only. Their flag keeps them out of L_saved, fatigue, g = 2 and the window floor
  *   (an overload block is never a segment's first block).
  * - The window of a band module's block rests on the personal floor of its band (F3): the history read at start and
- *   the blocks of this session as they are stored; diagnostics have none.
+ *   the blocks of this session as they are stored; diagnostics have none. When the history cannot be read, the window
+ *   the band played last stands in (levelFloors, T-R78), and without that the session does not start (`history_error`).
  * - The warm-up (F5) plays every block at warmupLevel(L_saved) and moves no level; its flag keeps it out of L_saved,
  *   lastTrainedAt, fatigue, calibration and g = 2. Its summary says so and shows «Форма дня» from the warm-ups of the
  *   history read at start, those of this session and the block itself.
@@ -317,6 +319,7 @@ export class SessionController {
   private readonly now: () => Date;
   private readonly scale: number;
   private readonly queue: SaveQueue;
+  private readonly appVersion: string;
   /** Training and free sessions move levels; diagnostics do not (the one "is diagnostic" predicate). */
   private readonly counted: boolean;
   /** Module states as of session start (L_saved, last training, lifetime blocks). */
@@ -360,14 +363,19 @@ export class SessionController {
    * Training and free sessions: the block history read at start, with every block of this session appended once it
    * is stored. null: a diagnostic, or the read failed (no history line then, О10).
    */
-  private readonly history: BlockHistory | null;
+  private history: BlockHistory | null;
   /** The same history as stored rows, for «Форма дня» (F5); null exactly when `history` is (Р18). */
-  private readonly past: PastBlocks | null;
+  private past: PastBlocks | null;
   /**
    * Level-moving blocks (movesLevel) of each module in the training and free sessions read at start, for calibration
    * (T-R38); null exactly when `history` is.
    */
-  private readonly levelBlocks: ReadonlyMap<ModuleId, number> | null;
+  private levelBlocks: ReadonlyMap<ModuleId, number> | null;
+  /**
+   * A training or free session whose block history could not be read: the window floors from the light level rows
+   * (levelFloors, T-R78); null otherwise. Without either read the session does not start (`history_error`).
+   */
+  private fallbackFloors: WindowFloors | null = null;
 
   private constructor(
     o: SessionStartOptions,
@@ -384,6 +392,7 @@ export class SessionController {
     this.now = o.now;
     this.scale = scale;
     this.queue = new SaveQueue(o.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))));
+    this.appVersion = o.appVersion;
     this.counted = o.plan.kind !== 'diagnostic';
     this.states = states;
     this.ratings = ratings;
@@ -393,7 +402,11 @@ export class SessionController {
     this.levelBlocks = read?.levelBlocks ?? null;
   }
 
-  /** Creates the session row and shows the first instruction (or `save_error` if the row cannot be written). */
+  /**
+   * Creates the session row and shows the first instruction (or `save_error` if the row cannot be written). A training
+   * or free session whose block history cannot be read takes its window floors from the light level rows (Р18, T-R78);
+   * when those cannot be read either, nothing is written and the step is `history_error`.
+   */
   static async start(o: SessionStartOptions): Promise<SessionController> {
     const scale = o.scale ?? 1;
     if (!(Number.isFinite(scale) && scale > 0)) throw new RangeError(`scale must be a positive number, got ${String(scale)}`);
@@ -404,28 +417,66 @@ export class SessionController {
     const [states, ratings, earlier, read] = await Promise.all([
       o.repo.getModuleStates(),
       o.repo.getRatings(),
-      diagnostic ? SessionController.readOrLog(o, 'earlier diagnostics', () => SessionController.earlierDiagnostics(o.repo)) : [],
-      diagnostic ? null : SessionController.readOrLog(o, 'block history', () => SessionController.blockHistory(o.repo)),
+      diagnostic ? SessionController.readOrLog(o.repo, o.now, 'earlier diagnostics', () => SessionController.earlierDiagnostics(o.repo)) : [],
+      diagnostic ? null : SessionController.readOrLog(o.repo, o.now, 'block history', () => SessionController.blockHistory(o.repo)),
     ]);
     const c = new SessionController(o, scale, states, ratings, earlier, read);
-    const row = sessionRow(c.sessionId, o.now().toISOString(), o.plan.kind, o.appVersion, o.plan.phase ?? 'none');
-    await c.save(
-      { what: 'session start', stage: () => 'session_start', onSaved: () => c.enterSegment(0), onAbandon: null },
-      [{ label: 'createSession', run: () => o.repo.createSession(row) }],
-    );
+    if (diagnostic || read !== null || (await c.readLevelFloors())) await c.open();
+    else c.current = { kind: 'history_error' };
     return c;
+  }
+
+  /**
+   * `history_error` (T-R78): reads the block history again, then, if it still fails, the light level rows; with either
+   * the session starts as start() would have started it, without both the step stays.
+   */
+  async retryHistory(): Promise<void> {
+    this.take('history_error');
+    await this.exclusive(async () => {
+      const read = await SessionController.readOrLog(this.repo, this.now, 'block history', () => SessionController.blockHistory(this.repo));
+      if (read !== null) {
+        this.history = read.history;
+        this.past = read.past;
+        this.levelBlocks = read.levelBlocks;
+      } else if (!(await this.readLevelFloors())) {
+        return;
+      }
+      await this.open();
+    });
+  }
+
+  /** Writes the session row, then enters the first segment. */
+  private async open(): Promise<void> {
+    const row = sessionRow(this.sessionId, this.now().toISOString(), this.plan.kind, this.appVersion, this.plan.phase ?? 'none');
+    await this.save(
+      { what: 'session start', stage: () => 'session_start', onSaved: () => this.enterSegment(0), onAbandon: null },
+      [{ label: 'createSession', run: () => this.repo.createSession(row) }],
+    );
+  }
+
+  /**
+   * The fallback window floors (levelFloors) from the light rows of the band modules, the reads saveModuleState makes
+   * after every block; false when they cannot be read (logged).
+   */
+  private async readLevelFloors(): Promise<boolean> {
+    const floors = await SessionController.readOrLog(this.repo, this.now, 'block levels', async () => {
+      const [sessions, rows] = await Promise.all([this.repo.listSessions(), Promise.all(BAND_MODULES.map((m) => this.repo.listBlockLevels(m)))]);
+      return levelFloors(sessions, rows.flat());
+    });
+    this.fallbackFloors = floors;
+    return floors !== null;
   }
 
   /**
    * A read at session start that must not stop the session: a failure is logged (when the log can be written) and
    * reads as null, so what depends on it is left out (the deferred-parts note, the history line).
    */
-  private static async readOrLog<T>(o: SessionStartOptions, what: string, read: () => Promise<T>): Promise<T | null> {
+  private static async readOrLog<T>(repo: Repository, now: () => Date, what: string, read: () => Promise<T>): Promise<T | null> {
     try {
       return await read();
     } catch (e) {
       try {
-        await o.repo.appendLog(errorLogRow(o.now().toISOString(), `session: ${what} could not be read`, { error: errorText(e) }));
+        await repo.appendLog(errorLogRow(now().toISOString(), `session: ${what} could not be read`, { error: errorText(e) }));
       } catch {
         // The database is failing already; the read failure simply goes unlogged.
       }
@@ -897,8 +948,9 @@ export class SessionController {
 
   /**
    * What planBlock needs to know about the session and the segment. The window floors come from the history read at
-   * start and the blocks stored since (F3); a diagnostic has none, nor a test-format run (F4), nor a session whose
-   * history could not be read (Р18). The mark rate is the plan's (F15); planBlock keeps it to the blocks with marks.
+   * start and the blocks stored since (F3); a diagnostic has none, nor a test-format run (F4); a session whose history
+   * could not be read takes the fallback floors of the light rows (Р18, T-R78). The mark rate is the plan's (F15);
+   * planBlock keeps it to the blocks with marks.
    * The РДО speed cycle goes on from the same history (T-R61); without it a segment plays its own order.
    */
   private planContext(seg: SegmentRun): PlanContext {
@@ -909,7 +961,7 @@ export class SessionController {
       diagnostic: !this.counted,
       planSeed: this.plan.seed,
       segmentIndex: seg.index,
-      floors: floored && this.past !== null ? floorsFrom(this.past) : null,
+      floors: !floored ? null : this.past !== null ? floorsFrom(this.past) : this.fallbackFloors,
       feedback: this.plan.feedback ?? 'none',
       rdoCount: this.counted && this.past !== null ? rdoCycleCount(this.past) : null,
     };
@@ -1192,7 +1244,8 @@ export class SessionController {
    */
   private summaryView(b: FinishedBlock, row: BlockRow, lAfter: number, lines: string[], noLevel: boolean, warmup: boolean): BlockSummaryView {
     const context = this.planContext(this.segment());
-    const floorsAfter = context.floors === null || this.past === null ? null : floorsFrom(withBlock(this.past, row, this.plan.kind));
+    // The fallback floors (T-R78) do not move with the session's blocks.
+    const floorsAfter = context.floors === null || this.past === null ? context.floors : floorsFrom(withBlock(this.past, row, this.plan.kind));
     const assessment = this.assessOrLog(row, b.meanRating ?? null, floorsAfter);
     const view: BlockSummaryView = {
       module: b.module,

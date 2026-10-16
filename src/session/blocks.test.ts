@@ -53,6 +53,7 @@ import {
   e2eCondFloor,
   FEEDBACK_MODULES,
   floorsFrom,
+  levelFloors,
   isOverloadBlock,
   planBlock,
   scaledCount,
@@ -793,6 +794,41 @@ describe('the personal window floor and the overload band (F3)', () => {
     // A new WindowFloors reads the blocks stored since: 15 hits, P80 the 12th of them.
     appendPast(past, block('e', 'now', '2026-10-15T09:01:00', { module: 'pzmr', paramsJson: '{"band":0}', summaryJson: rts(1, 310) }), 'free');
     expect(floorsFrom(past)('pzmr', 0)).toBeCloseTo(1.2 * 300, 9);
+  });
+
+  it('levelFloors (T-R78): the stored window of the latest training or free block on the band, else of the nearest band below, else above', () => {
+    const at = (m: number): string => `2026-10-10T09:${String(m).padStart(2, '0')}:00`;
+    const params = (band: number, windowMs: unknown): string => JSON.stringify({ band, windowMs, noise: null });
+    const rows = [
+      block('a', 't', at(1), { module: 'pzmr', paramsJson: params(7, 340) }),
+      block('b', 'f', at(2), { module: 'pzmr', paramsJson: params(7, 330) }),
+      // Not a training window: a diagnostic, a test-format run (the frozen parameters), a block of an unknown session.
+      block('c', 'd', at(3), { module: 'pzmr', paramsJson: params(7, 1000) }),
+      block('e', 't', at(4), { module: 'pzmr', flags: ['test_format'], paramsJson: params(7, 1000) }),
+      block('g', 'x', at(5), { module: 'pzmr', paramsJson: params(7, 900) }),
+      // Counted: an overload block plays its own band's window, a block counted as 0 after Esc the one it was given.
+      block('h', 't', at(6), { module: 'szmr', flags: ['overload'], paramsJson: params(5, 400) }),
+      block('i', 't', at(7), { module: 'szmr', flags: ['discarded'], paramsJson: params(9, 250) }),
+      // Unreadable: no band (0.2.0), a window that is no positive number, damaged params.
+      block('j', 't', at(8), { module: 'gonogo', paramsJson: '{"windowMs":500}' }),
+      block('k', 't', at(9), { module: 'gonogo', paramsJson: params(2, '500') }),
+      block('l', 't', at(10), { module: 'gonogo', paramsJson: params(3, 0) }),
+      block('m', 't', at(11), { module: 'gonogo', paramsJson: '{not json' }),
+      block('n', 't', at(12), { module: 'rdo', paramsJson: params(2, 60) }),
+    ];
+    const sessions = [session('t', at(0)), session('f', at(0), { kind: 'free' }), session('d', at(0), { kind: 'diagnostic' })];
+    const floors = levelFloors(sessions, rows);
+    // The latest of band 7, whatever came after it in diagnostics and runs.
+    expect(floors('pzmr', 7)).toBe(330);
+    // No window on band 8: the nearest band below has one; none on bands 0–6: the nearest band above.
+    expect(floors('pzmr', 8)).toBe(330);
+    expect(floors('pzmr', 3)).toBe(330);
+    expect([4, 5, 6, 9, 12].map((b) => floors('szmr', b))).toEqual([400, 400, 400, 250, 250]);
+    expect(floors('gonogo', 2)).toBeNull();
+    expect(floors('stroop', 0)).toBeNull();
+    // РДО has no bands.
+    expect(floors('rdo', 2)).toBeNull();
+    expect(levelFloors([], rows)('pzmr', 7)).toBeNull();
   });
 
   it('the window is the larger of the nominal and the floor', () => {

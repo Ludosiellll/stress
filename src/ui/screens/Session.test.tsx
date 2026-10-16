@@ -113,6 +113,7 @@ function fakeDriver(first: Step): FakeDriver {
     continueAfterSummary: vi.fn(() => Promise.resolve()),
     answerFatigue: vi.fn(() => Promise.resolve()),
     retrySave: vi.fn(() => Promise.resolve()),
+    retryHistory: vi.fn(() => Promise.resolve()),
     abandonPending: vi.fn(() => Promise.resolve()),
     submitWellbeing: vi.fn(() => Promise.resolve()),
     ackNotice: vi.fn(),
@@ -359,6 +360,7 @@ describe('Session steps', () => {
       [{ kind: 'summary', view: SUMMARY }, () => screen.getByText('Уровень: 2,0 → 3,5')],
       [{ kind: 'fatigue_prompt', module: 'szmr' }, () => screen.getByText(/Похоже на усталость/)],
       [{ kind: 'save_error', message: 'Не удалось сохранить результаты.', canAbandon: true, what: 'block' }, () => screen.getByText('Не удалось сохранить результаты.')],
+      [{ kind: 'history_error' }, () => screen.getByText('Не удалось прочитать историю тренировок. Данные не изменены.')],
       [{ kind: 'wellbeing' }, () => screen.getByRole('button', { name: 'Пропустить' })],
       [{ kind: 'done', sessionId: 's', diagnostic: null, seriesTotal: null, indexDeferred: false, comparison: null, layout: 'keyboard' }, () => screen.getByText('Сессия завершена')],
     ];
@@ -1044,6 +1046,32 @@ describe('Session save errors and failures', () => {
     await click('Повторить');
     expect(c.retrySave).toHaveBeenCalledTimes(1);
     expect(screen.getByRole('button', { name: 'Пропустить' })).toBeTruthy();
+  });
+
+  it('history_error offers «Повторить» and «На главную»; Escape opens no pause (T-R78)', async () => {
+    const c = fakeDriver({ kind: 'history_error' });
+    c.retryHistory.mockImplementation(() => {
+      c.step = INSTRUCTION;
+      return Promise.resolve();
+    });
+    const { onExit } = await renderSession(c);
+    expect(screen.getByRole('heading', { name: 'Ошибка чтения' })).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toBe('Не удалось прочитать историю тренировок. Данные не изменены.');
+    await press('Escape');
+    expect(screen.queryByRole('heading', { name: 'Пауза' })).toBeNull();
+    await click('Повторить');
+    expect(c.retryHistory).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Нажми Enter, чтобы начать. Esc — пауза.')).toBeTruthy();
+    expect(onExit).not.toHaveBeenCalled();
+  });
+
+  it('«На главную» on history_error leaves the session (T-R78)', async () => {
+    const c = fakeDriver({ kind: 'history_error' });
+    const { onExit, platform } = await renderSession(c);
+    await click('На главную');
+    expect(onExit).toHaveBeenCalledTimes(1);
+    expect(c.retryHistory).not.toHaveBeenCalled();
+    expect(platform.fullscreen.at(-1)).toBe(false);
   });
 
   it('«Завершить сессию» on an unskippable save error leaves the session', async () => {
