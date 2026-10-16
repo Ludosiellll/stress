@@ -161,13 +161,14 @@ export const pomeh: ReactionModule<PomehParams> = {
 
   stressors: (p) => ({ noise: p.noise, audio: p.audio, gate: 'noisy', noiseGate: 'noisy' }),
 
+  /** The choice names the circles in key order (F9 note): the one on the first key first, so a swap starts with green. */
   instruction(layout, p, overload = false) {
     const keys = keysFor(layout, keyCount(p));
-    const [redKey, greenKey] = keysOfCircles(p);
+    const label = (k: number): string => keyLabel(keys[k] as InputKey);
+    const [first, second] = keysOfCircles(p)[0] === 0 ? (['Красный', 'зелёный'] as const) : (['Зелёный', 'красный'] as const);
     const rule =
       p.mode === 'choice'
-        ? `Красный круг в центре — ${keyLabel(keys[redKey] as InputKey)}, зелёный круг — ${keyLabel(keys[greenKey] as InputKey)}. ` +
-          'На остальные фигуры не реагируй.'
+        ? `${first} круг в центре — ${label(0)}, ${second} круг — ${label(1)}. На остальные фигуры не реагируй.`
         : `Когда в центре появится красный круг, нажми ${singleKeyLabel(layout)}. ` +
           'Иногда вокруг будут появляться другие фигуры, на них не реагируй.';
     return (

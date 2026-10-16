@@ -27,7 +27,7 @@ export interface Distractor {
   color: ColorId;
 }
 
-/** Radius of the central zone no figure enters, in side units. */
+/** Radius of the central zone no figure enters, in side units (at the stimulus's own size). */
 export const NOISE_EXCLUSION_RADIUS = 0.2;
 /** Flicker: 250 ms per shade, a 500 ms period (2 Hz, below the WCAG 2.3.1 flash threshold). */
 export const FLICKER_HALF_PERIOD_MS = 250;
@@ -67,39 +67,55 @@ function allowedPairs(p: VisualNoiseParams): { shape: ShapeId; color: ColorId }[
 }
 
 /**
- * A point for a figure of diameter `size` inside the box (with a size/2 margin) whose distance from the centre is at
- * least NOISE_EXCLUSION_RADIUS + size/2, so that the whole figure stays out of the central zone. After 20 misses: a
- * point on that circle at a random angle (the zone always wins over the box).
+ * Where the stimulus is (F9, T-R63): its centre (x, y) and its scale, in side units. The central zone no figure enters
+ * sits there and grows with it.
  */
-function place(rng: Rng, size: number, box: { halfW: number; halfH: number }): { x: number; y: number } {
+export interface NoiseZone {
+  x: number;
+  y: number;
+  scale: number;
+}
+
+/** An unshifted stimulus at its own size: the zone of 0.2.0 (diagnostics, Помехоустойчивость without a shift). */
+const CENTRED: NoiseZone = Object.freeze({ x: 0, y: 0, scale: 1 });
+
+/**
+ * A point for a figure of diameter `size` inside the box (with a size/2 margin) whose distance from the zone's centre
+ * is at least NOISE_EXCLUSION_RADIUS·scale + size/2, so that the whole figure stays out of the zone. After 20 misses: a
+ * point on that circle at a random angle (the zone always wins over the box). The candidates are the same whatever the
+ * zone: a figure moves only when the zone takes in, or lets go of, one of its candidates.
+ */
+function place(rng: Rng, size: number, box: { halfW: number; halfH: number }, zone: NoiseZone): { x: number; y: number } {
   const r = size / 2;
-  const minDist = NOISE_EXCLUSION_RADIUS + r;
+  const minDist = NOISE_EXCLUSION_RADIUS * zone.scale + r;
   for (let i = 0; i < PLACE_ATTEMPTS; i++) {
     const x = (2 * rng.next() - 1) * (box.halfW - r);
     const y = (2 * rng.next() - 1) * (box.halfH - r);
-    if (Math.hypot(x, y) >= minDist) return { x, y };
+    if (Math.hypot(x - zone.x, y - zone.y) >= minDist) return { x, y };
   }
   const angle = 2 * Math.PI * rng.next();
-  return { x: minDist * Math.cos(angle), y: minDist * Math.sin(angle) };
+  return { x: zone.x + minDist * Math.cos(angle), y: zone.y + minDist * Math.sin(angle) };
 }
 
 /**
  * The figures on screen `elapsedMs` after the noise started. Figure j in slot s is drawn from
  * createRng(deriveSeed(seed, `j:s`)): the same inputs give the same frame, and a figure stays put within its slot.
- * `box` is the half size of the canvas in side units (the shorter half side is 0.5).
+ * `box` is the half size of the canvas in side units (the shorter half side is 0.5); `zone` is where the stimulus is
+ * (default: the centre at scale 1, the frames of 0.2.0).
  */
 export function noiseFrame(
   p: VisualNoiseParams,
   seed: number,
   elapsedMs: number,
   box: { halfW: number; halfH: number },
+  zone: NoiseZone = CENTRED,
 ): Distractor[] {
   const pairs = allowedPairs(p);
   if (pairs.length === 0) throw new RangeError('noiseFrame: every shape and colour pair is excluded');
   return noiseSlots(p, elapsedMs).map((slot, j) => {
     const rng = createRng(deriveSeed(seed, `${String(j)}:${String(slot)}`));
     const size = SIZE_MIN + (SIZE_MAX - SIZE_MIN) * rng.next();
-    return { ...place(rng, size, box), size, ...rng.pick(pairs) };
+    return { ...place(rng, size, box, zone), size, ...rng.pick(pairs) };
   });
 }
 

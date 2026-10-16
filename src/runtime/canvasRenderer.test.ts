@@ -237,7 +237,7 @@ describe('createCanvasRenderer', () => {
     renderer.show({ kind: 'shape', shape: 'circle', color: 'red' });
     calls.length = 0;
     renderer.mark('рано');
-    // The lower third (F9, T-R33 note under Р23): the jittered task-switching cue reaches up into the upper one.
+    // The lower third (F9, Task 17 note under Р23): the jittered task-switching cue reaches up into the upper one.
     expect(named(calls, 'fillText').map((c) => [c.args, c.fillStyle])).toEqual([[['рано', 500, (5 * 500) / 6], MARK_COLOR]]);
     expect(ctx.font).toBe("bold 30px 'Segoe UI', Arial, sans-serif");
     expect([ctx.textAlign, ctx.textBaseline]).toEqual(['center', 'middle']);
@@ -364,7 +364,8 @@ describe('createCanvasRenderer', () => {
       renderer.cue?.(rule, { dx: 0, dy: 0.15, scale: 0.9 });
       const low = lastText();
       expect(low.y + low.half).toBeLessThan(300);
-      // Even the lowest stimulus, dy +0.15 at scale 1.1, ends 0.05 of the side above the mark's text.
+      // Even the lowest unframed stimulus, dy +0.15 at scale 1.1, ends 0.05 of the side above the mark's text. A framed
+      // Струп word reaches lower, but no stimulus shares a frame with the mark (T-R59).
       calls.length = 0;
       renderer.show({ kind: 'shape', shape: 'circle', color: 'red' }, { dx: 0, dy: 0.15, scale: 1.1 });
       const [, cy, r] = named(calls, 'arc')[0]?.args as [number, number, number];
@@ -634,6 +635,30 @@ describe('createCanvasRenderer', () => {
         const figures = noiseFrame(params, SEED, onset - t0, BOX).map((d) => COLORS[d.color]);
         expect(named(frame[0] ?? [], 'fill').map((c) => c.fillStyle)).toEqual([...figures, COLORS.red]);
       }
+    });
+
+    it('the central zone moves and grows with the jittered stimulus: no figure lies under it (T-R63)', () => {
+      const params: VisualNoiseParams = { ...NOISE, distractors: 14, farOnly: true };
+      const { renderer, calls } = setup({ w: 1000, h: 500, noise: { params, seed: 3 } });
+      const side = 500;
+      const jitter = { dx: 0.15, dy: -0.12, scale: 1.1 };
+      renderer.show(RED_CIRCLE, jitter);
+      renderer.setNoiseActive(true);
+      let moved = false;
+      for (let t = 0; t < 5000; t += 250) {
+        calls.length = 0;
+        renderer.frame(1000 + t);
+        const box = { halfW: 1, halfH: 0.5 };
+        const figures = noiseFrame(params, 3, t, box, { x: jitter.dx, y: jitter.dy, scale: jitter.scale });
+        if (JSON.stringify(figures) !== JSON.stringify(noiseFrame(params, 3, t, box))) moved = true;
+        // The figures as drawn: one fill each, then the stimulus.
+        expect(named(calls, 'fill').map((c) => c.fillStyle)).toEqual([...figures.map((d) => COLORS[d.color]), COLORS.red]);
+        for (const d of figures) {
+          const gap = Math.hypot(d.x - jitter.dx, d.y - jitter.dy) - d.size / 2;
+          expect(gap * side).toBeGreaterThanOrEqual(NOISE_EXCLUSION_RADIUS * jitter.scale * side - 1e-9);
+        }
+      }
+      expect(moved).toBe(true);
     });
 
     it('a canvas of zero size draws no noise; without noise options nothing changes', () => {

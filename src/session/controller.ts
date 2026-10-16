@@ -52,6 +52,7 @@ import {
   warmupDays,
   withBlock,
   type PastBlocks,
+  type SegmentSetup,
 } from './pastBlocks';
 import { blockRow, errorLogRow, logicItemRows, sessionRow, trialRows, wellbeingRow } from './rowsBuild';
 import { SaveQueue, type SaveOutcome, type Write } from './saveQueue';
@@ -153,10 +154,15 @@ interface SegmentRun {
    */
   levelBlockStored: boolean;
   /**
-   * A level-moving block of the segment is stored, whatever it measured: the next one is not the first for the
-   * re-adaptation mark (F9).
+   * The re-adaptation mark (F9) is still to come: no level-moving block of the segment that measured something (not
+   * counted as 0 after Esc, no dropped frames) is stored yet (T-R63).
    */
-  levelMoved: boolean;
+  readaptPending: boolean;
+  /**
+   * The setup of the module's last segment before this one (lastSetup at the segment's start, Р26); null: none, not a
+   * reaction module, or no history. The segment's own blocks never stand in for it.
+   */
+  setupBefore: SegmentSetup | null;
   /** Discards of the current block. */
   attempt: number;
   /** Diagnostics: the current block was already replayed once for timingUnreliable (I1). */
@@ -804,7 +810,8 @@ export class SessionController {
       clockStart: null,
       blocksDone: 0,
       levelBlockStored: false,
-      levelMoved: false,
+      readaptPending: true,
+      setupBefore: this.counted && this.past !== null && isReactionModule(segment.module) ? lastSetup(this.past, segment.module) : null,
       attempt: 0,
       unreliableReplayed: false,
       lastInstruction: null,
@@ -1030,8 +1037,10 @@ export class SessionController {
     if (b.discardedAt !== undefined) summary = { ...summary, discarded: { reason: 'user', progress: b.discardedAt } };
     // The free restarts since the segment's last stored block (F11).
     if (seg.restarts.length > 0) summary = { ...summary, restarts: [...seg.restarts] };
-    // The segment's first level-moving block after a change of keys, layout or Go/No-Go colours (F9).
-    if (this.isReadapt(b.module, active.paramsJson, !overload && !fixedLevel && !seg.levelMoved)) summary = { ...summary, readapt: true };
+    // The segment's first level-moving block that measured something, after a change of keys, layout or Go/No-Go colours
+    // (F9, T-R63).
+    const measured = !discarded && b.level?.timingUnreliable !== true;
+    if (this.isReadapt(active.paramsJson, !overload && !fixedLevel && measured && seg.readaptPending)) summary = { ...summary, readapt: true };
     const flags: BlockFlag[] = [];
     if (calibration) flags.push('calibration');
     if (b.level?.timingUnreliable === true) flags.push('timing_unreliable');
@@ -1198,7 +1207,7 @@ export class SessionController {
     this.sessionBlocks.push(b);
     if (moving || seg.segment.overload === 'finisher') seg.L = lAfter;
     if (moving && !b.flags.includes('timing_unreliable')) seg.levelBlockStored = true;
-    if (moving) seg.levelMoved = true;
+    if (moving && !b.flags.some((f) => f === 'timing_unreliable' || f === 'discarded')) seg.readaptPending = false;
     seg.blocksDone++;
     seg.attempt = 0;
     seg.unreliableReplayed = false;
@@ -1213,14 +1222,13 @@ export class SessionController {
   }
 
   /**
-   * Whether the segment's first level-moving block (`first`) of a training or free session is marked
-   * summaryJson.readapt (F9): its setup (key mapping, layout, Go/No-Go swap) is not that of the module's last segment
-   * (lastSetup, Р26). Never without the history (Р18) or an earlier block that names its layout.
+   * Whether the segment's first level-moving block that measured something (`first`) is marked summaryJson.readapt
+   * (F9, T-R63): its setup (key mapping, layout, Go/No-Go swap) is not that of the module's last segment (setupBefore,
+   * Р26). Never in a diagnostic, without the history (Р18) or without an earlier block that names its layout.
    */
-  private isReadapt(module: ModuleId, paramsJson: string, first: boolean): boolean {
-    if (!this.counted || this.past === null || !first || !isReactionModule(module)) return false;
-    const setup = setupOf(paramsJson);
-    const last = lastSetup(this.past, module);
+  private isReadapt(paramsJson: string, first: boolean): boolean {
+    const last = this.segment().setupBefore;
+    const setup = first && last !== null ? setupOf(paramsJson) : null;
     return setup !== null && last !== null && !sameSetup(setup, last);
   }
 

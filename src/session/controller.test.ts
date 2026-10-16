@@ -1847,6 +1847,28 @@ describe('SessionController — re-adaptation after a setup change (F9)', () => 
     expect(await marks(swap)).toEqual([true, undefined]);
   });
 
+  it('the mark waits for the first block that measured something: not counted as 0, no dropped frames (T-R63)', async () => {
+    const changed = JSON.stringify({ layout: 'keyboard', mapping: [...today()].reverse() });
+    // Dropped frames first: that block keeps the level and its setup, and the next one is marked.
+    const dropped = await begin(planFree('szmr', SEED), { repo: await withPast(changed) });
+    expect((await playReaction(dropped, perfectPlayer, (idx) => idx < 2)).view.flags).toContain('timing_unreliable');
+    await dropped.c.continueAfterSummary();
+    await playReaction(dropped);
+    expect(await marks(dropped)).toEqual([undefined, true]);
+    // Counted as 0 after Esc first: the next block is marked.
+    const escaped = await begin(planFree('szmr', SEED), { repo: await withPast(changed) });
+    escaped.c.ackInstruction();
+    expect(await escaped.c.discardBlock('user', 0.5)).toMatchObject({ kind: 'counted' });
+    await playReaction(escaped);
+    expect(await marks(escaped)).toEqual([undefined, true]);
+    // The same setup as the last segment: a block with dropped frames first changes nothing.
+    const same = await begin(planFree('szmr', SEED), { repo: await withPast(JSON.stringify({ layout: 'keyboard', mapping: today() })) });
+    await playReaction(same, perfectPlayer, (idx) => idx < 2);
+    await same.c.continueAfterSummary();
+    await playReaction(same);
+    expect(await marks(same)).toEqual([undefined, undefined]);
+  });
+
   it('without the history (Р18) nothing is marked', async () => {
     const repo = await withPast(JSON.stringify({ layout: 'keyboard', mapping: [...today()].reverse() }));
     vi.spyOn(repo, 'listBlocks').mockRejectedValueOnce(new Error('disk I/O error'));

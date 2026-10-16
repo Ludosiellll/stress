@@ -41,8 +41,9 @@ const RULE_WORD_RISE = 0.22;
 /**
  * The mark after a trial (F15, Р23): its colour, its height as a share of the shorter side, its centre at h · MARK_Y,
  * in the lower third. It shares a frame with no stimulus (T-R59), only with the task-switching cue (a press during the
- * cue lead), and the jittered cue (F9) reaches 0.43 of the side above the centre: it would cover a mark at h/6. Below
- * the centre a jittered stimulus ends 0.25 of the side away; the cue stays above it.
+ * cue lead), and the jittered cue (F9) reaches 0.43 of the side above the centre: it would cover a mark at h/6. The cue
+ * never goes below the centre. An unframed jittered stimulus ends 0.25 of the side below it; a framed Струп word reaches
+ * further, which T-R59 makes harmless.
  */
 export const MARK_COLOR = '#bdbdbd';
 const MARK_TEXT_SIZE = 0.06;
@@ -328,7 +329,9 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement, o: CanvasRendere
     const side = Math.min(w, h);
     if (look !== null && noise !== null && side > 0) {
       const box = { halfW: w / 2 / side, halfH: h / 2 / side };
-      for (const d of noiseFrame(noise.params, noise.seed, noiseMs, box)) drawDistractor(ctx, d, w / 2, h / 2, side);
+      // The figures keep out of the zone around the stimulus where this trial's jitter puts it (T-R63).
+      const zone = { x: place.dx, y: place.dy, scale: place.scale };
+      for (const d of noiseFrame(noise.params, noise.seed, noiseMs, box, zone)) drawDistractor(ctx, d, w / 2, h / 2, side);
     }
     drawStimulus(w, h, side);
     if (markText !== null) drawMark(ctx, markText, w, h, side);

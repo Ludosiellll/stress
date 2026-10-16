@@ -581,14 +581,18 @@ export function rdoBias(blocks: readonly Pick<BlockRow, 'module' | 'flags' | 'st
   });
 }
 
+/** The first block of a segment after a change of its setup (summaryJson.readapt, F9). */
+const readaptMarked = (b: BlockRow): boolean => parseObject(b.summaryJson)?.['readapt'] === true;
+
 /** Blocks that measured nothing to compare a segment by: counted as 0 after Esc (F11), or with dropped frames. */
 const COST_OUT: readonly BlockFlag[] = ['discarded', 'timing_unreliable'];
 
 /**
  * The cost of re-adapting (F9, spec §4.6): over the blocks of training and free sessions marked summaryJson.readapt
  * (the first level-moving block of a segment after a change of its setup) started in [now − OVERLOAD_DAYS days, now].
- * A segment is that block and the blocks that follow it in its session while the module stays the same; its other
- * blocks are those that move the level, without COST_OUT. It counts with 2 or more of them and clean hit RTs on both
+ * A segment is that block and the blocks that follow it in its session while the module stays the same, up to the next
+ * block marked readapt (another segment of the module, T-R63); its other blocks are those that move the level, without
+ * COST_OUT. It counts with 2 or more of them and clean hit RTs on both
  * sides: s(first) − mean s(others), and the median of the first's cleanHitRts minus that of the others' together. A
  * first block in COST_OUT measured nothing. Per module, the means over its segments, from READAPT_MIN_SEGMENTS on.
  */
@@ -601,11 +605,11 @@ export function readaptCosts(past: PastBlocks, now: Date): ReadaptCost[] {
     const t = Date.parse(first.startedAt);
     const kind = past.kinds.get(first.sessionId);
     if (!(t >= start && t <= end) || kind === undefined || !isCountedSession(kind)) return;
-    if (parseObject(first.summaryJson)?.['readapt'] !== true || first.flags.some((f) => COST_OUT.includes(f))) return;
+    if (!readaptMarked(first) || first.flags.some((f) => COST_OUT.includes(f))) return;
     const others: BlockRow[] = [];
     for (let j = i + 1; j < blocks.length; j++) {
       const next = blocks[j] as BlockRow;
-      if (next.sessionId !== first.sessionId || next.module !== first.module) break;
+      if (next.sessionId !== first.sessionId || next.module !== first.module || readaptMarked(next)) break;
       if (movesLevel(next.flags) && !next.flags.some((f) => COST_OUT.includes(f))) others.push(next);
     }
     const firstRts = readCleanHits(first.summaryJson) ?? [];

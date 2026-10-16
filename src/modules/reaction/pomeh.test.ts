@@ -331,10 +331,13 @@ describe('the segment mapping (F9)', () => {
         expect(t.expected).toEqual({ kind: 'press', key: keys[t.stimulus.color === 'red' ? 1 : 0] });
       }
     }
+    // The pairs in key order, F then J, as the other modules list them (F9 note).
     expect(pomeh.instruction('keyboard', p)).toBe(
-      'Красный круг в центре — J, зелёный круг — F. На остальные фигуры не реагируй.' +
+      'Зелёный круг в центре — F, красный круг — J. На остальные фигуры не реагируй.' +
         ' Вместе с фигурами будет мерцать фон. В части блока будут звуковые помехи, надень наушники.',
     );
+    expect(pomeh.instruction('pult', p)).toMatch(/^Зелёный круг в центре — ←, красный круг — →\. /);
+    expect(pomeh.instruction('keyboard', pomeh.params(20))).toMatch(/^Красный круг в центре — F, зелёный круг — J\. /);
     // The same draws, other keys.
     const canonical = pomeh.generateBlock(pomeh.params(20), createRng(5), 'keyboard', 40);
     const mapped = pomeh.generateBlock(p, createRng(5), 'keyboard', 40);

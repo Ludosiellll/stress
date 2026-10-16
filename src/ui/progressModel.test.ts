@@ -411,6 +411,13 @@ describe('the cost of re-adaptation (F9)', () => {
     expect(third(segment('x', '2026-10-20', first, rest))).toBe(0);
   });
 
+  it('the segment stops at the next block marked readapt: another segment of the module in the same session (T-R63)', () => {
+    const good = [...segment('a', '2026-10-05', first, rest), ...segment('b', '2026-10-15', first, rest)];
+    // Session c plays two segments of СЗМР: the first has one block after its first, too few; the second counts.
+    const twice = [...segment('c', '2026-10-20', first, [rest[0] as Played]), ...segment('c', '2026-10-21', first, rest)];
+    expect(readaptCosts(pastBlocks([...good, ...twice], sessions), now)[0]?.segments).toBe(3);
+  });
+
   it('the segment stops at the next session; damaged summaries are left out', () => {
     const blocks = [
       ...segment('a', '2026-10-05', first, [rest[0] as Played]),

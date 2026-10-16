@@ -63,6 +63,33 @@ describe('noiseFrame', () => {
     );
   });
 
+  it('around a jittered stimulus the zone is centred on it and scaled with it, inside the box (T-R63)', () => {
+    const zoneArb = fc.record({
+      x: fc.double({ min: -0.15, max: 0.15, noNaN: true }),
+      y: fc.double({ min: -0.15, max: 0.15, noNaN: true }),
+      scale: fc.double({ min: 0.9, max: 1.1, noNaN: true }),
+    });
+    fc.assert(
+      fc.property(paramsArb, seedArb, elapsedArb, boxArb, zoneArb, (p, seed, t, box, zone) => {
+        for (const d of noiseFrame(p, seed, t, box, zone)) {
+          expect(Math.hypot(d.x - zone.x, d.y - zone.y)).toBeGreaterThanOrEqual(NOISE_EXCLUSION_RADIUS * zone.scale + d.size / 2 - EPS);
+          expect(Math.abs(d.x) + d.size / 2).toBeLessThanOrEqual(box.halfW + EPS);
+          expect(Math.abs(d.y) + d.size / 2).toBeLessThanOrEqual(box.halfH + EPS);
+        }
+      }),
+      { numRuns: 1000 },
+    );
+  });
+
+  it('the zone in the centre at scale 1 gives the frames of 0.2.0: diagnostics and an unshifted stimulus keep them', () => {
+    fc.assert(
+      fc.property(paramsArb, seedArb, elapsedArb, boxArb, (p, seed, t, box) => {
+        expect(noiseFrame(p, seed, t, box, { x: 0, y: 0, scale: 1 })).toEqual(noiseFrame(p, seed, t, box));
+      }),
+      { numRuns: 1000 },
+    );
+  });
+
   it('never a forbidden pair; farOnly: no circles and no colour of a forbidden pair', () => {
     fc.assert(
       fc.property(paramsArb, seedArb, elapsedArb, (p, seed, t) => {
