@@ -104,6 +104,11 @@ describe('errorLine (F1)', () => {
 describe('the window floor and the overload band (F3)', () => {
   it('floorLine says the window rests on the personal floor and names the nominal one', () => {
     expect(floorLine(412, 298)).toBe('Окно ответа: 412 мс — твой минимум для этой нагрузки (по уровню — 298 мс).');
+    expect(floorLine(412, 298, false)).toBe(floorLine(412, 298));
+  });
+
+  it('floorLine of an overload block: the floor is its own level\'s, not that of the load it plays', () => {
+    expect(floorLine(412, 298, true)).toBe('Окно ответа: 412 мс — твой минимум в обычном блоке этого уровня (по уровню — 298 мс).');
   });
 
   it('overloadBandPrefix: the sound, the next band\'s load and a level that does not move (Р16)', () => {

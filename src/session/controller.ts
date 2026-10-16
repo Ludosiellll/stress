@@ -256,8 +256,8 @@ interface RunSummary {
 /** The floor line of a reaction block whose window rested on the personal floor (F3); none otherwise. */
 function floorLines(plan: BlockPlan): string[] {
   if (plan.kind !== 'reaction' || plan.load === null) return [];
-  const { floorMs, nominalWindowMs } = plan.load;
-  return floorMs !== null && floorMs > nominalWindowMs ? [floorLine(floorMs, nominalWindowMs)] : [];
+  const { floorMs, nominalWindowMs, loadBand } = plan.load;
+  return floorMs !== null && floorMs > nominalWindowMs ? [floorLine(floorMs, nominalWindowMs, loadBand !== null)] : [];
 }
 
 /** The period an РДО block played (F14), for its speed line; null for the other blocks. */

@@ -1484,6 +1484,32 @@ describe('SessionController — the personal window floor and the load bands (F3
     expect(view.lines.slice(-2)).toEqual(['Пропуски: 0', floor]);
   });
 
+  it('an overload block names the floor of its own level, not of the load it plays', async () => {
+    const repo = new MemoryRepository();
+    for (const [i, id] of ['y1', 'y2'].entries()) {
+      await repo.createSession(session(id, minutesAfter(YESTERDAY, 10 * i), { kind: 'free', endedAt: minutesAfter(YESTERDAY, 10 * i + 5) }));
+      await repo.addBlock(playedBlock(`${id}b`, id, 10 * i + 1, { module: 'pzmr', lBefore: 10, lAfter: 10, band: 0, rts: Array<number>(10).fill(300) }), [], []);
+    }
+    const finisher: SessionPlan = {
+      kind: 'training',
+      seed: 1,
+      phase: 'development',
+      segments: [{ module: 'pzmr', budgetMs: 1, purpose: 'finisher', overload: 'finisher' }],
+    };
+    const h = await begin(finisher, { repo: await rebuilt(repo) });
+    h.c.ackInstruction();
+    const step = expectStep(h.c, 'reaction_block');
+    // The finisher plays L_saved 10 (band 2) with band 3's load and band 2's window: the floor 1.2 × 300 over the nominal.
+    expect(step.L).toBe(10);
+    const nominal = pzmr.params(10).windowMs;
+    expect(step.specs[0]?.windowMs).toBe(360);
+    await h.c.submitReaction(playTimeline(step.specs, perfectPlayer));
+    const { view } = expectStep(h.c, 'summary');
+    expect(view.flags).toContain('overload');
+    expect(view.lines).toContain(`Окно ответа: 360 мс — твой минимум в обычном блоке этого уровня (по уровню — ${String(nominal)} мс).`);
+    expect(view.lines.some((l) => l.includes('для этой нагрузки'))).toBe(false);
+  });
+
   it('no floor line while the window is the nominal one', async () => {
     const h = await begin(planFree('pzmr', 1));
     const { view } = await playReaction(h);

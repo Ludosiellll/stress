@@ -181,9 +181,13 @@ export function overloadBandPrefix(bandLabel: string): string {
   return `Блок с перегрузкой, со звуковыми помехами. Надень наушники. Перегрузка: нагрузка следующей полосы — ${bandLabel}. Уровень не меняется. `;
 }
 
-/** The summary line of a block whose window rested on the personal floor (F3): windowMs > nominalWindowMs. */
-export function floorLine(windowMs: number, nominalWindowMs: number): string {
-  return `Окно ответа: ${String(windowMs)} мс — твой минимум для этой нагрузки (по уровню — ${String(nominalWindowMs)} мс).`;
+/**
+ * The summary line of a block whose window rested on the personal floor (F3): windowMs > nominalWindowMs. An overload
+ * block plays the next band's load with its own band's window, so its floor is that of a normal block at its level.
+ */
+export function floorLine(windowMs: number, nominalWindowMs: number, overload = false): string {
+  const whose = overload ? 'в обычном блоке этого уровня' : 'для этой нагрузки';
+  return `Окно ответа: ${String(windowMs)} мс — твой минимум ${whose} (по уровню — ${String(nominalWindowMs)} мс).`;
 }
 
 /** The level line of a warm-up block (F5): it plays at L_saved − 1 and moves nothing. */
