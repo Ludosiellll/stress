@@ -293,32 +293,32 @@ describe('generateBlockItems', () => {
 });
 
 describe('STRUCT_D_MAX', () => {
-  it('pins the ceilings of the new families (Справочник F12)', () => {
-    expect(STRUCT_D_MAX).toMatchObject({ letters: 1400, addsub: 1450, primes: 1500, powstep: 1700, twostep: 1800, digitsum: 1700 });
+  it('the ceilings of the new families are what their generation ranges reach (spec §4.8, T-R68)', () => {
+    // The table's D_struct terms at their highest over its own ranges: letters 1000 + 200 (two series) + 100 (a step of
+    // 3 or more) + 50 (both falling); addsub 1050 + 200 (a cycle of 3) + 100 (above 100; such a series never goes below
+    // 0); primes 1150 + 100 + 100 + 50 (P(22) + 5 = 88: never above 100); powstep 1300 + 100 + 50 + 350 (21³ with a
+    // negative first term); twostep 1400 + 100 + 100 + 300 (above 1000, only growing); digitsum 1350 + 100 + 100 + 100
+    // (never negative, never above 1000).
+    expect(STRUCT_D_MAX).toMatchObject({ letters: 1350, addsub: 1350, primes: 1400, powstep: 1800, twostep: 1900, digitsum: 1650 });
   });
 
-  it('bounds every generated candidate of a training family', () => {
+  it('bounds every generated candidate of every family', () => {
     fc.assert(
-      fc.property(
-        fc.constantFrom(...TRAINING_FAMILIES),
-        fc.integer({ min: 0, max: 2 ** 31 - 1 }),
-        fc.integer({ min: 0, max: 199 }),
-        (f, seed, attempt) => {
-          expect(attemptItem(f, seed, attempt)?.difficulty ?? 0).toBeLessThanOrEqual(STRUCT_D_MAX[f]);
-        },
-      ),
-      { numRuns: 2000 },
+      fc.property(family, fc.integer({ min: 0, max: 2 ** 31 - 1 }), fc.integer({ min: 0, max: 199 }), (f, seed, attempt) => {
+        expect(attemptItem(f, seed, attempt)?.difficulty ?? 0).toBeLessThanOrEqual(STRUCT_D_MAX[f]);
+      }),
+      { numRuns: 1000 * ALL_FAMILIES.length },
     );
-  });
+  }, 120_000);
 
-  it('is reached by the old families', () => {
-    for (const f of OLD_FAMILIES) {
+  it('is reached by every family', () => {
+    for (const f of ALL_FAMILIES) {
       const reached = Array.from({ length: 50 }, (_, seed) => seed).some(
         (seed) => generateItem(f, 5000, seed).difficulty === STRUCT_D_MAX[f],
       );
       expect(reached, f).toBe(true);
     }
-  }, 60_000);
+  }, 120_000);
 });
 
 describe('generateTrainingItem', () => {

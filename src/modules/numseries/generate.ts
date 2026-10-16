@@ -5,8 +5,9 @@ import { isUnique } from './check';
 import { TRAINING_FAMILIES, fitFamily, generateTerms, structDifficulty, type FamilyId } from './families';
 
 /**
- * Highest difficulty a candidate of each family reaches under its generation ranges (R36); for the new families the
- * ceiling of the table of spec §4.8 (Справочник F12). Above it, only a shorter time limit makes items harder.
+ * Highest difficulty a candidate of each family reaches under its generation ranges (R36), the new families too: the
+ * «Потолок D» column of spec §4.8 did not match the table's own ranges and D_struct terms, so it gives way to them
+ * (T-R68). Above it, only a shorter time limit makes items harder.
  */
 export const STRUCT_D_MAX: Readonly<Record<FamilyId, number>> = {
   arith: 950,
@@ -17,12 +18,12 @@ export const STRUCT_D_MAX: Readonly<Record<FamilyId, number>> = {
   linrec: 1650,
   powers: 1500,
   opcycle: 1700,
-  letters: 1400,
-  addsub: 1450,
-  primes: 1500,
-  powstep: 1700,
-  twostep: 1800,
-  digitsum: 1700,
+  letters: 1350,
+  addsub: 1350,
+  primes: 1400,
+  powstep: 1800,
+  twostep: 1900,
+  digitsum: 1650,
 };
 
 const MAX_ABS_TERM = 100000;
