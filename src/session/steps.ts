@@ -278,6 +278,11 @@ export function periodSeconds(periodMs: number): string {
   return String(periodMs / 1000).replace('.', ',');
 }
 
+/** The speed a training or free РДО block plays, at the end of its instruction (T-R61): «Скорость: оборот за 2 с.» */
+export function rdoSpeedNote(periodMs: number): string {
+  return `Скорость: оборот за ${periodSeconds(periodMs)} с.`;
+}
+
 /**
  * РДО (F14, Р24): «Скорость: оборот за 1,5 с · смещение −18 мс (раньше отметки) · точно 12 из 20 · рано 5, поздно 3.»
  * The bias is the signed mean error in whole ms, «0 мс» without a side; a block without any timed answer has none.

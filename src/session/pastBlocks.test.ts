@@ -2,7 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { MemoryRepository } from '../data/memoryRepository';
 import { block, session } from '../data/repository.contract';
 import type { BlockRow } from '../data/rows';
-import { appendPast, cleanHitsByBand, pastBlocks, readCleanHits, testFormatRuns, testFormatRunsAt, warmupDays, withBlock } from './pastBlocks';
+import {
+  appendPast,
+  cleanHitsByBand,
+  pastBlocks,
+  rdoCycleCount,
+  readCleanHits,
+  testFormatRuns,
+  testFormatRunsAt,
+  warmupDays,
+  withBlock,
+} from './pastBlocks';
 import type { TestFormatMetrics } from './testFormat';
 
 const hits = (rts: unknown): string => JSON.stringify({ meanRt: 300, cleanHitRts: rts });
@@ -217,5 +227,39 @@ describe('testFormatRuns', () => {
     expect(testFormatRunsAt(past, 'pzmr').map((r) => r.at)).toEqual(['2026-10-10T09:01:00', '2026-10-11T09:01:00']);
     expect(testFormatRuns(past, 'szmr')).toEqual([metrics(300)]);
     expect(testFormatRuns(past, 'rdo')).toEqual([]);
+  });
+});
+
+describe('rdoCycleCount (T-R61)', () => {
+  const sessions = [
+    session('t', '2026-10-10T09:00:00'),
+    session('f', '2026-10-11T09:00:00', { kind: 'free' }),
+    session('d', '2026-10-12T09:00:00', { kind: 'diagnostic' }),
+  ];
+  const rdo = (id: string, sessionId: string, over: Partial<BlockRow> = {}): BlockRow =>
+    block(id, sessionId, '2026-10-10T09:01:00', { module: 'rdo', ...over });
+
+  it('counts the РДО blocks of training and free sessions that played a speed of the cycle', () => {
+    const past = pastBlocks(
+      [
+        rdo('a', 't'),
+        rdo('b', 'f', { flags: ['calibration'] }),
+        // An overload block of a mix or a finisher plays the speed of its slot; frames dropped or not, it played it.
+        rdo('c', 't', { flags: ['overload'] }),
+        rdo('e', 'f', { flags: ['timing_unreliable', 'fatigued'] }),
+        // Left out: a test-format run (3000 ms), a block counted as 0 after Esc, a diagnostic, another module, an
+        // unknown session.
+        rdo('g', 't', { flags: ['test_format'] }),
+        rdo('h', 'f', { flags: ['discarded'] }),
+        rdo('i', 'd'),
+        block('k', 't', '2026-10-10T09:02:00', { module: 'pzmr' }),
+        rdo('m', 'gone'),
+      ],
+      sessions,
+    );
+    expect(rdoCycleCount(past)).toBe(4);
+    appendPast(past, rdo('n', 'now'), 'free');
+    expect(rdoCycleCount(past)).toBe(5);
+    expect(rdoCycleCount(pastBlocks([], sessions))).toBe(0);
   });
 });

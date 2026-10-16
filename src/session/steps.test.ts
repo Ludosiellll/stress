@@ -17,6 +17,7 @@ import {
   OVERLOAD_SOUND_PREFIX,
   overloadBandPrefix,
   plural,
+  rdoSpeedNote,
   reactionLines,
   RESTART_USED_HINT,
   seriesDiagnosticInstruction,
@@ -243,6 +244,17 @@ describe('speedLine (F14)', () => {
   it('a bias that rounds to 0 has no side', () => {
     expect(speedLine(rdo(0.3), 3000)).toBe('Скорость: оборот за 3 с · смещение 0 мс · точно 12 из 20 · рано 5, поздно 3.');
     expect(speedLine(rdo(-0.4), 2000)).toBe('Скорость: оборот за 2 с · смещение 0 мс · точно 12 из 20 · рано 5, поздно 3.');
+  });
+});
+
+describe('rdoSpeedNote (T-R61)', () => {
+  it('the speed a training or free РДО block plays, for its instruction', () => {
+    expect([1500, 2000, 3000, 4000].map(rdoSpeedNote)).toEqual([
+      'Скорость: оборот за 1,5 с.',
+      'Скорость: оборот за 2 с.',
+      'Скорость: оборот за 3 с.',
+      'Скорость: оборот за 4 с.',
+    ]);
   });
 });
 

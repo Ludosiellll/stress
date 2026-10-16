@@ -12,6 +12,14 @@ describe('Instruction', () => {
     expect(screen.getByText('Нажми Enter, чтобы начать. Esc — пауза.')).toBeTruthy();
   });
 
+  it('keeps a number with its unit on one line (T-R26, T-R61)', () => {
+    const text = 'Нажми Пробел точно на отметке. Скорость: оборот за 1,5 с. Нагрузка: интервал 0,3–3 с.';
+    render(<Instruction title="РДО" text={text} keysHint="Пробел" onStart={vi.fn()} />);
+    expect(document.querySelector('.instruction-text')?.textContent).toBe(
+      'Нажми Пробел точно на отметке. Скорость: оборот за 1,5 с. Нагрузка: интервал 0,3–3 с.',
+    );
+  });
+
   it('the button starts too', () => {
     const onStart = vi.fn();
     render(<Instruction title="ПЗМР" text="Жми пробел." keysHint="Пробел" onStart={onStart} />);

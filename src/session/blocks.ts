@@ -38,7 +38,7 @@ import { generateBlockItems, generateItem, type TimedSeriesItem } from '../modul
 import { bandIndex, stressorsOf, withFloor, type BandFields, type BlockStressors, type ReactionModule } from '../modules/reaction/common';
 import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
 import { gonogo, isSwappedSegment, swapColours } from '../modules/reaction/gonogo';
-import { rdo, rdoPeriod } from '../modules/reaction/rdo';
+import { rdo, rdoCyclePeriod, rdoPeriod, type RdoParams } from '../modules/reaction/rdo';
 import { bandModules, reactionModules } from '../modules/registry';
 import {
   generateGorbovTable,
@@ -56,6 +56,7 @@ import {
   OVERLOAD_PREFIX,
   OVERLOAD_SOUND_PREFIX,
   overloadBandPrefix,
+  rdoSpeedNote,
   SERIES_INSTRUCTION_TRAINING,
   SERIES_KEYS_HINT,
   seriesDiagnosticInstruction,
@@ -170,6 +171,11 @@ export type BlockPlan =
       /** A test-format run (F4): the frozen diagnostic parameters, its own instruction. */
       testFormat: boolean;
       /**
+       * A diagnostic block or a test-format run: DIAGNOSTIC_PARAMS as they are, with none of the training rules (spec
+       * §2.0); its instruction is that of 0.2.0 (an РДО one names no speed, T-R61).
+       */
+      frozen: boolean;
+      /**
        * The mark rate of its trials (F15): the plan's in a training or free block of FEEDBACK_MODULES; 'none' in a
        * warm-up, a test-format run, a diagnostic and РДО.
        */
@@ -203,6 +209,12 @@ export interface PlanContext {
   floors: WindowFloors | null;
   /** The plan's mark rate (F15); planBlock keeps it to the blocks that have marks. */
   feedback: FeedbackRate;
+  /**
+   * The counted РДО blocks stored before this block (rdoCycleCount, T-R61): a training or free РДО block plays the
+   * next speed of the cycle. null: the history could not be read (Р18), or a diagnostic; then the segment's own order
+   * (rdoPeriod).
+   */
+  rdoCount: number | null;
 }
 
 /** The modules whose training and free blocks mark a trial after it (F15); not РДО: its dial shows the error. */
@@ -245,6 +257,7 @@ export function planBlock(segment: Segment, segmentL: number, blockIndex: number
       overload,
       load,
       testFormat,
+      frozen,
       feedback: marked ? ctx.feedback : 'none',
     };
   }
@@ -277,7 +290,7 @@ export function planBlock(segment: Segment, segmentL: number, blockIndex: number
  * The parameters and the load of a reaction block at L. A diagnostic and a test-format run (`frozen`) play the frozen
  * 0.2.0 parameters, whatever params(L) becomes (training-fixes spec §2.0, F4): no floor, no Go/No-Go colour swap
  * (T-R42), no РДО speed rotation and none of the training rules that come with the bands. An РДО block plays the
- * tolerance of its L (an overload block's L is already 3 higher) at the speed of its slot (F14).
+ * tolerance of its L (an overload block's L is already 3 higher) at the next speed of the cycle (rdoBlockPeriod).
  */
 function reactionBlock(
   module: ReactionModuleId,
@@ -288,8 +301,16 @@ function reactionBlock(
   ctx: PlanContext,
 ): { params: unknown; load: BlockLoad | null } {
   if (frozen) return { params: DIAGNOSTIC_PARAMS[module], load: null };
-  if (isBandModule(module)) return bandBlock(module, L, overload, ctx);
-  return { params: { ...rdo.params(L), periodMs: rdoPeriod(ctx.planSeed, ctx.segmentIndex, blockIndex) }, load: null };
+  if (module === 'rdo') return { params: { ...rdo.params(L), periodMs: rdoBlockPeriod(blockIndex, ctx) }, load: null };
+  return bandBlock(module, L, overload, ctx);
+}
+
+/**
+ * The speed of a training or free РДО block: the next of the cycle, counted over the history and this session
+ * (rdoCyclePeriod, T-R61); without the history (Р18), the order of its segment (rdoPeriod, F14).
+ */
+function rdoBlockPeriod(blockIndex: number, ctx: PlanContext): number {
+  return ctx.rdoCount === null ? rdoPeriod(ctx.planSeed, ctx.segmentIndex, blockIndex) : rdoCyclePeriod(ctx.rdoCount);
 }
 
 /**
@@ -376,11 +397,12 @@ export function blockInstruction(plan: BlockPlan, layout: LayoutId): { text: str
 
 function plainInstruction(plan: BlockPlan, layout: LayoutId): { text: string; keysHint: string } {
   switch (plan.kind) {
-    case 'reaction':
-      return {
-        text: reactionModules[plan.module].instruction(layout, plan.params, plan.overload),
-        keysHint: plan.keys.map(keyLabel).join(', '),
-      };
+    case 'reaction': {
+      const text = reactionModules[plan.module].instruction(layout, plan.params, plan.overload);
+      // A training or free РДО block names the speed it plays (T-R61).
+      const speed = plan.module === 'rdo' && !plan.frozen ? ` ${rdoSpeedNote((plan.params as RdoParams).periodMs)}` : '';
+      return { text: text + speed, keysHint: plan.keys.map(keyLabel).join(', ') };
+    }
     case 'table': {
       // Tasks 2–3 of a series (every series task but the first) play the table of task 1 (F10).
       const same = plan.table === 'series' && plan.task !== gorbovTaskForRun(0);

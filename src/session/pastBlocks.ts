@@ -106,6 +106,27 @@ export function testFormatRuns(past: PastBlocks, module: TestFormatId): TestForm
 }
 
 /**
+ * РДО blocks that take no step of the speed cycle (T-R61): a test-format run plays 3000 ms (F4), and a block counted as
+ * 0 after Esc did not play its speed through (F11), so the next block plays that speed again.
+ */
+const NOT_CYCLE_FLAGS: readonly BlockFlag[] = ['test_format', 'discarded'];
+
+/**
+ * How far the РДО speed cycle has gone (T-R61): the РДО blocks of training and free sessions without NOT_CYCLE_FLAGS.
+ * Overload blocks count: one of a mix or a finisher plays the next speed of the cycle at its raised tolerance. A
+ * diagnostic is not a counted session. The next training or free block plays rdoCyclePeriod of this count.
+ */
+export function rdoCycleCount(past: PastBlocks): number {
+  let count = 0;
+  for (const row of past.blocks) {
+    if (row.module !== 'rdo' || row.flags.some((f) => NOT_CYCLE_FLAGS.includes(f))) continue;
+    const kind = past.kinds.get(row.sessionId);
+    if (kind !== undefined && isCountedSession(kind)) count++;
+  }
+  return count;
+}
+
+/**
  * Blocks whose hits never feed the window floor (F3, Справочник): overload blocks play another band's load, a
  * timing_unreliable block measured nothing, a test-format run plays the frozen diagnostic parameters, not a
  * training band (F4), and a block counted as 0 after Esc stores no hits (F11, T-R4). Warm-up, fatigued and

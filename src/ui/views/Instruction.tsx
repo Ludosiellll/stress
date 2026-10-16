@@ -1,3 +1,4 @@
+import { noBreakUnits } from '../format';
 import { fromControl, isEnter, useKeyDown } from '../keys';
 
 export interface InstructionProps {
@@ -7,7 +8,7 @@ export interface InstructionProps {
   onStart: () => void;
 }
 
-/** What to do in the next block and with which keys; Enter (or the button) starts it. */
+/** What to do in the next block and with which keys; Enter (or the button) starts it. A number keeps its unit (T-R26). */
 export default function Instruction({ title, text, keysHint, onStart }: InstructionProps) {
   useKeyDown((e) => {
     if (!isEnter(e) || fromControl(e)) return;
@@ -18,7 +19,7 @@ export default function Instruction({ title, text, keysHint, onStart }: Instruct
   return (
     <div className="screen-center instruction">
       <h2 tabIndex={-1}>{title}</h2>
-      <p className="instruction-text">{text}</p>
+      <p className="instruction-text">{noBreakUnits(text)}</p>
       <p>Управление: {keysHint}</p>
       <p className="hint">Нажми Enter, чтобы начать. Esc — пауза.</p>
       <div className="actions">

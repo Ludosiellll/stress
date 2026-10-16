@@ -22,7 +22,7 @@ import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
 import { gonogo, isSwappedSegment } from '../modules/reaction/gonogo';
 import { pomeh } from '../modules/reaction/pomeh';
 import { pzmr } from '../modules/reaction/pzmr';
-import { RDO_PERIODS, rdo, rdoPeriod } from '../modules/reaction/rdo';
+import { RDO_PERIODS, rdo, rdoCyclePeriod, rdoPeriod } from '../modules/reaction/rdo';
 import { szmr } from '../modules/reaction/szmr';
 import { bandModules, reactionModules } from '../modules/registry';
 import { generateGorbovTable, gorbovMetrics, gorbovParams, tableInstruction } from '../modules/tables/gorbov';
@@ -52,7 +52,7 @@ import {
 } from './blocks';
 import { appendPast, pastBlocks } from './pastBlocks';
 import { logicItemRows } from './rowsBuild';
-import { MEMORY_SPAN_INSTRUCTION, OVERLOAD_PREFIX, OVERLOAD_SOUND_PREFIX, overloadBandPrefix, type StepOf } from './steps';
+import { MEMORY_SPAN_INSTRUCTION, OVERLOAD_PREFIX, OVERLOAD_SOUND_PREFIX, overloadBandPrefix, rdoSpeedNote, type StepOf } from './steps';
 import { testFormatInstruction } from './testFormat';
 
 const counts: Record<Outcome, number> = { hit: 0, wrong: 0, miss: 0, late: 0, false_start: 0, commission: 0, correct_reject: 0, early: 0, timing_late: 0 };
@@ -72,10 +72,13 @@ const summary = (over: Partial<ReactionSummary>): ReactionSummary => ({
   ...over,
 });
 
-/** A plan seed and segment index whose Go/No-Go colours are swapped (F8), or are not; no window floors (F3), no marks (F15). */
-function segmentWhere(swapped: boolean): Pick<PlanContext, 'planSeed' | 'segmentIndex' | 'floors' | 'feedback'> {
+/**
+ * A plan seed and segment index whose Go/No-Go colours are swapped (F8), or are not; no window floors (F3), no marks
+ * (F15), no РДО history (the per-segment speeds, T-R61).
+ */
+function segmentWhere(swapped: boolean): Pick<PlanContext, 'planSeed' | 'segmentIndex' | 'floors' | 'feedback' | 'rdoCount'> {
   for (let planSeed = 1; planSeed <= 100; planSeed++) {
-    if (isSwappedSegment(planSeed, 2) === swapped) return { planSeed, segmentIndex: 2, floors: null, feedback: 'none' };
+    if (isSwappedSegment(planSeed, 2) === swapped) return { planSeed, segmentIndex: 2, floors: null, feedback: 'none', rdoCount: null };
   }
   throw new Error('no such plan seed');
 }
@@ -317,7 +320,7 @@ describe('РДО speeds (F14)', () => {
     return plan.params;
   };
 
-  it('a training or free block plays the tolerance of its level at the speed rdoPeriod gives its segment and index', () => {
+  it('without the history (Р18) a training or free block plays the tolerance of its level at the speed rdoPeriod gives its segment and index', () => {
     for (const purpose of ['reaction', 'free', 'finisher'] as const) {
       for (const blockIndex of [0, 1, 2, 3, 4, 7]) {
         expect(played(seg(purpose), 6, blockIndex)).toEqual({ ...rdo.params(6), periodMs: rdoPeriod(ctx.planSeed, ctx.segmentIndex, blockIndex) });
@@ -346,6 +349,38 @@ describe('РДО speeds (F14)', () => {
       }
     }
     expect(DIAGNOSTIC_PARAMS.rdo).toMatchObject({ periodMs: 3000, toleranceMs: 60 });
+  });
+
+  it('with the history read, a block plays the next speed of the cycle, whatever its segment and index (T-R61)', () => {
+    for (const purpose of ['reaction', 'free', 'finisher'] as const) {
+      for (const [rdoCount, blockIndex] of [[0, 0], [1, 0], [7, 3], [42, 1]] as const) {
+        expect(played(seg(purpose), 6, blockIndex, { ...ctx, rdoCount })).toEqual({ ...rdo.params(6), periodMs: rdoCyclePeriod(rdoCount) });
+      }
+    }
+    // An overload block of a mix takes the next speed too, at the tolerance of L + 3.
+    expect(played(seg('reaction', 'mix'), 6, 1, { ...ctx, rdoCount: 5 })).toEqual({ ...rdo.params(9), periodMs: rdoCyclePeriod(5) });
+    // The diagnostic and a run stay at 3000 ms.
+    const diagnosticSeg = planDiagnostic(1).segments.find((s) => s.module === 'rdo') as Segment;
+    expect(played(diagnosticSeg, 0, 0, { ...ctx, diagnostic: true, rdoCount: 1 })).toBe(DIAGNOSTIC_PARAMS.rdo);
+    expect(played(runSegment('rdo'), 12, 0, { ...ctx, rdoCount: 1 })).toBe(DIAGNOSTIC_PARAMS.rdo);
+  });
+
+  it('the instruction of a training or free block names its speed; a diagnostic and a run do not (T-R61)', () => {
+    const count = [0, 1, 2, 3].find((k) => rdoCyclePeriod(k) === 1500) as number;
+    const plan = reactionPlan(seg('free'), 4, { ...ctx, rdoCount: count });
+    expect(blockInstruction(plan, 'keyboard').text).toBe(`${rdo.instruction('keyboard', rdo.params(4))} Скорость: оборот за 1,5 с.`);
+    const two = [0, 1, 2, 3].find((k) => rdoCyclePeriod(k) === 2000) as number;
+    const over = planBlock(seg('reaction', 'mix'), 4, 1, { ...ctx, rdoCount: two });
+    expect(blockInstruction(over, 'keyboard').text).toBe(
+      `${OVERLOAD_SOUND_PREFIX}${rdo.instruction('keyboard', rdo.params(7), true)} Скорость: оборот за 2 с.`,
+    );
+    const diagnosticSeg = planDiagnostic(1).segments.find((s) => s.module === 'rdo') as Segment;
+    expect(blockInstruction(reactionPlan(diagnosticSeg, 0, { ...ctx, diagnostic: true }), 'keyboard').text).toBe(
+      rdo.instruction('keyboard', DIAGNOSTIC_PARAMS.rdo),
+    );
+    expect(blockInstruction(reactionPlan(runSegment('rdo'), 9, ctx), 'keyboard').text).toBe(
+      testFormatInstruction(50) + rdo.instruction('keyboard', DIAGNOSTIC_PARAMS.rdo),
+    );
   });
 
   it('the stored params name the speed the block played', () => {
@@ -640,9 +675,10 @@ describe('overload blocks', () => {
         const normal = blockInstruction({ ...plan, overload: false }, 'keyboard');
         const own = reactionModules[module].instruction('keyboard', plan.params, true);
         // A band module plays the next band's load, named by the prefix and by the load line at the end.
+        // РДО names the speed of its slot (T-R61).
         const text =
           plan.load === null
-            ? OVERLOAD_SOUND_PREFIX + own
+            ? `${OVERLOAD_SOUND_PREFIX}${own} ${rdoSpeedNote((plan.params as { periodMs: number }).periodMs)}`
             : overloadBandPrefix(plan.load.loadBandLabel ?? '') + own + ` Нагрузка: ${plan.load.loadBandLabel ?? ''}.`;
         expect(plan.load === null, module).toBe(module === 'rdo');
         expect(blockInstruction(plan, 'keyboard')).toEqual({ text, keysHint: normal.keysHint });
@@ -774,7 +810,7 @@ describe('the personal window floor and the overload band (F3)', () => {
     expect(at('szmr', 0)).toBe(szmr.instruction('keyboard', szmr.params(0)) + ' Нагрузка: 2 цвета на 2 клавиши.');
     expect(at('szmr', 0).endsWith('Нажимай нужную как можно быстрее. Нагрузка: 2 цвета на 2 клавиши.')).toBe(true);
     expect(at('pzmr', 12)).toBe(pzmr.instruction('keyboard', pzmr.params(12)) + ' Нагрузка: интервал 0,3–3 с, помехи.');
-    expect(at('rdo', 5)).toBe(rdo.instruction('keyboard', rdo.params(5)));
+    expect(at('rdo', 5)).toBe(`${rdo.instruction('keyboard', rdo.params(5))} ${rdoSpeedNote(rdoPeriod(ctx.planSeed, ctx.segmentIndex, 0))}`);
     const diagnostic = planDiagnostic(1).segments.find((s) => s.module === 'szmr') as Segment;
     expect(blockInstruction(reactionPlan(diagnostic, 0, { ...ctx, diagnostic: true }), 'keyboard').text).toBe(
       reactionModules.szmr.instruction('keyboard', DIAGNOSTIC_PARAMS.szmr),

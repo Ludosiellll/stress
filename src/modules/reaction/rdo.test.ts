@@ -1,7 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { createRng, deriveSeed } from '../../engine/rng';
-import { RDO_PERIODS, rdo, rdoPeriod } from './rdo';
+import { createRng, deriveSeed, hashString } from '../../engine/rng';
+import { RDO_CYCLE, RDO_PERIODS, rdo, rdoCyclePeriod, rdoPeriod } from './rdo';
 
 const levelPair = fc
   .tuple(fc.double({ min: 0, max: 1000, noNaN: true }), fc.double({ min: 0, max: 1000, noNaN: true }))
@@ -33,7 +33,7 @@ describe('rdo.params', () => {
   });
 });
 
-describe('rdoPeriod (F14)', () => {
+describe('rdoPeriod (F14): the order of a segment, the rule without the history (Р18)', () => {
   it('RDO_PERIODS: the four speeds, the test one included', () => {
     expect(RDO_PERIODS).toEqual([1500, 2000, 3000, 4000]);
   });
@@ -65,6 +65,32 @@ describe('rdoPeriod (F14)', () => {
   it('segments draw their own order', () => {
     const orders = new Set([0, 1, 2, 3, 4, 5].map((seg) => [0, 1, 2, 3].map((i) => rdoPeriod(11, seg, i)).join(',')));
     expect(orders.size).toBeGreaterThan(1);
+  });
+});
+
+describe('the speed cycle across sessions (T-R61)', () => {
+  it('RDO_CYCLE: one shuffle of the four speeds from a fixed seed', () => {
+    expect(RDO_CYCLE).toEqual(createRng(hashString('rdo:cycle')).shuffle(RDO_PERIODS));
+    expect([...RDO_CYCLE].sort((a, b) => a - b)).toEqual([...RDO_PERIODS]);
+    expect(Object.isFrozen(RDO_CYCLE)).toBe(true);
+  });
+
+  it('the block after `count` counted blocks plays RDO_CYCLE[count mod 4]', () => {
+    expect([0, 1, 2, 3, 4, 5, 10, 403].map(rdoCyclePeriod)).toEqual([0, 1, 2, 3, 0, 1, 2, 3].map((k) => RDO_CYCLE[k]));
+  });
+
+  it('any four counted blocks in a row hold each speed once, wherever a segment or a session starts', () => {
+    fc.assert(
+      fc.property(fc.nat(100_000), (from) => {
+        const speeds = [0, 1, 2, 3].map((k) => rdoCyclePeriod(from + k));
+        expect([...speeds].sort((x, y) => x - y)).toEqual([...RDO_PERIODS]);
+      }),
+      { numRuns: 1000 },
+    );
+  });
+
+  it('refuses a count that is not a whole number from 0', () => {
+    for (const bad of [-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY]) expect(() => rdoCyclePeriod(bad)).toThrow(RangeError);
   });
 });
 

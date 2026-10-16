@@ -31,7 +31,7 @@ import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
 import { pomeh } from '../modules/reaction/pomeh';
 import { isSwappedSegment } from '../modules/reaction/gonogo';
 import { pzmr } from '../modules/reaction/pzmr';
-import { rdoPeriod } from '../modules/reaction/rdo';
+import { rdoCyclePeriod, rdoPeriod } from '../modules/reaction/rdo';
 import { szmr } from '../modules/reaction/szmr';
 import { reactionModules } from '../modules/registry';
 import { generateGorbovTable, gorbovMetrics } from '../modules/tables/gorbov';
@@ -52,6 +52,7 @@ import {
   AUDIO_NOT_PLAYED,
   MEMORY_SPAN_INSTRUCTION,
   overloadBandPrefix,
+  rdoSpeedNote,
   WARMUP_LEVEL_NOTE,
   type BlockSummaryView,
   type Step,
@@ -364,12 +365,15 @@ describe('SessionController — flow', () => {
   it('free session ends with done, no wellbeing', async () => {
     const h = await begin(planFree('rdo', 3));
     const seen = await drive(h, { blockMs: 100_000 });
+    // Each РДО block names its own speed, so each comes with its instruction (T-R61).
     expect(seen).toEqual([
       'instruction:rdo',
       'reaction_block:rdo',
       'summary',
+      'instruction:rdo',
       'reaction_block:rdo',
       'summary',
+      'instruction:rdo',
       'reaction_block:rdo',
       'summary',
       'done',
@@ -1589,12 +1593,12 @@ describe('SessionController — assessment', () => {
     expect(fifth.view.assessment?.history).toMatch(/^Раньше в этом блоке: прошлый раз \d+ мс \(ур\. [\d,]+\) · лучший \d+ мс · в среднем за 7 дней \d+ мс/);
   });
 
-  it('an РДО block plays the speed of its slot, stores it and names it in the speed line (F14)', async () => {
+  it('an РДО block plays the speed of its slot, stores it and names it in the speed line (F14, T-R61)', async () => {
     const h = await begin(planFree('rdo', 1));
     for (let i = 0; i < 4; i++) {
       if (i > 0) await h.c.continueAfterSummary();
       const { view } = await playReaction(h);
-      const periodMs = rdoPeriod(1, 0, i);
+      const periodMs = rdoCyclePeriod(i);
       const seconds = String(periodMs / 1000).replace('.', ',');
       expect(view.lines.filter((l) => l.startsWith('Скорость: ')), `block ${String(i)}`).toEqual([
         expect.stringMatching(new RegExp(`^Скорость: оборот за ${seconds} с · (смещение [^·]+ · )?точно \\d+ из 20 · рано \\d+, поздно \\d+\\.$`)),
@@ -1602,15 +1606,15 @@ describe('SessionController — assessment', () => {
       expect(view.lines.some((l) => l.startsWith('Средняя ошибка по модулю: ') || l === 'Ошибок нет.')).toBe(true);
     }
     const stored = (await h.repo.listBlocks()).map((b) => (JSON.parse(b.paramsJson) as { periodMs: number }).periodMs);
-    expect(stored).toEqual([0, 1, 2, 3].map((i) => rdoPeriod(1, 0, i)));
+    expect(stored).toEqual([0, 1, 2, 3].map(rdoCyclePeriod));
   });
 
   it('history from earlier sessions is read at session start', async () => {
     const repo = new MemoryRepository();
     const yesterday = new Date(new Date(T0).getTime() - DAY).toISOString();
     await repo.createSession(session('s0', yesterday, { kind: 'free' }));
-    // The block before played the speed this session's first block plays (F14, T-R9).
-    const paramsJson = JSON.stringify({ periodMs: rdoPeriod(1, 0, 0) });
+    // The block before played the speed this session's first block plays (F14, T-R9): the cycle went on past it (T-R61).
+    const paramsJson = JSON.stringify({ periodMs: rdoCyclePeriod(1) });
     await repo.addBlock(block('b0', 's0', yesterday, { module: 'rdo', lBefore: 3, paramsJson, summaryJson: '{"meanAbsErrorMs":25}' }), [], []);
     const h = await begin(planFree('rdo', 1), { repo });
     const { view } = await playReaction(h);
@@ -1706,6 +1710,70 @@ describe('SessionController — assessment', () => {
     h.c.ackInstruction();
     await h.c.submitNumSeries(perfectSeriesAnswers(expectStep(h.c, 'numseries_block').items));
     expect(expectStep(h.c, 'summary').view.assessment?.step).toMatch(/^Ступень \d( из 5\+)? — .+ \(рейтинг \d+; формат теста — 1376\)$/);
+  });
+});
+
+describe('SessionController — the РДО speed cycle (T-R61)', () => {
+  /** The speed of every stored РДО block, in order. */
+  const periods = async (repo: Repository): Promise<number[]> =>
+    (await repo.listBlocks()).filter((b) => b.module === 'rdo').map((b) => (JSON.parse(b.paramsJson) as { periodMs: number }).periodMs);
+  const speedOf = (block: StepOf<'reaction_block'>): number | null => {
+    const [t] = block.specs;
+    return t?.stimulus.kind === 'rdo' ? t.stimulus.periodMs : null;
+  };
+
+  it('the cycle goes on across sessions: a session of 3 blocks, then one of 5, play it in turn', async () => {
+    const repo = new MemoryRepository();
+    const clock = new Clock();
+    await drive(await begin(planFree('rdo', 1), { repo, clock }), { blockMs: 100_000 });
+    expect(await periods(repo)).toEqual([0, 1, 2].map(rdoCyclePeriod));
+    clock.advance(DAY);
+    await drive(await begin(planFree('rdo', 2), { repo, clock }), { blockMs: 60_000 });
+    expect(await periods(repo)).toEqual([0, 1, 2, 3, 4, 5, 6, 7].map(rdoCyclePeriod));
+  });
+
+  it('each instruction names its block\'s speed, so a new speed brings the instruction back', async () => {
+    const h = await begin(planFree('rdo', 1));
+    expect(expectStep(h.c, 'instruction').text.endsWith(` ${rdoSpeedNote(rdoCyclePeriod(0))}`)).toBe(true);
+    await playReaction(h);
+    await h.c.continueAfterSummary();
+    expect(expectStep(h.c, 'instruction').text.endsWith(` ${rdoSpeedNote(rdoCyclePeriod(1))}`)).toBe(true);
+  });
+
+  it('a block counted as 0 after Esc leaves the cycle where it was: the next block plays its speed again', async () => {
+    const h = await begin(planFree('rdo', 1));
+    await playReaction(h);
+    await h.c.continueAfterSummary();
+    h.c.ackInstruction();
+    expect(speedOf(expectStep(h.c, 'reaction_block'))).toBe(rdoCyclePeriod(1));
+    expect(await h.c.discardBlock('user', 0.5)).toMatchObject({ kind: 'counted' });
+    // The same speed: the same instruction, so the block comes at once.
+    expect(speedOf(expectStep(h.c, 'reaction_block'))).toBe(rdoCyclePeriod(1));
+  });
+
+  it('a test-format run plays 3000 ms and leaves the cycle where it was', async () => {
+    const plan: SessionPlan = {
+      kind: 'training',
+      seed: 4,
+      phase: 'development',
+      segments: [
+        { module: 'rdo', budgetMs: 0, purpose: 'test_format', trialCount: 50, practiceTrials: 5 },
+        { module: 'rdo', budgetMs: 5 * MIN, purpose: 'reaction' },
+      ],
+    };
+    const h = await begin(plan, { scale: 0.1 });
+    await playReaction(h);
+    await h.c.continueAfterSummary();
+    h.c.ackInstruction();
+    expect(speedOf(expectStep(h.c, 'reaction_block'))).toBe(rdoCyclePeriod(0));
+    expect(await periods(h.repo)).toEqual([3000]);
+  });
+
+  it('without the history (Р18) a segment plays its own order', async () => {
+    const repo = new MemoryRepository();
+    vi.spyOn(repo, 'listBlocks').mockRejectedValueOnce(new Error('disk I/O error'));
+    await drive(await begin(planFree('rdo', 7), { repo }), { blockMs: 100_000 });
+    expect(await periods(repo)).toEqual([0, 1, 2].map((i) => rdoPeriod(7, 0, i)));
   });
 });
 

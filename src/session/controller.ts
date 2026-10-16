@@ -42,7 +42,7 @@ import {
   type SeriesOutcome,
   type WindowFloors,
 } from './blocks';
-import { appendPast, pastBlocks, testFormatRuns, warmupDays, withBlock, type PastBlocks } from './pastBlocks';
+import { appendPast, pastBlocks, rdoCycleCount, testFormatRuns, warmupDays, withBlock, type PastBlocks } from './pastBlocks';
 import { blockRow, errorLogRow, logicItemRows, sessionRow, trialRows, wellbeingRow } from './rowsBuild';
 import { SaveQueue, type SaveOutcome, type Write } from './saveQueue';
 import { TEST_FORMAT_NAMES, testFormatBest, testFormatLines, testFormatMetrics, type TestFormatMetrics } from './testFormat';
@@ -837,6 +837,7 @@ export class SessionController {
    * What planBlock needs to know about the session and the segment. The window floors come from the history read at
    * start and the blocks stored since (F3); a diagnostic has none, nor a test-format run (F4), nor a session whose
    * history could not be read (Р18). The mark rate is the plan's (F15); planBlock keeps it to the blocks with marks.
+   * The РДО speed cycle goes on from the same history (T-R61); without it a segment plays its own order.
    */
   private planContext(seg: SegmentRun): PlanContext {
     const floored = this.counted && seg.segment.purpose !== 'test_format';
@@ -848,6 +849,7 @@ export class SessionController {
       segmentIndex: seg.index,
       floors: floored && this.past !== null ? floorsFrom(this.past) : null,
       feedback: this.plan.feedback ?? 'none',
+      rdoCount: this.counted && this.past !== null ? rdoCycleCount(this.past) : null,
     };
   }
 
