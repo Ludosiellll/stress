@@ -2,6 +2,7 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { R0, targetDifficulty } from '../../engine/elo';
 import { ITEM_LIMIT_START_MS, itemTimeLimit, structTarget } from '../../engine/itemLimit';
+import { SERIES_FORMS, diagnosticSeriesSchedule, diagnosticSeriesSeed } from '../../engine/diagnostic';
 import { createRng, deriveSeed } from '../../engine/rng';
 import { fitPredictions, isUnique } from './check';
 import {
@@ -156,10 +157,13 @@ describe('generateItem', () => {
     }
   });
 
-  it('hits the base difficulty of every family whenever asked for it', () => {
+  it('hits the lowest difficulty of every family whenever asked for it', () => {
+    // powstep keeps only cubes: squares of a progression are a second-order series (T-R70), and a cube of up to 21
+    // passes 1000, so its lowest D is 1300 + 100 (p = 3) + 100 + 200 (size) = 1700.
+    const lowest = (f: FamilyId): number => (f === 'powstep' ? 1700 : BASE_DIFFICULTY[f]);
     for (const f of ALL_FAMILIES) {
       for (let seed = 0; seed < 50; seed++) {
-        expect(generateItem(f, BASE_DIFFICULTY[f], seed).difficulty, f).toBeLessThanOrEqual(BASE_DIFFICULTY[f] + 150);
+        expect(generateItem(f, lowest(f), seed).difficulty, f).toBeLessThanOrEqual(lowest(f) + 150);
       }
     }
   });
@@ -425,6 +429,67 @@ describe('the new families (F12)', () => {
       expect(now / 5000, f).toBeGreaterThanOrEqual(old / 5000 - 0.01);
     }
   }, 120_000);
+
+  it('a held-out item never reduces to a training family, even with the same answer (T-R70)', () => {
+    // A digit-sum series over multiples of 9 is a +9 progression; squares of a progression are a second-order series.
+    expect(fitFamily('arith', [18, 27, 36, 45, 54]).has(63)).toBe(true);
+    expect(isUnique([18, 27, 36, 45, 54], 63)).toBe(true);
+    expect(candidateItem('digitsum', 1, [18, 27, 36, 45, 54, 63])).toBeNull();
+    expect(candidateItem('powstep', 1, [9, 36, 81, 144, 225, 324])).toBeNull();
+    // A training family keeps such a series: the rule is for the held-out families only.
+    expect(candidateItem('second', 1, [9, 36, 81, 144, 225, 324])?.answer).toBe(324);
+    // A digit-sum series no training rule fits stays.
+    expect(fitPredictions([19, 29, 40, 44, 52], TRAINING_FAMILIES).size).toBe(0);
+    expect(candidateItem('digitsum', 1, [19, 29, 40, 44, 52, 59])?.answer).toBe(59);
+    // Any accepted candidate of a held-out family, with the training rules' wide predictor ranges.
+    for (const f of HELD_OUT_FAMILIES) {
+      fc.assert(
+        fc.property(fc.integer({ min: 0, max: 2 ** 31 - 1 }), fc.integer({ min: 0, max: 199 }), (seed, attempt) => {
+          const item = attemptItem(f, seed, attempt);
+          if (item !== null) expect(fitPredictions(item.shown, TRAINING_FAMILIES), item.id).toEqual(new Map());
+        }),
+        { numRuns: 1000 },
+      );
+    }
+  }, 120_000);
+
+  it('the held-out items of the six diagnostic forms reduce to no training family (T-R70)', () => {
+    const schedule = diagnosticSeriesSchedule();
+    for (let seedIndex = 1; seedIndex <= SERIES_FORMS; seedIndex++) {
+      schedule.forEach((e, i) => {
+        if (!HELD_OUT_FAMILIES.includes(e.family)) return;
+        const item = generateItem(e.family, e.targetD, diagnosticSeriesSeed(seedIndex, i + 1));
+        expect(fitPredictions(item.shown, TRAINING_FAMILIES), `form ${String(seedIndex - 1)} №${String(i + 1)}`).toEqual(new Map());
+      });
+    }
+  });
+
+  it('held-out families still generate within the table of spec §4.8 (T-R70)', () => {
+    // Acceptance at the first attempt, and the D_struct each family still reaches.
+    const seen = new Map<FamilyId, { accepted: number; ds: Set<number> }>();
+    for (const f of HELD_OUT_FAMILIES) {
+      const s = { accepted: 0, ds: new Set<number>() };
+      for (let seed = 0; seed < 2000; seed++) {
+        const item = attemptItem(f, seed, 0);
+        if (item === null) continue;
+        s.accepted++;
+        s.ds.add(item.difficulty);
+      }
+      seen.set(f, s);
+    }
+    const accepted = (f: FamilyId): number => (seen.get(f)?.accepted ?? 0) / 2000;
+    const range = (f: FamilyId): number[] => {
+      const ds = [...(seen.get(f)?.ds ?? [])];
+      return [Math.min(...ds), Math.max(...ds)];
+    };
+    // powstep loses its squares (about half its candidates); digitsum some series over multiples of 9.
+    expect(accepted('powstep')).toBeGreaterThan(0.45);
+    expect(accepted('twostep')).toBeGreaterThan(0.95);
+    expect(accepted('digitsum')).toBeGreaterThan(0.85);
+    expect(range('powstep')).toEqual([1700, STRUCT_D_MAX.powstep]);
+    expect(range('twostep')).toEqual([1500, STRUCT_D_MAX.twostep]);
+    expect(range('digitsum')).toEqual([BASE_DIFFICULTY.digitsum, STRUCT_D_MAX.digitsum]);
+  });
 
   it('held-out families never appear in training', () => {
     // Which families come up depends on the weights only. Ratings that put each family's structural target 50 above its

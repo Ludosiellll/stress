@@ -1,8 +1,8 @@
 import { R0, familyWeights, pickWeighted, targetDifficulty } from '../../engine/elo';
 import { itemTimeLimit, structTarget } from '../../engine/itemLimit';
 import { createRng, deriveSeed, type Rng } from '../../engine/rng';
-import { isUnique } from './check';
-import { TRAINING_FAMILIES, fitFamily, generateTerms, structDifficulty, type FamilyId } from './families';
+import { fitPredictions, isUnique } from './check';
+import { HELD_OUT_FAMILIES, TRAINING_FAMILIES, fitFamily, generateTerms, structDifficulty, type FamilyId } from './families';
 
 /**
  * Highest difficulty a candidate of each family reaches under its generation ranges (R36), the new families too: the
@@ -86,8 +86,9 @@ export function difficultyOf(family: FamilyId, shown: readonly number[], answer:
 /**
  * The item for `terms` (the shown terms, then the answer), or null when it is rejected:
  * a term beyond ±100000, fewer than 3 distinct values (R13), its own family does not continue
- * the shown terms with the answer (a letter series: within positions 1…32), or one of the 13 numeric
- * predictors justifies another answer. Exported for tests.
+ * the shown terms with the answer (a letter series: within positions 1…32), one of the 13 numeric
+ * predictors justifies another answer, or the item of a held-out family reduces to a training family
+ * (reducesToTraining, T-R70). Exported for tests.
  */
 export function candidateItem(family: FamilyId, seed: number, terms: readonly number[]): SeriesItem | null {
   if (terms.some((x) => Math.abs(x) > MAX_ABS_TERM)) return null;
@@ -95,6 +96,7 @@ export function candidateItem(family: FamilyId, seed: number, terms: readonly nu
   const shown = terms.slice(0, -1);
   const answer = terms[terms.length - 1] as number;
   if (!fitFamily(family, shown).has(answer) || !isUnique(shown, answer)) return null;
+  if (reducesToTraining(family, shown)) return null;
   return {
     id: `${family}:${String(seed)}`,
     family,
@@ -103,6 +105,16 @@ export function candidateItem(family: FamilyId, seed: number, terms: readonly nu
     answer,
     difficulty: difficultyOf(family, shown, answer),
   };
+}
+
+/**
+ * A held-out item tests transfer (spec §4.8): it must not be solvable by a rule the user trains. So an item of a held-out
+ * family is rejected when any training family's rule, with its wide predictor ranges, fits all its shown terms, even
+ * with the same answer (T-R70): a digit-sum series over multiples of 9 is a +9 progression, squares of a progression are
+ * a second-order series.
+ */
+function reducesToTraining(family: FamilyId, shown: readonly number[]): boolean {
+  return HELD_OUT_FAMILIES.includes(family) && fitPredictions(shown, TRAINING_FAMILIES).size > 0;
 }
 
 /** Attempt `attempt` of generateItem: a fresh candidate from its own rng, or null. Exported for tests. */
