@@ -5,7 +5,7 @@ import { detectFatigue, nextLevel, stabilityHold, startLevel, type DeltaInput } 
 import { daysBetween, localDayIso } from '../engine/dates';
 import { dayForm } from '../engine/dayForm';
 import { deriveModuleStates, isCleanBlock, isCountedSession, movesLevel } from '../engine/derive';
-import { parseResults, type DiagnosticResults } from '../engine/diagnostic';
+import { parseResults, type DiagnosticResults, type ModuleRestarts } from '../engine/diagnostic';
 import type { Rating } from '../engine/elo';
 import { CALIBRATION_BLOCKS } from '../engine/phases';
 import { OVERLOAD_LEVEL_STEP, isTestFormat, warmupLevel, type ModuleState, type Segment, type SessionPlan } from '../engine/planner';
@@ -35,8 +35,10 @@ import {
   trainingBlockSeed,
   updatedRatings,
   type BlockPlan,
+  type BlockStep,
   type DiagnosticPart,
   type PlanContext,
+  type SeriesOutcome,
   type WindowFloors,
 } from './blocks';
 import { appendPast, pastBlocks, testFormatRuns, warmupDays, withBlock, type PastBlocks } from './pastBlocks';
@@ -47,6 +49,7 @@ import {
   AUDIO_NOT_PLAYED,
   conditionLines,
   dayFormLine,
+  DIAGNOSTIC_RESTART_NOTICE,
   floorLine,
   memoryLines,
   reactionLines,
@@ -59,6 +62,7 @@ import {
   WARMUP_LEVEL_NOTE,
   type BlockSummaryView,
   type DiagnosticComparison,
+  type DiscardOutcome,
   type PastDiagnostic,
   type SaveErrorWhat,
   type SeriesAnswer,
@@ -83,11 +87,25 @@ export interface SessionStartOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
+/** Why the block on screen is given up: focus_lost — the window lost focus; error — a runner or drawing failure; user — Escape. */
+export type DiscardReason = 'focus_lost' | 'error' | 'user';
+/** A restart of the block on screen: a DiscardReason, or timing_unreliable — a diagnostic reaction block replayed once (I1). */
+export type RestartReason = DiscardReason | 'timing_unreliable';
+export type { DiscardOutcome } from './steps';
+
 /**
- * focus_lost: the window lost focus; error: a runner or drawing failure; user: the user paused (Escape);
- * timing_unreliable: a diagnostic reaction block with too many dropped frames, replayed once (I1).
+ * Esc in a training or free block at this share done or less restarts it for free; later the block counts as s = 0
+ * (F11). A focus loss or a drawing error always restarts for free.
  */
-export type DiscardReason = 'focus_lost' | 'error' | 'user' | 'timing_unreliable';
+export const DISCARD_FREE_SHARE = 0.3;
+/** A share is k/n with n ≤ 100: float noise is far below any real difference. */
+const SHARE_EPS = 1e-9;
+
+/** A restart recorded in the next stored block of the segment (summaryJson.restarts, F11). */
+interface RestartEntry {
+  reason: DiscardReason;
+  progress: number;
+}
 
 /** The staircase inputs of a block beyond its score, calibration and the previous score (DeltaInput). */
 type LevelInput = Pick<DeltaInput, 'cvAll' | 'lapses' | 'lapseLimit' | 'cvMax' | 'timingUnreliable'>;
@@ -125,6 +143,10 @@ interface SegmentRun {
   unreliableReplayed: boolean;
   /** Text and key hint of the last instruction shown in the segment. */
   lastInstruction: string | null;
+  /** Restarts since the segment's last stored block: the next stored block keeps them (summaryJson.restarts, F11). */
+  restarts: RestartEntry[];
+  /** Diagnostics: the current task was restarted by Esc; another Esc is refused (F11). */
+  escUsed: boolean;
 }
 
 /** What the start pass read: the block history in its two forms and the level-moving blocks per module. */
@@ -170,6 +192,11 @@ interface FinishedBlock {
   /** Number series in training and free sessions: meanFamilyRating after the block (the step by rating). */
   meanRating?: number;
   rows: (blockId: string) => { trials: TrialRow[]; items: LogicItemRow[] };
+  /**
+   * Counted as s = 0 after Esc at this share done (F11): flag `discarded`, summaryJson.discarded, no summary step (the
+   * next block follows).
+   */
+  discardedAt?: number;
   /** In-memory effects beyond the level (diagnostic metrics, ratings), applied once the block is stored. */
   onCommit?: () => void;
   /** Cache writes after the module state (ratings). */
@@ -275,7 +302,9 @@ export class SessionController {
   private readonly fatigueDetected = new Set<ModuleId>();
   private readonly fatiguePrompted = new Set<ModuleId>();
   private readonly fatigueContinued = new Set<ModuleId>();
-  private readonly discardLog: Array<{ module: ModuleId; reason: DiscardReason }> = [];
+  private readonly discardLog: Array<{ module: ModuleId; reason: RestartReason }> = [];
+  /** Diagnostics: the restarts of each module's tasks, for resultsJson.restarts (F11). */
+  private readonly diagRestarts: Partial<Record<ModuleId, ModuleRestarts>> = {};
 
   /** What the stored diagnostic blocks add to DiagnosticResults. */
   private readonly diagParts: DiagnosticPart[] = [];
@@ -393,9 +422,14 @@ export class SessionController {
     return this.current;
   }
 
-  /** Blocks thrown away in this session (focus loss, runner errors), oldest first. */
-  get discards(): ReadonlyArray<{ module: ModuleId; reason: DiscardReason }> {
+  /** Blocks thrown away and played again in this session (Esc, focus loss, runner errors, I1 replays), oldest first. */
+  get discards(): ReadonlyArray<{ module: ModuleId; reason: RestartReason }> {
     return [...this.discardLog];
+  }
+
+  /** Escape may stop the block on screen: always in training and free sessions; in a diagnostic until the task's restart is used (F11). */
+  get escAllowed(): boolean {
+    return this.counted || this.seg === null || !this.seg.escUsed;
   }
 
   ackInstruction(): void {
@@ -498,34 +532,44 @@ export class SessionController {
   async submitNumSeries(answers: readonly SeriesAnswer[]): Promise<void> {
     const step = this.take('numseries_block');
     const outcomes = scoreSeries(step, answers);
-    await this.exclusive(async () => {
-      const successes = outcomes.filter((o) => o.success).length;
-      const total = outcomes.length;
-      const ratings = this.counted ? updatedRatings(this.ratings, outcomes) : null;
-      const at = this.now().toISOString();
-      const meanTimeMs = outcomes.reduce((sum, o) => sum + o.answer.timeMs, 0) / total;
-      const limits = outcomes.flatMap((o) => (o.item.timeLimitMs === null ? [] : [o.item.timeLimitMs]));
-      const shortestLimitMs = limits.length > 0 ? Math.min(...limits) : null;
-      await this.completeBlock({
-        module: 'numseries',
-        L: 0,
-        score: successes / total,
-        level: null,
-        hitRts: [],
-        summary: {
-          correct: successes,
-          total,
-          items: outcomes.map((o) => ({ itemId: o.item.id, answer: o.item.answer, given: o.answer.given, timeMs: o.answer.timeMs })),
-        },
-        lines: seriesLines(successes, total, meanTimeMs, shortestLimitMs),
-        ...(ratings === null ? {} : { meanRating: meanFamilyRating(ratings) }),
-        rows: (blockId) => ({ trials: [], items: logicItemRows(blockId, outcomes, at) }),
-        onCommit: () => {
-          if (ratings !== null) this.ratings = ratings;
-          else this.diagParts.push({ module: 'numseries', correct: successes, total });
-        },
-        extraWrites: ratings === null ? [] : [{ label: 'saveRatings', run: () => this.repo.saveRatings(ratings) }],
-      });
+    await this.exclusive(() => this.completeSeries(outcomes));
+  }
+
+  /**
+   * A number-series block from its scored items: the ratings move by every item (a skipped one is a failure), the
+   * summary keeps each item (`skipped: true` on the skipped ones, F11). `discardedAt`: counted after Esc (F11).
+   */
+  private async completeSeries(outcomes: readonly SeriesOutcome[], discardedAt?: number): Promise<void> {
+    const successes = outcomes.filter((o) => o.success).length;
+    const total = outcomes.length;
+    const ratings = this.counted ? updatedRatings(this.ratings, outcomes) : null;
+    const at = this.now().toISOString();
+    const meanTimeMs = outcomes.reduce((sum, o) => sum + o.answer.timeMs, 0) / total;
+    const limits = outcomes.flatMap((o) => (o.item.timeLimitMs === null ? [] : [o.item.timeLimitMs]));
+    const shortestLimitMs = limits.length > 0 ? Math.min(...limits) : null;
+    const items = outcomes.map((o) => ({
+      itemId: o.item.id,
+      answer: o.item.answer,
+      given: o.answer.given,
+      timeMs: o.answer.timeMs,
+      ...(o.answer.skipped === true ? { skipped: true } : {}),
+    }));
+    await this.completeBlock({
+      module: 'numseries',
+      L: 0,
+      score: successes / total,
+      level: null,
+      hitRts: [],
+      summary: { correct: successes, total, items },
+      lines: seriesLines(successes, total, meanTimeMs, shortestLimitMs),
+      ...(ratings === null ? {} : { meanRating: meanFamilyRating(ratings) }),
+      rows: (blockId) => ({ trials: [], items: logicItemRows(blockId, outcomes, at) }),
+      ...(discardedAt === undefined ? {} : { discardedAt }),
+      onCommit: () => {
+        if (ratings !== null) this.ratings = ratings;
+        else this.diagParts.push({ module: 'numseries', correct: successes, total });
+      },
+      extraWrites: ratings === null ? [] : [{ label: 'saveRatings', run: () => this.repo.saveRatings(ratings) }],
     });
   }
 
@@ -567,24 +611,27 @@ export class SessionController {
     this.startBlock(this.block().plan);
   }
 
-  /** Throws the block on screen away: nothing is written, the level stays, a fresh block of the module follows. */
-  discardBlock(reason: DiscardReason): void {
+  /**
+   * Stops the block on screen, `progress` of it done (the share its screen reports, F11):
+   * - training and free sessions: Esc after DISCARD_FREE_SHARE stores the block as s = 0 (countDiscard) and the next
+   *   block follows; an earlier Esc, a focus loss or a drawing error restarts it for free, and the next stored block of
+   *   the segment records the restart (summaryJson.restarts);
+   * - diagnostics: restartDiagnostic.
+   * `answered`: number series, the answers given so far (the first items of the block, in order).
+   */
+  async discardBlock(reason: DiscardReason, progress: number, answered: readonly SeriesAnswer[] = []): Promise<DiscardOutcome> {
     if (this.busy) throw new Error('SessionController: another action is in progress');
-    const s = this.current;
-    switch (s.kind) {
-      case 'reaction_block':
-      case 'table_block':
-        this.restartBlock(s.module, reason);
-        return;
-      case 'numseries_block':
-        this.restartBlock('numseries', reason);
-        return;
-      case 'memory_block':
-        this.restartBlock('memory', reason);
-        return;
-      default:
-        throw new Error(`SessionController: expected a block step, current step is ${s.kind}`);
+    const step = this.current;
+    if (!isBlockStep(step)) throw new Error(`SessionController: expected a block step, current step is ${step.kind}`);
+    if (!(progress >= 0 && progress <= 1)) throw new RangeError(`discardBlock: progress must be within [0, 1], got ${String(progress)}`);
+    const module = moduleOfBlock(step);
+    if (!this.counted) return this.restartDiagnostic(module, reason, progress);
+    if (reason !== 'user' || progress <= DISCARD_FREE_SHARE + SHARE_EPS) {
+      this.segment().restarts.push({ reason, progress });
+      this.restartBlock(module, reason);
+      return { kind: 'restarted' };
     }
+    return this.countDiscard(step, progress, answered);
   }
 
   async continueAfterSummary(): Promise<void> {
@@ -653,6 +700,59 @@ export class SessionController {
     });
   }
 
+  /**
+   * A training or free block counted as s = 0 after Esc (F11): its level moves by nextLevel(L, s = 0) when the block
+   * moves the level at all, and it is stored without trials; number series keep the answered items and record the
+   * rest as skipped (RangeError, before anything changes, for answers that are not the block's first items).
+   */
+  private async countDiscard(step: BlockStep, progress: number, answered: readonly SeriesAnswer[]): Promise<DiscardOutcome> {
+    if (step.kind === 'numseries_block') {
+      const skipped = step.items.slice(answered.length).map((it) => ({ itemId: it.id, given: null, timeMs: 0, skipped: true }));
+      const outcomes = scoreSeries(step, [...answered, ...skipped]);
+      await this.exclusive(() => this.completeSeries(outcomes, progress));
+      return { kind: 'counted', progress, lBefore: 0, lAfter: 0, levelMoves: false, series: true };
+    }
+    const lBefore = step.L;
+    let lAfter = lBefore;
+    await this.exclusive(async () => {
+      lAfter = await this.completeBlock({
+        module: moduleOfBlock(step),
+        L: lBefore,
+        score: 0,
+        level: NO_STABILITY_RULE,
+        hitRts: [],
+        summary: {},
+        lines: [],
+        rows: () => ({ trials: [], items: [] }),
+        discardedAt: progress,
+      });
+    });
+    return { kind: 'counted', progress, lBefore, lAfter, levelMoves: lAfter !== lBefore, series: false };
+  }
+
+  /**
+   * A diagnostic (F11): the first Esc of a task restarts it after the notice and uses up its restart, a second one is
+   * refused (nothing changes); a focus loss or a drawing error restarts it without using it up. Restarts by Esc and
+   * after a focus loss are counted for resultsJson.restarts; every restart is also recorded in the next stored block.
+   */
+  private restartDiagnostic(module: ModuleId, reason: DiscardReason, progress: number): DiscardOutcome {
+    const seg = this.segment();
+    if (reason === 'user' && seg.escUsed) return { kind: 'refused' };
+    seg.restarts.push({ reason, progress });
+    if (reason !== 'error') {
+      const counts = (this.diagRestarts[module] ??= { user: 0, focus: 0 });
+      if (reason === 'user') counts.user++;
+      else counts.focus++;
+    }
+    if (reason !== 'user') {
+      this.restartBlock(module, reason);
+      return { kind: 'restarted' };
+    }
+    seg.escUsed = true;
+    this.restartBlock(module, reason, { kind: 'notice', module, text: DIAGNOSTIC_RESTART_NOTICE });
+    return { kind: 'restarted' };
+  }
+
   // ---------- flow ----------
 
   private async enterSegment(index: number): Promise<void> {
@@ -676,6 +776,8 @@ export class SessionController {
       attempt: 0,
       unreliableReplayed: false,
       lastInstruction: null,
+      restarts: [],
+      escUsed: false,
     };
     this.presentNext();
   }
@@ -769,7 +871,7 @@ export class SessionController {
     const writes: Write[] = [];
     let diagnostic: DiagnosticResults | null = null;
     if (!this.counted) {
-      const results = diagnosticResults(this.diagParts);
+      const results = diagnosticResults(this.diagParts, this.diagRestarts);
       diagnostic = results;
       const row = {
         id: uuidv4(),
@@ -820,7 +922,7 @@ export class SessionController {
   }
 
   /** The block again from the next attempt's seed; with `notice`, that step comes first (ackNotice starts the block). */
-  private restartBlock(module: ModuleId, reason: DiscardReason, notice?: StepOf<'notice'>): void {
+  private restartBlock(module: ModuleId, reason: RestartReason, notice?: StepOf<'notice'>): void {
     const { plan } = this.block();
     this.discardLog.push({ module, reason });
     this.segment().attempt++;
@@ -829,19 +931,22 @@ export class SessionController {
   }
 
   /**
-   * Level step, flags, rows and summary of a finished block, then its writes. The block's in-memory effects
-   * (level, session history, fatigue, `onCommit`) apply right after addBlock succeeds.
+   * Level step, flags, rows and summary of a finished block, then its writes; returns lAfter. The block's in-memory
+   * effects (level, session history, fatigue, `onCommit`) apply right after addBlock succeeds. Then the summary step
+   * comes, or for a block counted as 0 after Esc (`discardedAt`, F11) the next block.
    */
-  private async completeBlock(b: FinishedBlock): Promise<void> {
+  private async completeBlock(b: FinishedBlock): Promise<number> {
     const seg = this.segment();
     const active = this.block();
+    const discarded = b.discardedAt !== undefined;
     const overload = active.plan.kind !== 'numseries' && active.plan.overload;
     // A training warm-up block (F5) and a test-format run (F4): lAfter = lBefore, no stability rule, no calibration and
     // no g = 2 (T-R11).
     const warmup = this.counted && seg.segment.purpose === 'warmup';
     const testFormat = this.counted && seg.segment.purpose === 'test_format';
-    // An overload block of a band module plays the next band's load at its own level and keeps it (F3).
-    const fixedLevel = warmup || testFormat || (overload && isBandModule(b.module));
+    // An overload block of a band module plays the next band's load at its own level and keeps it (F3); counted as 0
+    // after Esc, an overload block of РДО, the tables or memory keeps its level too (F11).
+    const fixedLevel = warmup || testFormat || (overload && (isBandModule(b.module) || discarded));
     const calibration = b.level !== null && !fixedLevel && this.isCalibration(b.module);
     const firstOfSegment = !overload && !fixedLevel && seg.startDrop && !seg.levelBlockStored;
     const input: DeltaInput | null =
@@ -850,7 +955,7 @@ export class SessionController {
         : null;
     const lAfter = input === null ? b.L : nextLevel(b.L, input);
     const lines = [...b.lines];
-    if (warmup) {
+    if (warmup && !discarded) {
       // «Форма дня» right after the error line; left out when the history could not be read (Р18) or without a hit.
       const form = this.dayFormOf(active.startedAt, b.L, b.hitRts);
       if (form !== null) lines.splice(1, 0, form);
@@ -864,6 +969,9 @@ export class SessionController {
       // When it lowered the step, the line says so right after the error line (Р8).
       if (hold?.held === true) lines.splice(1, 0, stabilityLine({ cvAll, lapses, lapseLimit, cvMax, cap: hold.cap }));
     }
+    if (b.discardedAt !== undefined) summary = { ...summary, discarded: { reason: 'user', progress: b.discardedAt } };
+    // The free restarts since the segment's last stored block (F11).
+    if (seg.restarts.length > 0) summary = { ...summary, restarts: [...seg.restarts] };
     const flags: BlockFlag[] = [];
     if (calibration) flags.push('calibration');
     if (b.level?.timingUnreliable === true) flags.push('timing_unreliable');
@@ -871,28 +979,13 @@ export class SessionController {
     if (overload) flags.push('overload');
     if (warmup) flags.push('warmup');
     if (testFormat) flags.push('test_format');
+    if (discarded) flags.push('discarded');
 
     const id = uuidv4();
     const row = blockRow(id, this.sessionId, { module: b.module, lBefore: b.L, lAfter, score: b.score, flags }, active, JSON.stringify(summary));
     const { trials, items } = b.rows(id);
-    const context = this.planContext(seg);
-    // The window of the next block rests on the floors with this block's hits (T-R50): «what changed» and the goal
-    // name that window, not the one before the block.
-    const floorsAfter = context.floors === null || this.past === null ? null : floorsFrom(withBlock(this.past, row, this.plan.kind));
-    const assessment = this.assessOrLog(row, b.meanRating ?? null, floorsAfter);
-    const view: BlockSummaryView = {
-      module: b.module,
-      title: b.title ?? moduleTitles[b.module],
-      lBefore: b.L,
-      lAfter,
-      changes: levelChanges(b.module, b.L, lAfter, b.task, context, floorsAfter),
-      score: b.viewScore ?? b.score,
-      lines,
-      flags,
-      showLevel: this.counted && b.level !== null && !warmup && !testFormat,
-      levelNote: warmup ? WARMUP_LEVEL_NOTE : null,
-    };
-    if (assessment !== undefined) view.assessment = assessment;
+    // A block counted as 0 after Esc has no summary step: the pause says what happened (F11).
+    const view = discarded ? null : this.summaryView(b, row, lAfter, lines, warmup || testFormat, warmup);
 
     let committed = false;
     let addTried = false;
@@ -940,13 +1033,16 @@ export class SessionController {
       {
         what: `${b.module} block`,
         stage: () => (committed ? 'block_cache' : 'block'),
-        onSaved: () => {
-          this.current = { kind: 'summary', view };
+        onSaved: async () => {
+          if (view === null) await this.advance();
+          else this.current = { kind: 'summary', view };
         },
         onAbandon: () => {
           if (!committed) {
+            // The block never reached the database: the next one is a new task; the restarts wait for it.
             seg.blocksDone++;
             seg.attempt = 0;
+            seg.escUsed = false;
             this.active = null;
           }
           return this.advance();
@@ -954,6 +1050,32 @@ export class SessionController {
       },
       writes,
     );
+    return lAfter;
+  }
+
+  /**
+   * The summary of a stored block: its level and what changed (none for a warm-up or a test-format run, `noLevel`), the
+   * lines, the flags and the «Оценка». The window of the next block rests on the floors with this block's hits (T-R50):
+   * «what changed» and the goal name that window, not the one before the block.
+   */
+  private summaryView(b: FinishedBlock, row: BlockRow, lAfter: number, lines: string[], noLevel: boolean, warmup: boolean): BlockSummaryView {
+    const context = this.planContext(this.segment());
+    const floorsAfter = context.floors === null || this.past === null ? null : floorsFrom(withBlock(this.past, row, this.plan.kind));
+    const assessment = this.assessOrLog(row, b.meanRating ?? null, floorsAfter);
+    const view: BlockSummaryView = {
+      module: b.module,
+      title: b.title ?? moduleTitles[b.module],
+      lBefore: b.L,
+      lAfter,
+      changes: levelChanges(b.module, b.L, lAfter, b.task, context, floorsAfter),
+      score: b.viewScore ?? b.score,
+      lines,
+      flags: row.flags,
+      showLevel: this.counted && b.level !== null && !noLevel,
+      levelNote: warmup ? WARMUP_LEVEL_NOTE : null,
+    };
+    if (assessment !== undefined) view.assessment = assessment;
+    return view;
   }
 
   /**
@@ -1006,7 +1128,9 @@ export class SessionController {
   /**
    * Book-keeping for a stored block; the segment level becomes lAfter. An overload block leaves the module's
    * level in the session alone, and in a mix the segment level too (only the finisher moves its own level, and a band
-   * module's keeps it, F3). A warm-up block touches neither (F5).
+   * module's keeps it, F3). A warm-up block touches neither (F5). A block counted as 0 after Esc moves the level like
+   * any block, so the next one is not the segment's first (T-R37), but it measured nothing: no fatigue from it (T-R10).
+   * The next block is a new task with no restarts yet (F11).
    */
   private record(b: SessionBlock, lAfter: number): void {
     const seg = this.segment();
@@ -1017,10 +1141,12 @@ export class SessionController {
     seg.blocksDone++;
     seg.attempt = 0;
     seg.unreliableReplayed = false;
+    seg.restarts = [];
+    seg.escUsed = false;
     this.active = null;
     if (b.module !== 'numseries' && moving) this.levels.set(b.module, lAfter);
     if (this.counted && isReactionModule(b.module)) {
-      const clean = this.sessionBlocks.filter((x) => x.module === b.module && isCleanBlock(x.flags));
+      const clean = this.sessionBlocks.filter((x) => x.module === b.module && isCleanBlock(x.flags) && !x.flags.includes('discarded'));
       if (detectFatigue(clean)) this.fatigueDetected.add(b.module);
     }
   }
@@ -1037,11 +1163,14 @@ export class SessionController {
     return stored + thisSession < CALIBRATION_BLOCKS;
   }
 
-  /** s of the previous level-moving block of the module in this session that was not timing_unreliable. */
+  /**
+   * s of the previous level-moving block of the module in this session that was played to its end: not
+   * timing_unreliable, not counted as 0 after Esc (T-R10).
+   */
   private prevScore(module: ModuleId): number | null {
     for (let i = this.sessionBlocks.length - 1; i >= 0; i--) {
       const b = this.sessionBlocks[i];
-      if (b?.module === module && !b.flags.includes('timing_unreliable') && movesLevel(b.flags)) return b.score;
+      if (b?.module === module && !b.flags.some((f) => f === 'timing_unreliable' || f === 'discarded') && movesLevel(b.flags)) return b.score;
     }
     return null;
   }
@@ -1108,5 +1237,21 @@ export class SessionController {
     const n = this.plan.diagnosticNumber;
     if (n === undefined) throw new Error('SessionController: diagnostic plan without diagnosticNumber');
     return n;
+  }
+}
+
+function isBlockStep(s: Step): s is BlockStep {
+  return s.kind === 'reaction_block' || s.kind === 'table_block' || s.kind === 'numseries_block' || s.kind === 'memory_block';
+}
+
+function moduleOfBlock(s: BlockStep): ModuleId {
+  switch (s.kind) {
+    case 'reaction_block':
+    case 'table_block':
+      return s.module;
+    case 'numseries_block':
+      return 'numseries';
+    case 'memory_block':
+      return 'memory';
   }
 }

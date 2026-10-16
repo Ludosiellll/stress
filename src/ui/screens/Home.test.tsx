@@ -1,6 +1,6 @@
 import { fireEvent, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { EMPTY_METRICS, type DiagnosticResults } from '../../engine/diagnostic';
+import { EMPTY_RESULTS, type DiagnosticResults } from '../../engine/diagnostic';
 import { MemoryRepository } from '../../data/memoryRepository';
 import { session } from '../../data/repository.contract';
 import type { SessionPlan } from '../../engine/planner';
@@ -14,7 +14,7 @@ import Home from './Home';
 const DEFERRED_NOTE = 'Новые показатели войдут в индекс со следующей диагностики.';
 
 function noResults(over: Partial<DiagnosticResults>): string {
-  const base: DiagnosticResults = { ...EMPTY_METRICS, unreliable: [] };
+  const base: DiagnosticResults = EMPTY_RESULTS;
   return JSON.stringify({ ...base, ...over });
 }
 

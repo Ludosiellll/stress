@@ -187,6 +187,11 @@ export class ReactionBlockRunner {
     });
   }
 
+  /** Stimuli shown so far, practice trials included (the share of the block done, F11). */
+  onsetCount(): number {
+    return this.onsets.length;
+  }
+
   press(p: Press): void {
     const ph = this.phase;
     if (ph.kind === 'idle' || ph.kind === 'finished') return;

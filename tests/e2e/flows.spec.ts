@@ -2,7 +2,7 @@ import type { Page } from '@playwright/test';
 import type { BlockRow } from '../../src/data/rows';
 import type { ModuleId } from '../../src/engine/types';
 import { cancelPendingPresses, historyBundle, openApp, pageDate, playSession, restoreBundle, type Screen } from './bot';
-import { E2E_URL, expect, expectFitsWidth, lineCount, pauseWithEscape, shot, test } from './fixtures';
+import { E2E_URL, escapeUntil, expect, expectFitsWidth, lineCount, pauseWithEscape, shot, test } from './fixtures';
 
 // Whole sessions at scale 0.02 still take tens of seconds each.
 test.describe.configure({ timeout: 240_000 });
@@ -39,6 +39,16 @@ async function runDiagnostic(page: Page): Promise<void> {
 /** Waits until the reaction bot has seen at least `n` stimuli. */
 async function waitForStimuli(page: Page, n: number): Promise<void> {
   await page.waitForFunction((count) => (window.__bot?.stimuli.length ?? 0) >= count, n);
+}
+
+/**
+ * The reaction block on screen listens to Escape: its canvas is up and two frames have passed, so its effects (the
+ * Escape listener of the view, the session's own listener a task later) have run. The first stimulus comes no sooner
+ * than its ISI after that (at least 500 ms in every block played here).
+ */
+async function reactionListening(page: Page): Promise<void> {
+  await expect(page.locator('.reaction canvas')).toBeVisible();
+  await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => { requestAnimationFrame(() => { r(); }); })));
 }
 
 test('full training session at scale 0.02 reaches done and wellbeing', async ({ page }) => {
@@ -142,8 +152,8 @@ test('diagnostic run writes results and home shows readiness', async ({ page }) 
   await runDiagnostic(page);
   // The second one is compared with the first.
   await expect(page.getByRole('columnheader', { name: /^Прошлая \(№1, \d\d\.\d\d\.\d{4}\)$/ })).toBeVisible();
-  // Columns: Показатель, Результат, Прошлая, Изменение, Ориентир. Both diagnostics have every value, so every
-  // row has a change (Δ = 0 in the shown rounding reads «без изменений», A-R3).
+  // Columns: Показатель, Результат, Прошлая, Изменение, Ориентир, Перезапуск. Both diagnostics have every value, so
+  // every row has a change (Δ = 0 in the shown rounding reads «без изменений», A-R3).
   const rows = page.getByRole('table', { name: 'Результаты диагностики' }).locator('tbody tr');
   await expect(rows).toHaveCount(12);
   for (const row of await rows.all()) {
@@ -154,8 +164,10 @@ test('diagnostic run writes results and home shows readiness', async ({ page }) 
     expect(await lineCount(change), await change.innerText()).toBe(1);
   }
   await expect(page.getByText(/^Индекс: \d+ \(прошлый — \d+\)$/)).toBeVisible();
-  // At 1280×800 the five columns fit the screen: neither the results nor the session scroll sideways (A-R24), and
+  // At 1280×800 the six columns fit the screen: neither the results nor the session scroll sideways (A-R24), and
   // no header or cell wraps past two lines (in a 760 px column the labels, «Прошлая (№…)» and the norms take three).
+  // Nobody pressed Escape: «Перезапуск» is «—» in every row (F11).
+  for (const row of await rows.all()) await expect(row.locator('td').last()).toHaveText('—');
   await expectFitsWidth(page.locator('.screen-center.done'), '«Сессия завершена»');
   await expectFitsWidth(page.locator('.session'), '.session');
   for (const cell of await page.getByRole('table', { name: 'Результаты диагностики' }).locator('th, td').all()) {
@@ -321,7 +333,8 @@ test('focus loss mid-block shows repeat message', async ({ page }) => {
 });
 
 test('escape pauses and the pause menu resumes or ends the session', async ({ page }) => {
-  await openApp(page, E2E_URL);
+  // Scale 0.3: the warm-up block has 5 signals, so one signal shown is still 20 % (free) and two are 40 % (counted).
+  await openApp(page, '/?e2e=1&scale=0.3');
   await home(page).click();
   await playSession(page, { stopAt: 'instruction' });
   await pauseWithEscape(page);
@@ -329,13 +342,21 @@ test('escape pauses and the pause menu resumes or ends the session', async ({ pa
   await page.getByRole('button', { name: 'Продолжить', exact: true }).click();
   await expect(page.locator('.instruction')).toBeVisible();
 
-  // Escape inside a running block throws the block away.
+  // Escape before the first signal: the block starts again for free (F11).
   await page.getByRole('button', { name: 'Начать (Enter)' }).click();
-  await waitForStimuli(page, 1);
+  await reactionListening(page);
+  await pauseWithEscape(page);
+  expect(await page.evaluate(() => window.__bot?.stimuli.length)).toBe(0);
+  await expect(page.getByText('Блок прерван в начале — не засчитан.')).toBeVisible();
+  await expect(page.getByText('Уже сохранённые блоки не пропадут.')).toBeVisible();
+  await page.getByRole('button', { name: 'Продолжить блок заново' }).click();
+
+  // Escape after two of the five signals: the block counts as 0; a warm-up keeps its level. The next block follows.
+  await waitForStimuli(page, 2);
   await cancelPendingPresses(page);
   await pauseWithEscape(page);
-  await expect(page.getByText('Блок начнётся заново. Уже сохранённые блоки не пропадут.')).toBeVisible();
-  await page.getByRole('button', { name: 'Продолжить блок заново' }).click();
+  await expect(page.getByText(/^Блок прерван на \d+\s% — засчитан как 0, уровень не меняется\.$/)).toBeVisible();
+  await page.getByRole('button', { name: 'Продолжить', exact: true }).click();
   const titles: string[] = [];
   await playSession(page, { stopAt: 'summary', onScreen: checkSummaries(page, titles) });
   expect(titles).toEqual(['ПЗМР']);
@@ -343,6 +364,32 @@ test('escape pauses and the pause menu resumes or ends the session', async ({ pa
   await pauseWithEscape(page);
   await page.getByRole('button', { name: 'Завершить сессию' }).click();
   await expect(home(page)).toBeVisible();
+});
+
+test('in a diagnostic the second Esc is ignored and the results say «да»', async ({ page }) => {
+  // A whole diagnostic of ten segments.
+  test.setTimeout(360_000);
+  await openApp(page, E2E_URL);
+  await page.getByRole('button', { name: 'Контрольная диагностика' }).click();
+  // The first ПЗМР block: Escape after a signal restarts the task, once, with the notice (F11).
+  await playSession(page, { stopAt: 'reaction' });
+  await waitForStimuli(page, 1);
+  await cancelPendingPresses(page);
+  await escapeUntil(page, 'Повтор блока');
+  await expect(page.getByText('Блок перезапущен. В диагностике это можно сделать один раз за задание.')).toBeVisible();
+  await page.getByRole('button', { name: 'Дальше (Enter)' }).click();
+  // The second Escape in the same task: the block goes on, and the hint says why.
+  await reactionListening(page);
+  await escapeUntil(page, page.getByText('Перезапуск уже использован — доведи задание до конца.'));
+  await expect(page.getByRole('heading', { name: 'Пауза' })).toHaveCount(0);
+  const titles: string[] = [];
+  await playSession(page, { onScreen: checkSummaries(page, titles), timeoutMs: 300_000 });
+  expect(titles[0]).toBe('ПЗМР');
+  const rows = page.getByRole('table', { name: 'Результаты диагностики' }).locator('tbody tr');
+  await expect(rows).toHaveCount(12);
+  await expect(page.getByRole('columnheader', { name: 'Перезапуск' })).toBeVisible();
+  const restarts = await Promise.all((await rows.all()).map((row) => row.locator('td').last().innerText()));
+  expect(restarts).toEqual(['да', ...Array<string>(11).fill('—')]);
 });
 
 test('progress shows charts after a diagnostic', async ({ page }) => {

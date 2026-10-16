@@ -61,17 +61,23 @@ export async function shot(page: Page, name: string, fullPage = false): Promise<
 }
 
 /**
- * Opens the pause menu with Escape and waits for it. A session screen listens to keys only while no controller call
- * runs, and from the task after it mounted (useKeyDown attaches its listener in a timeout), so an Escape pressed right
- * after a screen came up can be lost. The press is repeated until «Пауза» shows; a second press does nothing, because
- * the pause menu ignores Escape.
+ * Presses Escape until `what` shows: a heading of that name, or the locator. A session screen listens to keys only
+ * while no controller call runs, and from the task after it mounted (useKeyDown attaches its listener in a timeout), so
+ * an Escape pressed right after a screen came up can be lost. The press is repeated until `what` is visible, so it
+ * must be a screen a further press leaves as it is: the pause menu ignores Escape, the diagnostic restart notice comes
+ * at once, the hint of a used-up restart only shows again.
  */
-export async function pauseWithEscape(page: Page): Promise<void> {
-  const pause = page.getByRole('heading', { name: 'Пауза' });
+export async function escapeUntil(page: Page, what: string | Locator): Promise<void> {
+  const target = typeof what === 'string' ? page.getByRole('heading', { name: what }) : what;
   await expect(async () => {
     await page.keyboard.press('Escape');
-    await expect(pause).toBeVisible({ timeout: 1_000 });
+    await expect(target).toBeVisible({ timeout: 1_000 });
   }).toPass({ timeout: 20_000 });
+}
+
+/** Opens the pause menu with Escape and waits for it (escapeUntil «Пауза»). */
+export function pauseWithEscape(page: Page): Promise<void> {
+  return escapeUntil(page, 'Пауза');
 }
 
 /** Nothing inside the element sticks out sideways: its scrollWidth is within its clientWidth (A-R24). */

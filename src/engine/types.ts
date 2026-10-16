@@ -41,6 +41,11 @@ export function isBandModule(m: ModuleId): m is BandModuleId {
 export type TableModuleId = 'gorbov' | 'schulte';
 export type LayoutId = 'keyboard' | 'mouse' | 'pult';
 export type InputKey = string;
-export type BlockFlag = 'fatigued' | 'timing_unreliable' | 'calibration' | 'overload' | 'warmup' | 'test_format';
+/**
+ * discarded (F11): Esc after 30 % of a training or free block counted it as s = 0. It moves the level like any block
+ * (deriveModuleStates), and nothing else: fatigue, the previous score of g = 2, the window floor, the history and the
+ * personal bests leave it out (T-R10).
+ */
+export type BlockFlag = 'fatigued' | 'timing_unreliable' | 'calibration' | 'overload' | 'warmup' | 'test_format' | 'discarded';
 export type SessionKind = 'training' | 'diagnostic' | 'free';
 export type FamilyId = 'arith' | 'geom' | 'second' | 'alt' | 'fib' | 'linrec' | 'powers' | 'opcycle';

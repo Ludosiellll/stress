@@ -8,6 +8,8 @@ export interface NumSeriesViewProps {
   exposeAnswer: boolean;
   /** The answers are being saved: the field is locked. */
   busy: boolean;
+  /** After each item: items done / items and the answers so far (F11: Escape sends them). */
+  onProgress: (p: number, answered: readonly SeriesAnswer[]) => void;
   onSubmit: (answers: SeriesAnswer[]) => void;
 }
 
@@ -25,7 +27,7 @@ function seriesText(shown: readonly number[]): string {
  * shown as a bar with the seconds left; when it runs out the item gets no answer (and with the total limit,
  * so do the items not reached). After the last item the answers go to `onSubmit`.
  */
-export default function NumSeriesView({ step, exposeAnswer, busy, onSubmit }: NumSeriesViewProps) {
+export default function NumSeriesView({ step, exposeAnswer, busy, onProgress, onSubmit }: NumSeriesViewProps) {
   const { items, totalLimitMs } = step;
   const [index, setIndex] = useState(0);
   const [text, setText] = useState('');
@@ -57,6 +59,7 @@ export default function NumSeriesView({ step, exposeAnswer, busy, onSubmit }: Nu
     if (totalExpired) {
       for (const rest of items.slice(index + 1)) answers.current.push({ itemId: rest.id, given: null, timeMs: 0 });
     }
+    onProgress(answers.current.length / items.length, [...answers.current]);
     if (totalExpired || index + 1 >= items.length) {
       finished.current = true;
       onSubmit([...answers.current]);

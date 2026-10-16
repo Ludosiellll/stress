@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { localDayNumber } from '../engine/dates';
+import { EMPTY_RESULTS, parseResults } from '../engine/diagnostic';
 import { recordHistory } from '../testing/history';
 import { parseExportBundle, type ExportBundle } from './bundleSchema';
 import { exportBundle } from './export';
+import { importBundle } from './importBundle';
 import { MemoryRepository } from './memoryRepository';
 import type { Repository } from './repository';
 import { block, item, session, trial } from './repository.contract';
@@ -196,15 +198,40 @@ describe('parseExportBundle: errors (the first one found)', () => {
     expect(b.blocks[0]?.flags).toEqual(['test_format', 'timing_unreliable']);
   });
 
+  it('reads a block counted as 0 after Esc (F11)', () => {
+    const b = parsed(variant((x) => Object.assign(rows(x, 'blocks')[0] ?? {}, { flags: ['warmup', 'discarded'] })));
+    expect(b.blocks[0]?.flags).toEqual(['warmup', 'discarded']);
+  });
+
+  it('a counted Esc block, the restarts of a block and of a diagnostic go through export and restore (F11)', async () => {
+    const repo = new MemoryRepository();
+    await repo.createSession(session('s1', T1, { endedAt: '2026-10-01T08:30:00.000Z' }));
+    await repo.createSession(session('s2', '2026-10-02T08:00:00.000Z', { kind: 'diagnostic', endedAt: '2026-10-02T08:30:00.000Z' }));
+    const summaryJson = JSON.stringify({ discarded: { reason: 'user', progress: 0.45 }, restarts: [{ reason: 'focus_lost', progress: 0.2 }] });
+    await repo.addBlock(block('b1', 's1', T1, { lBefore: 5, lAfter: 3, score: 0, flags: ['discarded'], summaryJson }), [], []);
+    const resultsJson = JSON.stringify({ ...EMPTY_RESULTS, pzmrMedianRt: 300, restarts: { pzmr: { user: 1, focus: 2 } } });
+    await repo.addDiagnostic({ id: 'd1', sessionId: 's2', number: 1, at: '2026-10-02T08:30:00.000Z', resultsJson });
+
+    const bundle = parsed(await exportBundle(repo, '0.3.0'));
+    const restored = new MemoryRepository();
+    await importBundle(restored, bundle, { pause: () => Promise.resolve() });
+    const [row] = await restored.listBlocks();
+    expect(row).toMatchObject({ flags: ['discarded'], lAfter: 3, score: 0, summaryJson });
+    const [diagnostic] = await restored.listDiagnostics();
+    expect(parseResults(diagnostic ?? { resultsJson: '' })?.restarts).toEqual({ pzmr: { user: 1, focus: 2 } });
+    // The rebuilt level takes the block in (s = 0 moves the level, Справочник F11).
+    expect((await restored.getModuleStates()).pzmr.sessionEndLevels).toEqual([3]);
+  });
+
   it('unknown module, kind and family; flags outside BlockFlag; mood outside 1…5', () => {
     expect(errorOf(variant((b) => Object.assign(rows(b, 'blocks')[0] ?? {}, { module: 'tetris' })))).toBe(
       'Запись blocks[0]: поле module должно быть одним из: pzmr, szmr, gonogo, rdo, gorbov, schulte, stroop, taskswitch, pomeh, memory, numseries.',
     );
     expect(errorOf(variant((b) => Object.assign(rows(b, 'blocks')[0] ?? {}, { flags: ['bad'] })))).toBe(
-      'Запись blocks[0]: поле flags должно быть списком из: fatigued, timing_unreliable, calibration, overload, warmup, test_format.',
+      'Запись blocks[0]: поле flags должно быть списком из: fatigued, timing_unreliable, calibration, overload, warmup, test_format, discarded.',
     );
     expect(errorOf(variant((b) => Object.assign(rows(b, 'blocks')[0] ?? {}, { flags: 'calibration' })))).toBe(
-      'Запись blocks[0]: поле flags должно быть списком из: fatigued, timing_unreliable, calibration, overload, warmup, test_format.',
+      'Запись blocks[0]: поле flags должно быть списком из: fatigued, timing_unreliable, calibration, overload, warmup, test_format, discarded.',
     );
     expect(errorOf(variant((b) => Object.assign(rows(b, 'sessions')[0] ?? {}, { kind: 'cloud' })))).toBe(
       'Запись sessions[0]: поле kind должно быть одним из: training, diagnostic, free.',

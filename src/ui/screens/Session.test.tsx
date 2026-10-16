@@ -1,12 +1,13 @@
 import { act, cleanup, createEvent, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { MemoryRepository } from '../../data/memoryRepository';
-import { EMPTY_METRICS, type DiagnosticResults } from '../../engine/diagnostic';
+import { EMPTY_RESULTS, type DiagnosticResults } from '../../engine/diagnostic';
 import { planFree, type SessionPlan } from '../../engine/planner';
+import type { TimedSeriesItem } from '../../modules/numseries/generate';
 import { NO_STRESSORS } from '../../modules/reaction/common';
 import { moduleTitles } from '../../modules/registry';
 import type { BlockTimeline, TrialSpec } from '../../engine/reaction/types';
-import type { SessionStartOptions } from '../../session/controller';
+import type { DiscardOutcome, SessionStartOptions } from '../../session/controller';
 import type { BlockSummaryView, Step, StepOf } from '../../session/steps';
 import { frameStamps, manualFrames, mockCanvas, nextTask, settleUntil, stamped, type ManualFrames } from '../../testing/domFakes';
 import { createAudioOut, type AudioOut } from '../../runtime/audio/audioOut';
@@ -81,17 +82,22 @@ const SERIES: StepOf<'numseries_block'> = {
 };
 
 /** A controller double: each test scripts what the calls do to `step`. */
-type FakeDriver = { step: Step } & { [K in Exclude<keyof SessionDriver, 'step'>]: Mock<SessionDriver[K]> };
+type FakeDriver = { step: Step; escAllowed: boolean } & {
+  [K in Exclude<keyof SessionDriver, 'step' | 'escAllowed'>]: Mock<SessionDriver[K]>;
+};
+
+const RESTARTED: DiscardOutcome = { kind: 'restarted' };
 
 function fakeDriver(first: Step): FakeDriver {
   return {
     step: first,
+    escAllowed: true,
     ackInstruction: vi.fn(),
     submitReaction: vi.fn(() => Promise.resolve()),
     submitTable: vi.fn(() => Promise.resolve()),
     submitNumSeries: vi.fn(() => Promise.resolve()),
     submitMemory: vi.fn(() => Promise.resolve()),
-    discardBlock: vi.fn(),
+    discardBlock: vi.fn(() => Promise.resolve(RESTARTED)),
     continueAfterSummary: vi.fn(() => Promise.resolve()),
     answerFatigue: vi.fn(() => Promise.resolve()),
     retrySave: vi.fn(() => Promise.resolve()),
@@ -454,7 +460,7 @@ describe('Session steps', () => {
 
   it('shows the diagnostic results with units', async () => {
     const diagnostic: DiagnosticResults = {
-      ...EMPTY_METRICS,
+      ...EMPTY_RESULTS,
       pzmrMedianRt: 251.4,
       pzmrMeanRt: 262.4,
       szmrMedianRt: 402,
@@ -477,23 +483,23 @@ describe('Session steps', () => {
       .slice(1)
       .map((r) => within(r).getAllByRole('cell').map((td) => td.textContent.replaceAll('\u00a0', ' ')));
     expect(rows).toEqual([
-      ['ПЗМР — медиана времени реакции', '251 мс', 'по среднему 262 мс: средний'],
-      ['Сложная реакция (СЗМР) — медиана времени реакции', '402 мс', '—'],
-      ['Go/No-Go — верные ответы', '93 %', '—'],
-      ['Реакция на движущийся объект — средняя ошибка по модулю', '19 мс', '—'],
-      ['Горбов — V, среднее время 1-й и 2-й таблиц', '41,3 с', 'средний'],
-      ['Горбов — P, время 3-й таблицы', '70,5 с', 'высокий'],
-      ['Горбов — Π, переключение внимания', '−12,0 с', '—'],
-      ['Числовые ряды — решено верно', '14 из 20', '—'],
-      ['Помехоустойчивость — разница с помехами и без', 'нет данных', '—'],
-      ['Струп — интерференция', 'нет данных', '—'],
-      ['Переключение правил — цена переключения', 'нет данных', '—'],
-      ['Память — объём', 'нет данных', '—'],
+      ['ПЗМР — медиана времени реакции', '251 мс', 'по среднему 262 мс: средний', '—'],
+      ['Сложная реакция (СЗМР) — медиана времени реакции', '402 мс', '—', '—'],
+      ['Go/No-Go — верные ответы', '93 %', '—', '—'],
+      ['Реакция на движущийся объект — средняя ошибка по модулю', '19 мс', '—', '—'],
+      ['Горбов — V, среднее время 1-й и 2-й таблиц', '41,3 с', 'средний', '—'],
+      ['Горбов — P, время 3-й таблицы', '70,5 с', 'высокий', '—'],
+      ['Горбов — Π, переключение внимания', '−12,0 с', '—', '—'],
+      ['Числовые ряды — решено верно', '14 из 20', '—', '—'],
+      ['Помехоустойчивость — разница с помехами и без', 'нет данных', '—', '—'],
+      ['Струп — интерференция', 'нет данных', '—', '—'],
+      ['Переключение правил — цена переключения', 'нет данных', '—', '—'],
+      ['Память — объём', 'нет данных', '—', '—'],
     ]);
   });
 
   it('marks missing diagnostic metrics', async () => {
-    const diagnostic: DiagnosticResults = { ...EMPTY_METRICS, unreliable: [] };
+    const diagnostic: DiagnosticResults = EMPTY_RESULTS;
     await renderSession(fakeDriver({ kind: 'done', sessionId: 's', diagnostic, seriesTotal: null, indexDeferred: false, comparison: null }));
     expect(screen.getAllByText('нет данных')).toHaveLength(12);
     expect(screen.queryByText(/войдут в индекс/)).toBeNull();
@@ -532,6 +538,7 @@ describe('Session reaction blocks', () => {
     });
     c.discardBlock.mockImplementation(() => {
       c.step = { ...REACTION, L: 1 };
+      return Promise.resolve(RESTARTED);
     });
     await renderSession(c);
     await press('Enter');
@@ -559,6 +566,7 @@ describe('Session reaction blocks', () => {
     const c = fakeDriver(REACTION);
     c.discardBlock.mockImplementation(() => {
       c.step = { ...REACTION };
+      return Promise.resolve(RESTARTED);
     });
     const { onExit } = await renderSession(c);
     const fail = async (): Promise<void> => {
@@ -611,6 +619,7 @@ describe('Session reaction blocks', () => {
     const fresh = { ...REACTION, L: 1 };
     c.discardBlock.mockImplementation(() => {
       c.step = fresh;
+      return Promise.resolve(RESTARTED);
     });
     await renderSession(c);
     frames.run(1000);
@@ -618,7 +627,7 @@ describe('Session reaction blocks', () => {
       window.dispatchEvent(new Event('blur'));
       await Promise.resolve();
     });
-    expect(c.discardBlock).toHaveBeenCalledWith('focus_lost');
+    expect(c.discardBlock).toHaveBeenCalledWith('focus_lost', 0);
     expect(screen.getByText('Окно потеряло фокус. Блок будет повторён.')).toBeTruthy();
     expect(document.querySelector('canvas')).toBeNull();
     await nextTask();
@@ -664,7 +673,7 @@ describe('Session reaction blocks', () => {
       await Promise.resolve();
     });
     await waitFor(() => {
-      expect(c.discardBlock).toHaveBeenCalledWith('error');
+      expect(c.discardBlock).toHaveBeenCalledWith('error', 1);
     });
     expect(screen.getByText('Ошибка отрисовки. Блок будет повторён.')).toBeTruthy();
     await waitFor(async () => {
@@ -676,13 +685,15 @@ describe('Session reaction blocks', () => {
     const c = fakeDriver(REACTION);
     c.discardBlock.mockImplementation(() => {
       c.step = { ...REACTION, L: 1 };
+      return Promise.resolve(RESTARTED);
     });
     const { onExit, platform } = await renderSession(c);
     frames.run(1000);
     await press('Escape');
-    expect(c.discardBlock).toHaveBeenCalledWith('user');
+    expect(c.discardBlock).toHaveBeenCalledWith('user', 0);
     expect(screen.getByRole('heading', { name: 'Пауза' })).toBeTruthy();
-    expect(screen.getByText('Блок начнётся заново. Уже сохранённые блоки не пропадут.')).toBeTruthy();
+    expect(screen.getByText('Блок прерван в начале — не засчитан.')).toBeTruthy();
+    expect(screen.getByText('Уже сохранённые блоки не пропадут.')).toBeTruthy();
     // Escape in the menu does nothing: going on takes Enter or a click.
     await press('Escape');
     expect(screen.getByRole('heading', { name: 'Пауза' })).toBeTruthy();
@@ -700,14 +711,15 @@ describe('Session reaction blocks', () => {
     const c = fakeDriver(MEMORY);
     c.discardBlock.mockImplementation(() => {
       c.step = { ...MEMORY };
+      return Promise.resolve(RESTARTED);
     });
     await renderSession(c);
     expect(document.querySelector('.memory canvas')).toBeTruthy();
     frames.run(1000);
     await press('Escape');
-    expect(c.discardBlock).toHaveBeenCalledWith('user');
+    expect(c.discardBlock).toHaveBeenCalledWith('user', 0);
     expect(screen.getByRole('heading', { name: 'Пауза' })).toBeTruthy();
-    expect(screen.getByText('Блок начнётся заново. Уже сохранённые блоки не пропадут.')).toBeTruthy();
+    expect(screen.getByText('Блок прерван в начале — не засчитан.')).toBeTruthy();
     expect(document.querySelector('.memory')).toBeNull();
     await click('Продолжить блок заново');
     expect(document.querySelector('.memory canvas')).toBeTruthy();
@@ -742,7 +754,7 @@ describe('Session reaction blocks', () => {
       window.dispatchEvent(new Event('blur'));
       await Promise.resolve();
     });
-    expect(lost.discardBlock).toHaveBeenCalledWith('focus_lost');
+    expect(lost.discardBlock).toHaveBeenCalledWith('focus_lost', 0);
     expect(screen.getByText('Окно потеряло фокус. Блок будет повторён.')).toBeTruthy();
   });
 
@@ -750,7 +762,7 @@ describe('Session reaction blocks', () => {
     const c = fakeDriver(TABLE);
     await renderSession(c);
     await press('Escape');
-    expect(c.discardBlock).toHaveBeenCalledWith('user');
+    expect(c.discardBlock).toHaveBeenCalledWith('user', 0);
     await click('Продолжить блок заново');
 
     cleanup();
@@ -761,6 +773,108 @@ describe('Session reaction blocks', () => {
     await click('Продолжить');
     expect(s.discardBlock).not.toHaveBeenCalled();
     expect(screen.getByText('Медиана: 280 мс')).toBeTruthy();
+  });
+});
+
+describe('Session: Esc after 30 % and the diagnostic restart (F11)', () => {
+  const DIAGNOSTIC: SessionPlan = { ...PLAN, kind: 'diagnostic' };
+  const HINT = 'Перезапуск уже использован — доведи задание до конца.';
+
+  it('Esc in a table at 45 % in training: the pause says it counts as 0, «Продолжить» goes on to the next block', async () => {
+    const c = fakeDriver(TABLE);
+    const next = { ...TABLE, seed: 2 };
+    c.discardBlock.mockImplementation(() => {
+      c.step = next;
+      return Promise.resolve({ kind: 'counted', progress: 0.45, lBefore: 12.5, lAfter: 10.5, levelMoves: true, series: false });
+    });
+    await renderSession(c);
+    frames.run(5000);
+    // Two of the four cells found: the share the controller gets.
+    const grid = screen.getByRole('group', { name: 'Таблица' });
+    for (const value of ['1', '2']) {
+      const cell = within(grid).getByText(value);
+      fireEvent(cell, stamped(createEvent.mouseDown(cell, { button: 0 }), 6000));
+    }
+    await press('Escape');
+    expect(c.discardBlock).toHaveBeenCalledWith('user', 0.5);
+    expect(screen.getByRole('heading', { name: 'Пауза' })).toBeTruthy();
+    expect(screen.getByText('Блок прерван на 45 % — засчитан как 0, уровень 12,5 → 10,5.')).toBeTruthy();
+    expect(screen.getByText('Уже сохранённые блоки не пропадут.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Продолжить блок заново' })).toBeNull();
+    await click('Продолжить');
+    expect(screen.getByRole('group', { name: 'Таблица' })).toBeTruthy();
+    expect(c.discardBlock).toHaveBeenCalledTimes(1);
+  });
+
+  it('Esc in number series sends the answers given so far', async () => {
+    const two: StepOf<'numseries_block'> = { ...SERIES, items: [SERIES.items[0] as TimedSeriesItem, { ...(SERIES.items[0] as TimedSeriesItem), id: 'arith:2' }] };
+    const c = fakeDriver(two);
+    c.discardBlock.mockImplementation(() => Promise.resolve({ kind: 'counted', progress: 0.5, lBefore: 0, lAfter: 0, levelMoves: false, series: true }));
+    await renderSession(c);
+    const input = screen.getByRole('textbox', { name: 'Ответ' });
+    fireEvent.change(input, { target: { value: '11' } });
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+    await press('Escape');
+    expect(c.discardBlock).toHaveBeenCalledWith('user', 0.5, [expect.objectContaining({ itemId: 'arith:1', given: 11 })]);
+    expect(screen.getByText('Блок прерван на 50 % — отвеченные задачи засчитаны, остальные — как пропущенные.')).toBeTruthy();
+  });
+
+  it('the first Esc of a diagnostic task goes straight to the restart notice, without the pause', async () => {
+    const c = fakeDriver(REACTION);
+    c.discardBlock.mockImplementation(() => {
+      c.step = { kind: 'notice', module: 'pzmr', text: 'Блок перезапущен. В диагностике это можно сделать один раз за задание.' };
+      c.escAllowed = false;
+      return Promise.resolve(RESTARTED);
+    });
+    await renderSession(c, { plan: DIAGNOSTIC });
+    frames.run(1000);
+    await press('Escape');
+    expect(c.discardBlock).toHaveBeenCalledWith('user', 0);
+    expect(screen.getByRole('heading', { name: 'Повтор блока' })).toBeTruthy();
+    expect(screen.getByText('Блок перезапущен. В диагностике это можно сделать один раз за задание.')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Пауза' })).toBeNull();
+  });
+
+  it('in a diagnostic after the restart was used: the hint, no pause, the block goes on (tables, memory, series)', async () => {
+    for (const step of [TABLE, MEMORY, SERIES]) {
+      const c = fakeDriver(step);
+      c.escAllowed = false;
+      await renderSession(c, { plan: DIAGNOSTIC });
+      await press('Escape');
+      expect(screen.getByText(HINT)).toBeTruthy();
+      expect(screen.queryByRole('heading', { name: 'Пауза' })).toBeNull();
+      expect(c.discardBlock).not.toHaveBeenCalled();
+      // The block view stays on screen; the hint comes after it.
+      expect(document.querySelector('.session')?.firstElementChild?.classList.contains('session-hint')).toBe(false);
+      cleanup();
+    }
+  });
+
+  it('in a diagnostic reaction block after the restart was used: the hint over the running block', async () => {
+    const c = fakeDriver(REACTION);
+    c.escAllowed = false;
+    await renderSession(c, { plan: DIAGNOSTIC });
+    frames.run(1000);
+    await press('Escape');
+    expect(screen.getByText(HINT)).toBeTruthy();
+    expect(c.discardBlock).not.toHaveBeenCalled();
+    expect(document.querySelector('canvas')).toBeTruthy();
+    frames.run(1100);
+    fireEvent(window, stamped(createEvent.keyDown(window, { code: 'Space', key: ' ' }), 1300));
+    frames.run(1316);
+    frames.run(1650);
+    await waitFor(() => {
+      expect(c.submitReaction).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('a refused Esc (the controller had the last word) shows the hint too', async () => {
+    const c = fakeDriver(TABLE);
+    c.discardBlock.mockImplementation(() => Promise.resolve({ kind: 'refused' }));
+    await renderSession(c, { plan: DIAGNOSTIC });
+    await press('Escape');
+    expect(screen.getByText(HINT)).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Пауза' })).toBeNull();
   });
 });
 

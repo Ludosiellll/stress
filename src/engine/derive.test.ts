@@ -165,6 +165,19 @@ describe('deriveModuleStates', () => {
     expect(isCleanBlock(['test_format'])).toBe(false);
   });
 
+  it('a block counted as 0 after Esc is the end level and the training date like any block (F11, T-R10)', () => {
+    const states = deriveModuleStates(
+      [ses('s1', day(1)), ses('s2', day(2))],
+      [blk('s1', 'szmr', 6, day(1, 8, 1)), blk('s2', 'szmr', 7, day(2, 8, 1)), blk('s2', 'szmr', 5, day(2, 8, 5), ['discarded'])],
+    );
+    expect(states.szmr.sessionEndLevels).toEqual([6, 5]);
+    expect(states.szmr.lastTrainedAt).toBe(day(2, 8, 5));
+    expect(isCleanBlock(['discarded'])).toBe(true);
+    expect(movesLevel(['discarded'])).toBe(true);
+    // A counted Esc in a warm-up or a run keeps it out like the flag it was played with.
+    expect(movesLevel(['warmup', 'discarded'])).toBe(false);
+  });
+
   it('a module played only in overload blocks counts its blocks but has no training date (W2-R40)', () => {
     const states = deriveModuleStates([ses('s1', day(1))], [blk('s1', 'taskswitch', 13, day(1, 8, 1), ['overload'])]);
     expect(states.taskswitch.lifetimeBlocks).toBe(1);

@@ -11,7 +11,7 @@ import { trend, trendWindow, type Trend } from '../engine/trend';
 import { isBandModule, MODULE_IDS, type ModuleId, type ReactionModuleId, type SessionKind } from '../engine/types';
 import { moduleTitles } from '../modules/registry';
 import { assessModules, meanFamilyRating, type ModuleAssessment } from '../session/assessment';
-import { buildBlockHistory, scoreFromCounts } from '../session/blockHistory';
+import { buildBlockHistory, parseObject, scoreFromCounts } from '../session/blockHistory';
 import { pastBlocks, testFormatRunsAt, warmupDays, type PastBlocks } from '../session/pastBlocks';
 import { plural, shownCost } from '../session/steps';
 import { TEST_FORMAT_NAMES, testFormatBest, type TestFormatBest } from '../session/testFormat';
@@ -85,6 +85,17 @@ export interface TestFormatProgress {
   runs: number;
 }
 
+/** «Прерванные блоки по неделям» (F11): one week Monday to Sunday, «дд.мм–дд.мм». */
+export interface DiscardWeek {
+  week: string;
+  /** Blocks stopped with Esc: restarted for free or counted as 0. */
+  manual: number;
+  /** Of them, counted as 0 (flag `discarded`). */
+  counted: number;
+  /** Restarted after a focus loss. */
+  focus: number;
+}
+
 export interface SessionLine {
   id: string;
   date: string;
@@ -109,6 +120,8 @@ export interface ProgressModel {
   levels: LevelChartSpec[];
   /** «Средний балл блоков перегрузки за 28 дней» (F3); null without such blocks. */
   overload28d: OverloadMean | null;
+  /** «Прерванные блоки по неделям» (F11): DISCARD_WEEKS weeks, newest first. */
+  discards: DiscardWeek[];
   /** Newest first, at most SESSION_LINES. */
   sessions: SessionLine[];
   sessionCount: number;
@@ -120,6 +133,8 @@ export const FORM_CHART_DAYS = 30;
 
 /** The window of overload28d: [now − 28 days, now]. */
 export const OVERLOAD_DAYS = 28;
+/** «Прерванные блоки по неделям» covers this week and the 7 before it. */
+export const DISCARD_WEEKS = 8;
 const DAY_MS = 86_400_000;
 
 /** Modules with a level (numseries is rated by Elo, not by L). */
@@ -433,17 +448,70 @@ export function levelChart(module: ModuleId, points: readonly LevelPoint[]): Lev
   };
 }
 
-/** Overload blocks of the band modules started in [now − OVERLOAD_DAYS days, now], scored by scoreFromCounts. */
+/**
+ * Overload blocks of the band modules started in [now − OVERLOAD_DAYS days, now], scored by scoreFromCounts; a block
+ * counted as 0 after Esc is left out (it measured nothing, T-R10).
+ */
 export function overload28d(blocks: readonly Pick<BlockRow, 'module' | 'flags' | 'startedAt' | 'summaryJson'>[], now: Date): OverloadMean | null {
   const end = now.getTime();
   const start = end - OVERLOAD_DAYS * DAY_MS;
   const scores = blocks.flatMap((b) => {
     const t = Date.parse(b.startedAt);
-    if (!isBandModule(b.module) || !b.flags.includes('overload') || !(t >= start && t <= end)) return [];
+    if (!isBandModule(b.module) || !b.flags.includes('overload') || b.flags.includes('discarded') || !(t >= start && t <= end)) return [];
     const s = scoreFromCounts(b.summaryJson);
     return s === null ? [] : [s];
   });
   return scores.length === 0 ? null : { mean: mean(scores), blocks: scores.length };
+}
+
+/** «дд.мм» of a day number (localDayNumber). */
+function dayLabel(day: number): string {
+  const iso = new Date(day * DAY_MS).toISOString();
+  return `${iso.slice(8, 10)}.${iso.slice(5, 7)}`;
+}
+
+/** The Monday of the week of a day number (day 0, 1970-01-01, was a Thursday). */
+const mondayOf = (day: number): number => day - ((((day + 3) % 7) + 7) % 7);
+
+const RESTART_REASONS: ReadonlySet<unknown> = new Set(['user', 'focus_lost', 'error']);
+
+/** The reasons of summaryJson.restarts (F11); a damaged list or entry is none. */
+function restartReasons(summaryJson: string): string[] {
+  const restarts = parseObject(summaryJson)?.['restarts'];
+  if (!Array.isArray(restarts)) return [];
+  return (restarts as unknown[]).flatMap((r) => {
+    const reason = typeof r === 'object' && r !== null ? (r as Record<string, unknown>)['reason'] : undefined;
+    return typeof reason === 'string' && RESTART_REASONS.has(reason) ? [reason] : [];
+  });
+}
+
+/**
+ * «Прерванные блоки по неделям» (F11): DISCARD_WEEKS weeks Monday to Sunday by local day, newest first, the current one
+ * included. Every stored block counts, whatever its session: its restarts by Esc (`user`) and the block itself when it
+ * was counted as 0 are «вручную», the counted ones also «засчитано как 0», the restarts after a focus loss «из-за потери
+ * фокуса»; restarts after a drawing error are not shown. A block whose date does not read is left out.
+ */
+export function discardWeeks(blocks: readonly Pick<BlockRow, 'flags' | 'startedAt' | 'summaryJson'>[], now: Date): DiscardWeek[] {
+  const thisWeek = mondayOf(localDayNumber(now.toISOString()));
+  const weeks = Array.from({ length: DISCARD_WEEKS }, (_, i) => {
+    const monday = thisWeek - 7 * i;
+    return { week: `${dayLabel(monday)}–${dayLabel(monday + 6)}`, manual: 0, counted: 0, focus: 0 };
+  });
+  for (const b of blocks) {
+    const day = dayOf(b.startedAt);
+    if (day === null) continue;
+    const week = weeks[(thisWeek - mondayOf(day)) / 7];
+    if (week === undefined) continue;
+    if (b.flags.includes('discarded')) {
+      week.manual++;
+      week.counted++;
+    }
+    for (const reason of restartReasons(b.summaryJson)) {
+      if (reason === 'user') week.manual++;
+      else if (reason === 'focus_lost') week.focus++;
+    }
+  }
+  return weeks;
 }
 
 export function sessionLines(sessions: readonly SessionRow[], blocksBySession: ReadonlyMap<string, number>): SessionLine[] {
@@ -481,6 +549,7 @@ export async function loadProgressModel(repo: Repository, now: Date = new Date()
     testFormats: testFormatProgress(past),
     levels: LEVEL_MODULES.map((module) => levelChart(module, points[module])),
     overload28d: overload28d(blocks, now),
+    discards: discardWeeks(blocks, now),
     sessions: sessionLines(sessions, blocksBySession),
     sessionCount: sessions.length,
   };

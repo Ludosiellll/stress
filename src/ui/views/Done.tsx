@@ -35,6 +35,27 @@ const NONE = '—';
 /** Added to a value whose block kept dropping frames after its replay (I1). */
 const UNRELIABLE = 'замер ненадёжен';
 
+/** The module whose restarts a row reports (F11): Горбов's three rows share one. */
+const ROW_MODULE: Readonly<Record<DiagnosticRowId, ModuleId>> = {
+  pzmr: 'pzmr',
+  szmr: 'szmr',
+  gonogo: 'gonogo',
+  rdo: 'rdo',
+  gorbovV: 'gorbov',
+  gorbovP: 'gorbov',
+  gorbovPi: 'gorbov',
+  numseries: 'numseries',
+  pomeh: 'pomeh',
+  stroop: 'stroop',
+  taskswitch: 'taskswitch',
+  memory: 'memory',
+};
+
+/** «да» when a task of the row's module was restarted with Esc; restarts after a focus loss do not count (Р22). */
+function restartText(d: DiagnosticResults, id: DiagnosticRowId): string {
+  return (d.restarts[ROW_MODULE[id]]?.user ?? 0) >= 1 ? 'да' : NONE;
+}
+
 const LABELS: Readonly<Record<DiagnosticRowId, string>> = {
   pzmr: `${moduleTitles.pzmr} — медиана времени реакции`,
   szmr: `${moduleTitles.szmr} — медиана времени реакции`,
@@ -108,6 +129,7 @@ function ResultsTable({ d, seriesTotal, comparison }: { d: DiagnosticResults; se
             </>
           )}
           <th scope="col">Ориентир</th>
+          <th scope="col">Перезапуск</th>
         </tr>
       </thead>
       <tbody>
@@ -122,6 +144,7 @@ function ResultsTable({ d, seriesTotal, comparison }: { d: DiagnosticResults; se
               </>
             )}
             <td>{noBreakUnits(diagnosticNorm(d, id) ?? NONE)}</td>
+            <td>{restartText(d, id)}</td>
           </tr>
         ))}
       </tbody>

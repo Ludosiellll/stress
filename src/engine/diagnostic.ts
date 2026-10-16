@@ -1,5 +1,5 @@
 import { hashString } from './rng';
-import { REACTION_MODULE_IDS, type FamilyId, type ModuleId, type ReactionModuleId } from './types';
+import { MODULE_IDS, REACTION_MODULE_IDS, type FamilyId, type ModuleId, type ReactionModuleId } from './types';
 import type { Segment, SessionPlan } from './planner';
 
 /**
@@ -88,6 +88,12 @@ export const EMPTY_METRICS: Readonly<DiagnosticMetrics> = Object.freeze({
   memorySpan: null,
 });
 
+/** Restarts of a module's tasks in one diagnostic (F11): by Esc (one per task) and after a focus loss. */
+export interface ModuleRestarts {
+  user: number;
+  focus: number;
+}
+
 /** Results of one control diagnostic as stored (resultsJson). */
 export interface DiagnosticResults extends DiagnosticMetrics {
   /**
@@ -95,7 +101,16 @@ export interface DiagnosticResults extends DiagnosticMetrics {
    * used by readiness, but every screen marks them «замер ненадёжен». Rows stored before 0.1.0 lack it: read as [].
    */
   unreliable: ReactionModuleId[];
+  /** The modules whose tasks were restarted (F11); rows stored before 0.3.0 lack it: read as {}. */
+  restarts: Partial<Record<ModuleId, ModuleRestarts>>;
 }
+
+/** Results with every metric missing, nothing unreliable and no restarts: the base of results built in tests and code. */
+export const EMPTY_RESULTS: Readonly<DiagnosticResults> = Object.freeze({
+  ...EMPTY_METRICS,
+  unreliable: Object.freeze([]) as unknown as ReactionModuleId[],
+  restarts: Object.freeze({}),
+});
 
 const REACTION_IDS: readonly string[] = REACTION_MODULE_IDS;
 export const isReactionId = (v: unknown): v is ReactionModuleId => typeof v === 'string' && REACTION_IDS.includes(v);
@@ -104,6 +119,25 @@ type NumberMetric = Exclude<keyof DiagnosticMetrics, 'gorbov'>;
 const NUMBER_METRICS = Object.keys(EMPTY_METRICS).filter((k): k is NumberMetric => k !== 'gorbov');
 
 const finite = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+/** A count: a whole number from 0; anything else reads as 0. */
+const count = (v: unknown): number => (typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : 0);
+const MODULES: readonly string[] = MODULE_IDS;
+
+/**
+ * The restarts of a stored row (F11, T-R22): an entry of a known module whose value is an object, each count a whole
+ * number from 0 (a damaged one reads 0); an entry with nothing counted, of an unknown module or not an object is left out.
+ */
+function restartsOf(v: unknown): DiagnosticResults['restarts'] {
+  const restarts: DiagnosticResults['restarts'] = {};
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return restarts;
+  for (const [module, entry] of Object.entries(v as Readonly<Record<string, unknown>>)) {
+    if (!MODULES.includes(module) || typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue;
+    const e = entry as Readonly<Record<string, unknown>>;
+    const read = { user: count(e['user']), focus: count(e['focus']) };
+    if (read.user + read.focus > 0) restarts[module as ModuleId] = read;
+  }
+  return restarts;
+}
 
 /** Горбов needs all three of V, P and Π as finite numbers; anything else reads as not measured. */
 function gorbovOf(v: unknown): DiagnosticMetrics['gorbov'] {
@@ -116,8 +150,9 @@ function gorbovOf(v: unknown): DiagnosticMetrics['gorbov'] {
 /**
  * The stored results of a diagnostic, or null when the row does not hold a JSON object. A missing metric
  * reads as null (the W2 metrics of a 0.1.0 row, the mean RTs and F7 metrics of a 0.2.0 one: missing, never 0); rows written before `unreliable` existed
- * read as reliable (I1). A damaged or imported row is read field by field (FW9): a metric that is not a finite number,
- * or a Горбов result without numeric V, P and Π, reads as null; unknown entries are dropped. Structural: DiagnosticRow fits.
+ * read as reliable (I1), rows without `restarts` as having none (F11). A damaged or imported row is read field by field
+ * (FW9, T-R22): a metric that is not a finite number, or a Горбов result without numeric V, P and Π, reads as null; damaged
+ * restarts as restartsOf reads them; unknown entries are dropped. Structural: DiagnosticRow fits.
  */
 export function parseResults(row: { readonly resultsJson: string }): DiagnosticResults | null {
   let value: unknown;
@@ -131,7 +166,7 @@ export function parseResults(row: { readonly resultsJson: string }): DiagnosticR
   const metrics = { ...EMPTY_METRICS, gorbov: gorbovOf(r['gorbov']) };
   for (const k of NUMBER_METRICS) metrics[k] = finite(r[k]);
   const unreliable = Array.isArray(r['unreliable']) ? (r['unreliable'] as unknown[]).filter(isReactionId) : [];
-  return { ...metrics, unreliable };
+  return { ...metrics, unreliable, restarts: restartsOf(r['restarts']) };
 }
 
 /** Family order of the number-series diagnostic; mirrors the module's FAMILIES (engine must not import src/modules). */

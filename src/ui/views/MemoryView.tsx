@@ -15,6 +15,8 @@ export interface MemoryViewProps {
   /** The answers are being saved: input is locked. */
   busy: boolean;
   onSubmit: (answers: MemoryAnswer[]) => void;
+  /** After each answer: answers / rows, the share of the block done (F11). */
+  onProgress: (p: number) => void;
   /** The window lost focus: the block is void. Escape is the session screen's (it pauses the block). */
   onFocusLost: () => void;
 }
@@ -30,7 +32,7 @@ type Phase = 'present' | 'respond';
  * (spanProtocolStops). The focus guard covers the whole block; Escape is the session screen's (it pauses and
  * discards the block, as for tables).
  */
-export default function MemoryView({ step, exposeAnswer, busy, onSubmit, onFocusLost }: MemoryViewProps) {
+export default function MemoryView({ step, exposeAnswer, busy, onSubmit, onProgress, onFocusLost }: MemoryViewProps) {
   const { trials } = step;
   const [index, setIndex] = useState(0);
   const [phase, setPhase] = useState<Phase>('present');
@@ -90,6 +92,7 @@ export default function MemoryView({ step, exposeAnswer, busy, onSubmit, onFocus
     // One answer per trial, even if Enter comes twice before the next render.
     if (locked || trial === undefined || answers.current.length !== index) return;
     answers.current.push({ given, timeMs: performance.now() - respondStart.current });
+    onProgress(answers.current.length / trials.length);
     setGiven([]);
     // The span protocol (diagnostics) ends as soon as both rows of a length are wrong.
     const stopped = step.protocol === 'span' && spanProtocolStops(trials, answers.current);

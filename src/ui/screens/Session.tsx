@@ -4,7 +4,7 @@ import type { SessionPlan } from '../../engine/planner';
 import { moduleTitles } from '../../modules/registry';
 import type { Platform } from '../../platform';
 import { SessionController, type SessionStartOptions } from '../../session/controller';
-import type { BlockSummaryView, Step } from '../../session/steps';
+import { discardText, RESTART_USED_HINT, type BlockSummaryView, type SeriesAnswer, type Step } from '../../session/steps';
 import { e2eHooks } from '../../testing/e2eHooks';
 import { useApp } from '../AppContext';
 import { logEvent } from '../errorLog';
@@ -37,6 +37,7 @@ export type SessionDriver = Pick<
   | 'abandonPending'
   | 'submitWellbeing'
   | 'ackNotice'
+  | 'escAllowed'
 >;
 
 export interface SessionProps {
@@ -76,14 +77,32 @@ type Phase =
   | { kind: 'running'; c: SessionDriver }
   | { kind: 'failed'; message: string };
 
+/** The pause menu: what Escape did to the block on screen ('' when it stopped none) and whether it starts again. */
+interface PauseState {
+  text: string;
+  restartBlock: boolean;
+}
+
+/** The share of a block done and, for number series, the answers so far, as its view last reported them (F11). */
+interface BlockProgress {
+  step: Step;
+  share: number;
+  answered: readonly SeriesAnswer[];
+}
+
+const NOT_STARTED: Omit<BlockProgress, 'step'> = { share: 0, answered: [] };
+
 /**
  * One session: pre-session check, fullscreen, then whatever `controller.step` says, until done or exit.
  *
  * Every controller call goes through `run`: one at a time, controls disabled meanwhile, the screen re-read
  * from `controller.step` afterwards. A block view is keyed by its step object, so it mounts once per block
- * and a discarded block mounts fresh. Escape pauses (a running block is discarded first); focus loss and
- * drawing errors discard the block and explain before a fresh one starts. When nothing on the new screen
- * has focus, its heading gets it (screen readers announce the change).
+ * and a discarded block mounts fresh. Escape on a block goes to the controller with the share of the block its view
+ * reported (F11): training and free sessions pause and say whether the block was restarted for free or counted as 0;
+ * a diagnostic shows its restart notice, and once a task's restart is used up the block goes on with a hint. While
+ * the controller decides, a new block step is not shown, so no fresh block starts under the pause. Escape elsewhere
+ * pauses. Focus loss and drawing errors discard the block and explain before a fresh one starts. When nothing on the
+ * new screen has focus, its heading gets it (screen readers announce the change).
  */
 function SessionFlow({
   plan,
@@ -101,7 +120,12 @@ function SessionFlow({
   const [renderFailures, setRenderFailures] = useState(0);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [pause, setPause] = useState<{ blockDiscarded: boolean } | null>(null);
+  const [pause, setPause] = useState<PauseState | null>(null);
+  /** The block step Escape stopped, while the controller decides what happens to it. */
+  const [discarding, setDiscarding] = useState<Step | null>(null);
+  /** The block on which Escape found the diagnostic restart used up: the hint shows while it runs. */
+  const [hintStep, setHintStep] = useState<Step | null>(null);
+  const progress = useRef<BlockProgress | null>(null);
   const [summaries, setSummaries] = useState<BlockSummaryView[]>([]);
   const [crash, setCrash] = useState<Error | null>(null);
   const busyRef = useRef(false);
@@ -191,29 +215,62 @@ function SessionFlow({
     })();
   };
 
-  const pauseBlock = (): void => {
-    setPause({ blockDiscarded: true });
-    run((c) => {
-      c.discardBlock('user');
+  /** What the view of `s` reported last; nothing yet: none of it done. */
+  const progressOf = (s: Step): Omit<BlockProgress, 'step'> => {
+    const p = progress.current;
+    return p !== null && p.step === s ? p : NOT_STARTED;
+  };
+
+  const escAllowed = phase.kind === 'running' && phase.c.escAllowed;
+
+  /** Escape on the running block `s`, `share` of it done; number series also send the answers so far (F11). */
+  const escapeBlock = (s: Step, share: number, answered?: readonly SeriesAnswer[]): void => {
+    if (!escAllowed) {
+      setHintStep(s);
+      return;
+    }
+    // Another call is running: run() would drop this one, and the stopped block would never be let go.
+    if (busyRef.current) return;
+    setDiscarding(s);
+    run(async (c) => {
+      try {
+        const o = await (answered === undefined ? c.discardBlock('user', share) : c.discardBlock('user', share, answered));
+        if (o.kind === 'refused') setHintStep(s);
+        // A diagnostic's restart notice is the controller's next step.
+        else if (plan.kind !== 'diagnostic') setPause({ text: discardText(o), restartBlock: o.kind === 'restarted' });
+      } finally {
+        setDiscarding(null);
+      }
     });
   };
 
-  // A running reaction block handles Escape itself; a save error must be resolved first.
-  const escapePauses =
+  const discardFree = (reason: 'focus_lost' | 'error', share: number): void => {
+    run(async (c) => {
+      await c.discardBlock(reason, share);
+    });
+  };
+
+  const isBlock = (s: Step): boolean =>
+    s.kind === 'reaction_block' || s.kind === 'table_block' || s.kind === 'numseries_block' || s.kind === 'memory_block';
+  // A running reaction block handles Escape itself, unless its diagnostic restart is used up (the hint is shown from
+  // here); a save error must be resolved first.
+  const escapeListens =
     step !== null &&
     pause === null &&
     !busy &&
-    (notice !== null || (step.kind !== 'reaction_block' && step.kind !== 'save_error' && step.kind !== 'done'));
+    (notice !== null || (step.kind !== 'save_error' && step.kind !== 'done' && (step.kind !== 'reaction_block' || !escAllowed)));
   useKeyDown((e) => {
     if (e.key !== 'Escape' || step === null) return;
     e.preventDefault();
     if (notice !== null) {
       // The block after the notice has not started yet: nothing to discard.
       setNotice(null);
-      setPause({ blockDiscarded: false });
-    } else if (step.kind === 'table_block' || step.kind === 'numseries_block' || step.kind === 'memory_block') pauseBlock();
-    else setPause({ blockDiscarded: false });
-  }, escapePauses);
+      setPause({ text: '', restartBlock: false });
+    } else if (isBlock(step)) {
+      const p = progressOf(step);
+      escapeBlock(step, p.share, step.kind === 'numseries_block' ? p.answered : undefined);
+    } else setPause({ text: '', restartBlock: false });
+  }, escapeListens);
 
   if (crash !== null) throw crash;
 
@@ -252,7 +309,8 @@ function SessionFlow({
   if (pause !== null) {
     return (
       <PauseMenu
-        blockDiscarded={pause.blockDiscarded}
+        text={pause.text}
+        restartBlock={pause.restartBlock}
         onResume={() => {
           setPause(null);
         }}
@@ -260,6 +318,14 @@ function SessionFlow({
       />
     );
   }
+  // The controller has moved past the stopped block: what follows waits for the pause (or the notice) to be set.
+  if (discarding !== null && step !== discarding) return null;
+  const hint =
+    hintStep === step ? (
+      <p className="session-hint" role="status">
+        {RESTART_USED_HINT}
+      </p>
+    ) : null;
 
   switch (step.kind) {
     case 'instruction':
@@ -282,74 +348,90 @@ function SessionFlow({
       );
     case 'reaction_block':
       return (
-        <ReactionView
-          key={stepId(step)}
-          step={step}
-          nominalFrameMs={frameMs}
-          onDone={(timeline) => {
-            setRenderFailures(0);
-            run((c) => c.submitReaction(timeline));
-          }}
-          onAbort={(reason) => {
-            if (reason === 'user') {
-              pauseBlock();
-              return;
-            }
-            setNotice(FOCUS_LOST);
-            run((c) => {
-              c.discardBlock('focus_lost');
-            });
-          }}
-          onError={(e) => {
-            void logEvent(repo, 'error', `Ошибка отрисовки: ${errorText(e)}`, e instanceof Error ? (e.stack ?? '') : '');
-            setRenderFailures((n) => n + 1);
-            setNotice(RENDER_FAILED);
-            run((c) => {
-              c.discardBlock('error');
-            });
-          }}
-        />
+        <>
+          <ReactionView
+            key={stepId(step)}
+            step={step}
+            nominalFrameMs={frameMs}
+            escAllowed={escAllowed}
+            onDone={(timeline) => {
+              setRenderFailures(0);
+              run((c) => c.submitReaction(timeline));
+            }}
+            onAbort={(reason, share) => {
+              if (reason === 'user') {
+                escapeBlock(step, share);
+                return;
+              }
+              setNotice(FOCUS_LOST);
+              discardFree('focus_lost', share);
+            }}
+            onError={(e, share) => {
+              void logEvent(repo, 'error', `Ошибка отрисовки: ${errorText(e)}`, e instanceof Error ? (e.stack ?? '') : '');
+              setRenderFailures((n) => n + 1);
+              setNotice(RENDER_FAILED);
+              discardFree('error', share);
+            }}
+          />
+          {hint}
+        </>
       );
     case 'table_block':
       return (
-        <TableView
-          key={stepId(step)}
-          step={step}
-          busy={busy}
-          onSubmit={(r) => {
-            run((c) => c.submitTable(r));
-          }}
-        />
+        <>
+          <TableView
+            key={stepId(step)}
+            step={step}
+            busy={busy}
+            onProgress={(share) => {
+              progress.current = { step, share, answered: [] };
+            }}
+            onSubmit={(r) => {
+              run((c) => c.submitTable(r));
+            }}
+          />
+          {hint}
+        </>
       );
     case 'numseries_block':
       return (
-        <NumSeriesView
-          key={stepId(step)}
-          step={step}
-          exposeAnswer={hooks.enabled}
-          busy={busy}
-          onSubmit={(answers) => {
-            run((c) => c.submitNumSeries(answers));
-          }}
-        />
+        <>
+          <NumSeriesView
+            key={stepId(step)}
+            step={step}
+            exposeAnswer={hooks.enabled}
+            busy={busy}
+            onProgress={(share, answered) => {
+              progress.current = { step, share, answered };
+            }}
+            onSubmit={(answers) => {
+              run((c) => c.submitNumSeries(answers));
+            }}
+          />
+          {hint}
+        </>
       );
     case 'memory_block':
       return (
-        <MemoryView
-          key={stepId(step)}
-          step={step}
-          exposeAnswer={hooks.enabled}
-          busy={busy}
-          onSubmit={(answers) => {
-            run((c) => c.submitMemory(answers));
-          }}
-          onFocusLost={() => {
-            setNotice(FOCUS_LOST);
-            run((c) => {
-              c.discardBlock('focus_lost');
-            });
-          }}
-        />
+        <>
+          <MemoryView
+            key={stepId(step)}
+            step={step}
+            exposeAnswer={hooks.enabled}
+            busy={busy}
+            onProgress={(share) => {
+              progress.current = { step, share, answered: [] };
+            }}
+            onSubmit={(answers) => {
+              run((c) => c.submitMemory(answers));
+            }}
+            onFocusLost={() => {
+              setNotice(FOCUS_LOST);
+              discardFree('focus_lost', progressOf(step).share);
+            }}
+          />
+          {hint}
+        </>
       );
     case 'summary':
       return (

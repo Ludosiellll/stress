@@ -54,6 +54,11 @@ describe('BlockSummary', () => {
     expect(screen.queryByText(/Уровень:/)).toBeNull();
   });
 
+  it('a block counted as 0 after Esc says so as a warning (F11, T-R16)', () => {
+    render(<BlockSummary view={{ ...VIEW, flags: ['discarded'] }} busy={false} onContinue={vi.fn()} />);
+    expect(screen.getByText('Блок прерван — засчитан как 0').className).toBe('warning');
+  });
+
   it('the warm-up flag has its note when there is no level note', () => {
     render(<BlockSummary view={{ ...VIEW, flags: ['warmup'] }} busy={false} onContinue={vi.fn()} />);
     expect(screen.getByText('Разминка: на сохранённый уровень не влияет').className).toBe('muted');

@@ -5,14 +5,14 @@ import { importBundle } from '../data/importBundle';
 import { MemoryRepository } from '../data/memoryRepository';
 import { block, session } from '../data/repository.contract';
 import type { DiagnosticRow } from '../data/rows';
-import { EMPTY_METRICS, diagnosticSegmentSeed, type DiagnosticResults } from '../engine/diagnostic';
+import { EMPTY_RESULTS, diagnosticSegmentSeed, type DiagnosticResults } from '../engine/diagnostic';
 import type { PhaseInfo } from '../engine/phases';
 import type { Segment, SessionPlan } from '../engine/planner';
 import { readiness } from '../engine/readiness';
 import { MODULE_IDS, type ModuleId } from '../engine/types';
 import { loadHomeModel, phaseTexts, planLine, readinessOf } from './homeModel';
 
-const EMPTY: DiagnosticResults = { ...EMPTY_METRICS, unreliable: [] };
+const EMPTY: DiagnosticResults = EMPTY_RESULTS;
 
 function row(number: number, results: Partial<DiagnosticResults> | string): DiagnosticRow {
   const resultsJson = typeof results === 'string' ? results : JSON.stringify({ ...EMPTY, ...results });
@@ -118,6 +118,23 @@ describe('loadHomeModel', () => {
     await repo.createSession(session('s3', '2026-10-12T10:00:00'));
     await repo.addBlock(block('r2', 's3', '2026-10-12T10:01:00', { module: 'szmr', flags: ['test_format'] }), [], []);
     expect((await loadHomeModel(repo, TODAY)).plan.segments.map((s) => s.purpose)).not.toContain('test_format');
+  });
+
+  it('a run counted as 0 after Esc uses up its slot and its turn of the formats (F11, T-R10)', async () => {
+    const repo = new MemoryRepository();
+    // Day 21, as above: the ПЗМР run of 10 days ago makes СЗМР due.
+    await repo.createSession(session('s1', '2026-09-24T10:00:00'));
+    await repo.createSession(session('s2', '2026-10-04T10:00:00'));
+    await repo.addBlock(block('b1', 's1', '2026-09-24T10:01:00', { module: 'szmr' }), [], []);
+    await repo.addBlock(block('r1', 's2', '2026-10-04T10:01:00', { module: 'pzmr', flags: ['test_format'] }), [], []);
+    // Two days ago the СЗМР run was interrupted after 45 %: it still was a run.
+    await repo.createSession(session('s3', '2026-10-12T10:00:00'));
+    const summaryJson = JSON.stringify({ discarded: { reason: 'user', progress: 0.45 } });
+    await repo.addBlock(block('r2', 's3', '2026-10-12T10:01:00', { module: 'szmr', flags: ['test_format', 'discarded'], score: 0, summaryJson }), [], []);
+    expect((await loadHomeModel(repo, TODAY)).plan.segments.map((s) => s.purpose)).not.toContain('test_format');
+    // Five days later the next run is Go/No-Go, not СЗМР again.
+    const later = (await loadHomeModel(repo, '2026-10-19')).plan.segments[0];
+    expect(later).toMatchObject({ module: 'gonogo', purpose: 'test_format' });
   });
 
   it('loadHomeModel computes the phase from the first session and the test date', async () => {

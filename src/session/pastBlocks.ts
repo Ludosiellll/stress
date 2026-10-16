@@ -87,12 +87,14 @@ export interface StoredRun {
 
 /**
  * The stored runs of a format (F4), in block order (by startedAt): blocks of training and free sessions with the
- * flag test_format and a readable summaryJson.testFormat; a damaged one is left out.
+ * flag test_format and a readable summaryJson.testFormat; a damaged one is left out, and so is a run counted as 0
+ * after Esc (F11: it has no metrics, and it is never a best, T-R10). The planner counts that one (homeModel).
  */
 export function testFormatRunsAt(past: PastBlocks, module: TestFormatId): StoredRun[] {
   return past.blocks.flatMap((row) => {
     const kind = past.kinds.get(row.sessionId);
-    if (row.module !== module || !row.flags.includes('test_format') || kind === undefined || !isCountedSession(kind)) return [];
+    if (row.module !== module || !row.flags.includes('test_format') || row.flags.includes('discarded')) return [];
+    if (kind === undefined || !isCountedSession(kind)) return [];
     const metrics = readTestFormat(row.summaryJson);
     return metrics === null ? [] : [{ at: row.startedAt, metrics }];
   });
@@ -105,11 +107,11 @@ export function testFormatRuns(past: PastBlocks, module: TestFormatId): TestForm
 
 /**
  * Blocks whose hits never feed the window floor (F3, Справочник): overload blocks play another band's load, a
- * timing_unreliable block measured nothing, and a test-format run plays the frozen diagnostic parameters, not a
- * training band (F4). Warm-up, fatigued and calibration blocks do feed it. `discarded` (Task 13) joins this list
- * with its flag.
+ * timing_unreliable block measured nothing, a test-format run plays the frozen diagnostic parameters, not a
+ * training band (F4), and a block counted as 0 after Esc stores no hits (F11, T-R4). Warm-up, fatigued and
+ * calibration blocks do feed it.
  */
-const NOT_FLOOR_FLAGS: readonly BlockFlag[] = ['overload', 'timing_unreliable', 'test_format'];
+const NOT_FLOOR_FLAGS: readonly BlockFlag[] = ['overload', 'timing_unreliable', 'test_format', 'discarded'];
 
 /** The load band a block played (paramsJson.band, a whole number from 0) and its clean hits; null: either is unreadable. */
 interface BandHits {

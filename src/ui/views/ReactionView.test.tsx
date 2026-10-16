@@ -118,10 +118,10 @@ afterEach(() => {
   installE2eHooks({ location: { search: '' } });
 });
 
-function renderView(s = step(), audio: AudioOut = fakeAudio().audio) {
+function renderView(s = step(), audio: AudioOut = fakeAudio().audio, escAllowed = true) {
   const handlers = { onDone: vi.fn(), onAbort: vi.fn(), onError: vi.fn() };
   const view = renderWithApp(
-    <ReactionView step={s} nominalFrameMs={16} {...handlers} />,
+    <ReactionView step={s} nominalFrameMs={16} escAllowed={escAllowed} {...handlers} />,
     createFakePlatform(),
     new MemoryRepository(),
     audio,
@@ -263,7 +263,7 @@ describe('ReactionView', () => {
       window.dispatchEvent(new Event('blur'));
       await Promise.resolve();
     });
-    expect(onAbort).toHaveBeenCalledWith('focus_lost');
+    expect(onAbort).toHaveBeenCalledWith('focus_lost', 0);
     expect(onDone).not.toHaveBeenCalled();
     expect(frames.pending()).toBe(0);
   });
@@ -273,7 +273,7 @@ describe('ReactionView', () => {
     vi.spyOn(document, 'hasFocus').mockReturnValue(false);
     const { onAbort } = renderView();
     await nextTask();
-    expect(onAbort).toHaveBeenCalledWith('focus_lost');
+    expect(onAbort).toHaveBeenCalledWith('focus_lost', 0);
     expect(frames.pending()).toBe(0);
   });
 
@@ -291,7 +291,46 @@ describe('ReactionView', () => {
       fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' });
       await Promise.resolve();
     });
-    expect(onAbort).toHaveBeenCalledWith('user');
+    expect(onAbort).toHaveBeenCalledWith('user', 0);
+  });
+
+  it('Escape reports the share of the block shown: stimuli shown / trials, practice left out (F11)', async () => {
+    mockCanvas();
+    const practice = { ...TRIAL, practice: true };
+    const { onAbort } = renderView(step({ specs: [practice, practice, TRIAL, TRIAL, TRIAL, TRIAL] }));
+    await nextTask();
+    // Nobody presses: onsets at 1100, 1700 and 2300 (ISI 100 after each 500 ms window).
+    for (const ts of [1000, 1100, 1600, 1700, 2200, 2300]) frames.run(ts);
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' });
+      await Promise.resolve();
+    });
+    expect(onAbort).toHaveBeenCalledWith('user', 0.25);
+  });
+
+  it('Escape does nothing when the step allows no restart: the block plays on (F11)', async () => {
+    mockCanvas();
+    const { onAbort, onDone } = renderView(step(), fakeAudio().audio, false);
+    await nextTask();
+    frames.run(1000);
+    let event: KeyboardEvent | null = null;
+    await act(async () => {
+      event = createEvent.keyDown(window, { key: 'Escape', code: 'Escape' }) as KeyboardEvent;
+      fireEvent(window, event);
+      await Promise.resolve();
+    });
+    // Left for the session screen, which says why.
+    expect((event as KeyboardEvent | null)?.defaultPrevented).toBe(false);
+    expect(onAbort).not.toHaveBeenCalled();
+    frames.run(1100);
+    keyDown('Space', 1300);
+    frames.run(1316);
+    frames.run(1616);
+    frames.run(1632);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(onDone).toHaveBeenCalledTimes(1);
   });
 
   it('a renderer failure reports the error and clears the screen', async () => {
@@ -309,7 +348,8 @@ describe('ReactionView', () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(onError).toHaveBeenCalledWith(boom);
+    // The failing stimulus had its onset: the one trial of the block is done (F11).
+    expect(onError).toHaveBeenCalledWith(boom, 1);
     expect(onDone).not.toHaveBeenCalled();
     // hide() redrew the empty background after the failed show.
     expect(canvas.calls.slice(-1)).toEqual(['fillRect']);
@@ -320,6 +360,8 @@ describe('ReactionView', () => {
     const { onError } = renderView();
     await nextTask();
     expect(onError).toHaveBeenCalledTimes(1);
+    // Nothing was shown.
+    expect(onError.mock.calls[0]?.[1]).toBe(0);
   });
 
   it('unmounting mid-block stops it without reporting anything', async () => {
@@ -434,7 +476,7 @@ describe('ReactionView', () => {
     const unfocused = fakeAudio();
     const { onAbort } = renderView(stressedStep(['noisy']), unfocused.audio);
     await nextTask();
-    expect(onAbort).toHaveBeenCalledWith('focus_lost');
+    expect(onAbort).toHaveBeenCalledWith('focus_lost', 0);
     expect(unfocused.handle.start).not.toHaveBeenCalled();
     expect(unfocused.handle.stop).toHaveBeenCalled();
   });
@@ -511,7 +553,7 @@ describe('ReactionView', () => {
       window.dispatchEvent(new Event('blur'));
       await Promise.resolve();
     });
-    expect(onAbort).toHaveBeenCalledWith('focus_lost');
+    expect(onAbort).toHaveBeenCalledWith('focus_lost', 0.5);
     expect(handle.stop).toHaveBeenCalledTimes(1);
     expect(frames.pending()).toBe(0);
   });

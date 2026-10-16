@@ -21,7 +21,8 @@ const NOT_MOVING_FLAGS: readonly BlockFlag[] = ['overload', 'warmup', 'test_form
 /**
  * A block that moves the level: not an overload, a warm-up or a test-format block (T-R38: the one place this rule
  * lives). Only such blocks are calibration blocks, the previous block for g = 2 or a segment's first, and only they
- * make the module look trained (lastTrainedAt).
+ * make the module look trained (lastTrainedAt). A block counted as 0 after Esc (`discarded`, F11) moves the level as
+ * well; the controller keeps it out of fatigue and of the previous score of g = 2 (T-R10).
  */
 export function movesLevel(flags: readonly BlockFlag[]): boolean {
   return !flags.some((f) => NOT_MOVING_FLAGS.includes(f));
@@ -29,7 +30,10 @@ export function movesLevel(flags: readonly BlockFlag[]): boolean {
 
 const UNCLEAN_FLAGS: readonly BlockFlag[] = ['fatigued', 'timing_unreliable'];
 
-/** A block that may move L_saved and feeds fatigue detection: movesLevel, without fatigued or timing_unreliable. */
+/**
+ * A block that may move L_saved and feeds fatigue detection: movesLevel, without fatigued or timing_unreliable. A
+ * `discarded` block is one (s = 0 is its end level, F11), but fatigue leaves it out (T-R10).
+ */
 export function isCleanBlock(flags: readonly BlockFlag[]): boolean {
   return movesLevel(flags) && !flags.some((f) => UNCLEAN_FLAGS.includes(f));
 }

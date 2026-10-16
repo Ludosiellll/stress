@@ -494,7 +494,10 @@ export interface SeriesOutcome {
   success: boolean;
 }
 
-/** Answers matched to the block's items one to one, in order, and scored. RangeError for a step with both kinds of limit. */
+/**
+ * Answers matched to the block's items one to one, in order, and scored; a skipped item is wrong (F11). RangeError for a
+ * step with both kinds of limit.
+ */
 export function scoreSeries(step: StepOf<'numseries_block'>, answers: readonly SeriesAnswer[]): SeriesOutcome[] {
   const { items, totalLimitMs } = step;
   if (totalLimitMs !== null && items.some((it) => it.timeLimitMs !== null)) {
@@ -508,7 +511,7 @@ export function scoreSeries(step: StepOf<'numseries_block'>, answers: readonly S
     const answer = answers[i];
     if (answer?.itemId !== item.id) throw new RangeError(`submitNumSeries: answer ${String(i)} is not for item ${item.id}`);
     elapsed += answer.timeMs;
-    const correct = answer.given === item.answer;
+    const correct = answer.skipped !== true && answer.given === item.answer;
     const limitMs = item.timeLimitMs;
     const inTime = (limitMs === null || answer.timeMs <= limitMs) && (totalLimitMs === null || elapsed <= totalLimitMs);
     return { item, answer, correct, success: correct && inTime };
@@ -580,10 +583,12 @@ function spreadOf(hitRts: readonly number[]): [sd: number | null, iqr: number | 
  * taskswitch, the memory span. F7: the SD and IQR of ПЗМР and СЗМР clean hits, their false starts, wrong keys of
  * СЗМР, presses on no-go and misses + late answers of Go/No-Go, `early`, `timing_late` and the signed bias of РДО.
  * Missing parts stay null.
- * Reaction blocks stored with timingUnreliable (after their replay) list their module in `unreliable`.
+ * Reaction blocks stored with timingUnreliable (after their replay) list their module in `unreliable`; `restarts` are the
+ * restarts of each module's tasks (F11), copied.
  */
-export function diagnosticResults(parts: readonly DiagnosticPart[]): DiagnosticResults {
-  const r: DiagnosticResults = { ...EMPTY_METRICS, unreliable: [] };
+export function diagnosticResults(parts: readonly DiagnosticPart[], restarts: DiagnosticResults['restarts'] = {}): DiagnosticResults {
+  const copied = Object.fromEntries(Object.entries(restarts).map(([m, r]) => [m, { ...r }])) as DiagnosticResults['restarts'];
+  const r: DiagnosticResults = { ...EMPTY_METRICS, unreliable: [], restarts: copied };
   const seconds: Array<number | null> = [];
   for (const p of parts) {
     if ('summary' in p && p.summary.timingUnreliable) r.unreliable.push(p.module);

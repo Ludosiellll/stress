@@ -266,6 +266,41 @@ function Levels({ model }: { model: ProgressModel }) {
   );
 }
 
+/** «Прерванные блоки по неделям» (F11): eight weeks, newest first. */
+function Discards({ model }: { model: ProgressModel }) {
+  return (
+    <section aria-labelledby="discards-title">
+      <h2 id="discards-title">Прерванные блоки по неделям</h2>
+      <table className="results" aria-labelledby="discards-title">
+        <thead>
+          <tr>
+            <th scope="col">Неделя</th>
+            <th scope="col" className="num">
+              Прервано вручную
+            </th>
+            <th scope="col" className="num">
+              Из них засчитано как 0
+            </th>
+            <th scope="col" className="num">
+              Из-за потери фокуса
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {model.discards.map((w) => (
+            <tr key={w.week}>
+              <td className="nowrap">{w.week}</td>
+              <td className="num">{w.manual}</td>
+              <td className="num">{w.counted}</td>
+              <td className="num">{w.focus}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
 function History({ model }: { model: ProgressModel }) {
   return (
     <section aria-labelledby="history-title">
@@ -361,6 +396,7 @@ export default function Progress({ onBack }: ProgressProps) {
           <TestFormats model={model} />
           <Diagnostics model={model} />
           <Levels model={model} />
+          <Discards model={model} />
           <History model={model} />
         </>
       )}

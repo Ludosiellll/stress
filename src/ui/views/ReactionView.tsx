@@ -1,7 +1,7 @@
 import { useEffect, useEffectEvent, useRef } from 'react';
 import { STRESSOR_LOOP_S } from '../../engine/audio/stressors';
 import { resolveBlock } from '../../engine/reaction/resolve';
-import type { BlockTimeline } from '../../engine/reaction/types';
+import type { BlockTimeline, TrialSpec } from '../../engine/reaction/types';
 import { prepareQuietly } from '../../runtime/audio/audioOut';
 import { createCanvasRenderer, type CanvasRenderer } from '../../runtime/canvasRenderer';
 import { attachFocusGuard } from '../../runtime/focusGuard';
@@ -17,10 +17,21 @@ export interface ReactionViewProps {
   /** Measured display frame interval (pre-session check). */
   nominalFrameMs: number;
   onDone: (timeline: BlockTimeline) => void;
-  /** focus_lost: the window lost focus; user: Escape. */
-  onAbort: (reason: AbortReason) => void;
-  /** Drawing failed; the screen is already cleared. */
-  onError: (error: unknown) => void;
+  /**
+   * focus_lost: the window lost focus; user: Escape. `progress`: the share of the block shown, non-practice stimuli
+   * shown / non-practice trials (F11).
+   */
+  onAbort: (reason: AbortReason, progress: number) => void;
+  /** Drawing failed; the screen is already cleared. `progress` as for onAbort. */
+  onError: (error: unknown, progress: number) => void;
+  /** Escape stops the block; false: a diagnostic task whose restart is used up, the session screen answers Escape (F11). */
+  escAllowed: boolean;
+}
+
+/** Non-practice trials shown / non-practice trials (F11); 0 for a block of practice trials only. */
+function shownShare(specs: readonly TrialSpec[], onsets: number): number {
+  const counted = specs.filter((s) => s.practice !== true).length;
+  return counted === 0 ? 0 : specs.slice(0, onsets).filter((s) => s.practice !== true).length / counted;
 }
 
 function hideQuietly(renderer: StimulusRenderer): void {
@@ -54,13 +65,17 @@ const loopOffsetS = (seed: number): number => (seed % (STRESSOR_LOOP_S * 1000)) 
  * Stressors (`step.layers`): from the wait before trial i, the visual noise is on when its gate (`noiseGate`) is 'all'
  * or trial i is `noisy` (W2-R10), the sound when the gate is 'all' or trial i is `noisy`. A block with sound reports
  * whether it played.
+ *
+ * Escape stops the block only while `escAllowed`; otherwise the key goes on to the session screen untouched (F11). An
+ * abort and a failure report the share of the block shown.
  */
-export default function ReactionView({ step, nominalFrameMs, onDone, onAbort, onError }: ReactionViewProps) {
+export default function ReactionView({ step, nominalFrameMs, onDone, onAbort, onError, escAllowed }: ReactionViewProps) {
   const { audio } = useApp();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const done = useEffectEvent(onDone);
   const aborted = useEffectEvent(onAbort);
   const failed = useEffectEvent(onError);
+  const escapeStops = useEffectEvent((): boolean => escAllowed);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -74,7 +89,7 @@ export default function ReactionView({ step, nominalFrameMs, onDone, onAbort, on
       base = createCanvasRenderer(canvas, layers.noise === null ? {} : { noise: { params: layers.noise, seed: layers.seed } });
     } catch (e) {
       const timer = setTimeout(() => {
-        failed(e);
+        failed(e, 0);
       }, 0);
       return () => {
         clearTimeout(timer);
@@ -103,7 +118,7 @@ export default function ReactionView({ step, nominalFrameMs, onDone, onAbort, on
       runner.abort('focus_lost');
     });
     const onEscape = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape' || e.repeat) return;
+      if (e.key !== 'Escape' || e.repeat || !escapeStops()) return;
       e.preventDefault();
       stopped = true;
       runner.abort('user');
@@ -129,12 +144,13 @@ export default function ReactionView({ step, nominalFrameMs, onDone, onAbort, on
         });
         audioPlayed = sound?.start(loopOffsetS(layers.seed)) ?? false;
       }
+      const share = (): number => shownShare(specs, runner.onsetCount());
       runner.start().then(
         (end) => {
           release();
           if (disposed) return;
           if (end.kind === 'aborted') {
-            aborted(end.reason);
+            aborted(end.reason, share());
             return;
           }
           if (hooks.enabled) hooks.setLastResults(resolveBlock(specs, end.timeline));
@@ -143,7 +159,7 @@ export default function ReactionView({ step, nominalFrameMs, onDone, onAbort, on
         (e: unknown) => {
           release();
           hideQuietly(base);
-          if (!disposed) failed(e);
+          if (!disposed) failed(e, share());
         },
       );
     };

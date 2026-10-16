@@ -1,7 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, it, vi } from 'vitest';
 import { deriveRatings } from '../engine/derive';
-import { DIAGNOSTIC_VOLUME, EMPTY_METRICS, diagnosticSegmentSeed, diagnosticSeriesSchedule, planDiagnostic } from '../engine/diagnostic';
+import { DIAGNOSTIC_VOLUME, EMPTY_METRICS, EMPTY_RESULTS, diagnosticSegmentSeed, diagnosticSeriesSchedule, planDiagnostic } from '../engine/diagnostic';
 import { R0, updateRating, type Rating } from '../engine/elo';
 import { block, session } from '../data/repository.contract';
 import { effectiveDifficulty } from '../engine/itemLimit';
@@ -837,6 +837,20 @@ describe('number series', () => {
     ]);
   });
 
+  it('a skipped item is wrong, whatever it says (F11, F12): no answer, no time', () => {
+    const outcomes = scoreSeries(step([40_000, 40_000, 40_000], null), [
+      { itemId: 'arith:1', given: 4, timeMs: 3000 },
+      { itemId: 'arith:2', given: null, timeMs: 0, skipped: true },
+      // A damaged answer that is marked skipped stays wrong.
+      { itemId: 'arith:3', given: 4, timeMs: 0, skipped: true },
+    ]);
+    expect(outcomes.map((o) => [o.correct, o.success])).toEqual([
+      [true, true],
+      [false, false],
+      [false, false],
+    ]);
+  });
+
   it('total limit (diagnostic): cumulative time', () => {
     expect(scoreSeries(step([null, null, null], 31_000), answers).map((o) => o.success)).toEqual([true, false, false]);
     expect(scoreSeries(step([null, null, null], null), answers).map((o) => o.success)).toEqual([true, false, true]);
@@ -994,6 +1008,7 @@ describe('diagnosticResults', () => {
       switchCostMs: -20,
       memorySpan: 7,
       unreliable: [],
+      restarts: {},
     });
     // A condition with fewer than 3 RTs has no median: its difference is missing, the other median is kept.
     const partial = diagnosticResults([{ module: 'stroop', summary: summary({}), hitRts: [], conditions: { congruent: cond(520), incongruent: cond(null) } }]);
@@ -1005,8 +1020,17 @@ describe('diagnosticResults', () => {
     });
     expect(diagnosticResults([{ module: 'gorbov', run: 0, seconds: 30 }, { module: 'gorbov', run: 1, seconds: null }, { module: 'gorbov', run: 2, seconds: 70 }]).gorbov).toBeNull();
     expect(diagnosticResults([{ module: 'gorbov', run: 0, seconds: 30 }, { module: 'gorbov', run: 2, seconds: 70 }]).gorbov).toBeNull();
-    expect(diagnosticResults([])).toEqual({ ...EMPTY_METRICS, unreliable: [] });
+    expect(diagnosticResults([])).toEqual({ ...EMPTY_METRICS, unreliable: [], restarts: {} });
+    expect(diagnosticResults([])).toEqual(EMPTY_RESULTS);
     expect(Object.values(EMPTY_METRICS).every((v) => v === null)).toBe(true);
+  });
+
+  it('diagnosticResults keeps the restarts of each module, as a copy (F11)', () => {
+    const restarts = { pzmr: { user: 1, focus: 2 }, gorbov: { user: 0, focus: 1 } };
+    const r = diagnosticResults([], restarts);
+    expect(r.restarts).toEqual(restarts);
+    restarts.pzmr.user = 5;
+    expect(r.restarts.pzmr).toEqual({ user: 1, focus: 2 });
   });
 
   it('diagnosticResults keeps the mean RTs of ПЗМР and СЗМР', () => {

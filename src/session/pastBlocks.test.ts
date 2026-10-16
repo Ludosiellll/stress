@@ -126,9 +126,11 @@ describe('cleanHitsByBand', () => {
       played('a', 't', '2026-10-10T09:01:00', 0, [301], { flags: ['calibration'] }),
       played('e', 'f', '2026-10-11T09:04:00', 1, [312], { flags: ['fatigued'] }),
       played('c', 't', '2026-10-10T09:03:00', 1, [311], { flags: ['warmup'] }),
-      // Left out: overload, timing_unreliable and test-format blocks, a diagnostic, a block without a band, another
-      // module. A test-format run plays the frozen diagnostic parameters (F4): its band field is the format's band 0.
+      // Left out: overload, timing_unreliable, test-format and counted Esc blocks, a diagnostic, a block without a band,
+      // another module. A test-format run plays the frozen diagnostic parameters (F4): its band field is the format's
+      // band 0. A counted Esc block (F11, T-R4) stores no hits; were any there, they would not count either.
       played('g', 't', '2026-10-10T09:05:00', 1, [901], { flags: ['overload'] }),
+      played('p', 'f', '2026-10-11T09:06:00', 1, [907], { flags: ['discarded'] }),
       played('h', 't', '2026-10-10T09:06:00', 0, [902], { flags: ['timing_unreliable', 'fatigued'] }),
       played('m', 'f', '2026-10-11T09:05:00', 0, [906], { flags: ['test_format'] }),
       played('i', 'd', '2026-10-12T09:01:00', 0, [903]),
@@ -206,6 +208,8 @@ describe('testFormatRuns', () => {
         run('g', 't', '2026-10-10T09:03:00', { testFormat: metrics(210) }, { flags: [] }),
         run('h', 't', '2026-10-10T09:04:00', { testFormat: { mean: 'x' } }),
         block('i', 't', '2026-10-10T09:05:00', { flags: ['test_format'], summaryJson: 'not json' }),
+        // A run counted as 0 after Esc (F11) is no one's best (T-R10): it stores no metrics, and the flag keeps it out anyway.
+        run('k', 't', '2026-10-10T09:06:00', { testFormat: metrics(100) }, { flags: ['test_format', 'discarded'] }),
       ],
       sessions,
     );

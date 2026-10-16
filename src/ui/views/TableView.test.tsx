@@ -55,7 +55,7 @@ const order = (): string[] =>
 
 describe('TableView', () => {
   it('marks the grid with its task and every cell with its value and colour (stable hooks for the e2e bot)', () => {
-    render(<TableView step={step()} busy={false} onSubmit={vi.fn()} />);
+    render(<TableView step={step()} busy={false} onProgress={vi.fn()} onSubmit={vi.fn()} />);
     const grid = screen.getByRole('group', { name: 'Таблица' });
     expect(grid.dataset['task']).toBe('schulte');
     const cells = within(grid).getAllByRole('button');
@@ -65,7 +65,7 @@ describe('TableView', () => {
   });
 
   it('draws size×size cells in the step order, with no timer on screen', () => {
-    render(<TableView step={step()} busy={false} onSubmit={vi.fn()} />);
+    render(<TableView step={step()} busy={false} onProgress={vi.fn()} onSubmit={vi.fn()} />);
     expect(order()).toEqual(['5', '2', '9', '1', '7', '3', '8', '4', '6']);
     expect(screen.queryByText(/с$/)).toBeNull();
   });
@@ -75,14 +75,14 @@ describe('TableView', () => {
       { value: 25, color: 'red' },
       { value: 1, color: 'black' },
     ];
-    render(<TableView step={{ ...step({ size: 7 }, cells), module: 'gorbov', task: 'red_down' }} busy={false} onSubmit={vi.fn()} />);
+    render(<TableView step={{ ...step({ size: 7 }, cells), module: 'gorbov', task: 'red_down' }} busy={false} onProgress={vi.fn()} onSubmit={vi.fn()} />);
     expect(cellButton(25, 'red').style.color).toBe('rgb(214, 69, 69)');
     expect(cellButton(1).style.color).toBe('rgb(17, 17, 17)');
   });
 
   it('ignores clicks before the first frame; a wrong click is an error and does not advance', () => {
     const onSubmit = vi.fn();
-    render(<TableView step={step()} busy={false} onSubmit={onSubmit} />);
+    render(<TableView step={step()} busy={false} onProgress={vi.fn()} onSubmit={onSubmit} />);
     press(1, 900); // before the grid's first frame: ignored
     frames.run(1000);
     press(2, 1100); // wrong: 1 is next
@@ -99,9 +99,19 @@ describe('TableView', () => {
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 
+  it('reports the share done after each correct click: correct clicks / cells (F11)', () => {
+    const onProgress = vi.fn();
+    render(<TableView step={step()} busy={false} onProgress={onProgress} onSubmit={vi.fn()} />);
+    frames.run(1000);
+    press(1, 1100);
+    press(3, 1200); // wrong: nothing to report
+    press(2, 1300);
+    expect(onProgress.mock.calls).toEqual([[1 / 9], [2 / 9]]);
+  });
+
   it('a second press on the cell just found correctly within 250 ms is a double click, not an error (M3)', () => {
     const onSubmit = vi.fn();
-    render(<TableView step={step()} busy={false} onSubmit={onSubmit} />);
+    render(<TableView step={step()} busy={false} onProgress={vi.fn()} onSubmit={onSubmit} />);
     frames.run(1000);
     press(1, 1100);
     press(1, 1349); // bounce of the same click: ignored
@@ -117,7 +127,7 @@ describe('TableView', () => {
 
   it('ignores the right mouse button', () => {
     const onSubmit = vi.fn();
-    render(<TableView step={step()} busy={false} onSubmit={onSubmit} />);
+    render(<TableView step={step()} busy={false} onProgress={vi.fn()} onSubmit={onSubmit} />);
     frames.run(1000);
     const el = cellButton(1);
     fireEvent(el, stamped(createEvent.mouseDown(el, { button: 2 }), 1100));
@@ -128,7 +138,7 @@ describe('TableView', () => {
   it('the deadline ends the run with the clicks so far', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const onSubmit = vi.fn();
-    render(<TableView step={step({ timeLimitMs: 5000 })} busy={false} onSubmit={onSubmit} />);
+    render(<TableView step={step({ timeLimitMs: 5000 })} busy={false} onProgress={vi.fn()} onSubmit={onSubmit} />);
     frames.run(1000);
     press(1, 1500);
     vi.advanceTimersByTime(4999);
@@ -143,7 +153,7 @@ describe('TableView', () => {
   });
 
   it('reshuffles after every N correct clicks with the step seed', () => {
-    render(<TableView step={step({ reshuffleEvery: 2 })} busy={false} onSubmit={vi.fn()} />);
+    render(<TableView step={step({ reshuffleEvery: 2 })} busy={false} onProgress={vi.fn()} onSubmit={vi.fn()} />);
     frames.run(1000);
     press(1, 1100);
     expect(order()).toEqual(['5', '2', '9', '1', '7', '3', '8', '4', '6']);
@@ -157,12 +167,12 @@ describe('TableView', () => {
   });
 
   it('locks the cells while the run is being saved', () => {
-    render(<TableView step={step()} busy onSubmit={vi.fn()} />);
+    render(<TableView step={step()} busy onProgress={vi.fn()} onSubmit={vi.fn()} />);
     expect(cellButton(1)).toHaveProperty('disabled', true);
   });
 
   it('stops waiting for the frame when unmounted', () => {
-    const { unmount } = render(<TableView step={step()} busy={false} onSubmit={vi.fn()} />);
+    const { unmount } = render(<TableView step={step()} busy={false} onProgress={vi.fn()} onSubmit={vi.fn()} />);
     expect(frames.pending()).toBe(1);
     unmount();
     expect(frames.pending()).toBe(0);

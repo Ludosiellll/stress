@@ -200,9 +200,12 @@ legend {
   padding: 10vh 24px 48px;
 }
 
-/* The diagnostic results take five columns with the comparison: wider than the other session screens. */
+/*
+ * The diagnostic results take six columns with the comparison and «Перезапуск» (F11): wider than the other session
+ * screens, and still inside a 1280 px window.
+ */
 .screen-center.done:has(.results) {
-  max-width: 960px;
+  max-width: 1080px;
 }
 
 .screen-center .hint {
@@ -595,4 +598,19 @@ legend {
   width: 100%;
   max-width: 420px;
   accent-color: var(--accent);
+}
+
+/*
+ * A line over the running block (F11): Escape found the diagnostic restart of the task used up. At the top edge, in
+ * the band the table grid and the stimulus leave free, away from the key legend at the bottom.
+ */
+.session-hint {
+  position: fixed;
+  top: 4px;
+  left: 0;
+  right: 0;
+  margin: 0;
+  text-align: center;
+  color: var(--muted);
+  pointer-events: none;
 }

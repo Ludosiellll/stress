@@ -9,6 +9,7 @@ import { readinessOfLatest } from '../engine/readiness';
 import { trend, type Trend } from '../engine/trend';
 import {
   diagnosticCharts,
+  discardWeeks,
   durationText,
   formOfDayPoints,
   indexChart,
@@ -246,6 +247,8 @@ describe('the level charts after the load bands (F3, Р9, spec §3.1.6)', () => 
       over('j', '2026-10-25T10:00:00.000Z', JSON.stringify({ score: 0.9 })),
       over('k', '2026-10-25T10:00:00.000Z', JSON.stringify({ counts: { hit: 0, wrong: 0, miss: 0, late: 0, false_start: 0, commission: 0, correct_reject: 0, early: 0, timing_late: 0 } })),
       over('l', 'not a date', counts(20)),
+      // Counted as 0 after Esc (F11): stores no counts, and the flag keeps it out anyway (T-R10).
+      block('m', 's', '2026-10-25T10:00:00.000Z', { module: 'szmr', flags: ['overload', 'discarded'], summaryJson: counts(5, 0, 0, 15), score: 0 }),
     ];
     const result = overload28d(rows, now);
     expect(result?.blocks).toBe(3);
@@ -498,5 +501,67 @@ describe('noise band and trend (F7, Р19)', () => {
     expect(model.formOfDayTrend.band).toHaveLength(5);
     expect(model.indexChart.series[0]?.points).toEqual([]);
     expect(model.indexChart.trends[0]?.text).toBe('Полоса шума и тренд появятся после 3 точек.');
+  });
+});
+
+describe('interrupted blocks by week (F11)', () => {
+  /** Local time: 2026-10-16 is a Friday, its week 12.10–18.10. */
+  const at = (month: number, day: number, hour = 10, minute = 0): string => new Date(2026, month - 1, day, hour, minute).toISOString();
+  const restarts = (...reasons: string[]): string => JSON.stringify({ restarts: reasons.map((reason) => ({ reason, progress: 0.2 })) });
+  const counted = (startedAt: string, summary: object = {}): ReturnType<typeof block> =>
+    block(`c${startedAt}`, 's', startedAt, { flags: ['discarded'], score: 0, summaryJson: JSON.stringify({ discarded: { reason: 'user', progress: 0.45 }, ...summary }) });
+
+  it('discard weeks: 8 weeks Monday to Sunday, newest first; Esc restarts, blocks counted as 0, focus losses', () => {
+    const now = new Date(2026, 9, 16, 12);
+    const rows = [
+      // 05.10–11.10, from Monday 00:30 to Sunday 23:30: a counted Esc after an Esc restart and a focus loss, then an Esc
+      // restart, a drawing error (not shown) and a focus loss.
+      counted(at(10, 5, 0, 30), { restarts: [{ reason: 'user', progress: 0.1 }, { reason: 'focus_lost', progress: 0.5 }] }),
+      block('b', 's', at(10, 11, 23, 30), { summaryJson: restarts('user', 'error', 'focus_lost') }),
+      // 12.10–18.10: a focus loss; an Esc restart in a diagnostic block.
+      block('d', 's', at(10, 14), { summaryJson: restarts('focus_lost') }),
+      block('e', 'diag', at(10, 15), { summaryJson: restarts('user') }),
+      // The eighth week back starts on Monday 24.08.
+      counted(at(8, 24, 8)),
+      // Left out: the Sunday before the eight weeks, next week, a date that does not read.
+      counted(at(8, 23, 20)),
+      counted(at(10, 19, 8)),
+      counted('not a date'),
+      // Damaged restarts read as none; an entry with an unknown reason does not count.
+      block('f', 's', at(9, 30), { summaryJson: '{"restarts":"user"}' }),
+      block('g', 's', at(9, 30), { summaryJson: '{"restarts":[{"reason":"user"},{"reason":"bad"},null,3,"user"]}' }),
+      block('h', 's', at(9, 30), { summaryJson: 'not json' }),
+    ];
+    expect(discardWeeks(rows, now)).toEqual([
+      { week: '12.10–18.10', manual: 1, counted: 0, focus: 1 },
+      { week: '05.10–11.10', manual: 3, counted: 1, focus: 2 },
+      { week: '28.09–04.10', manual: 1, counted: 0, focus: 0 },
+      { week: '21.09–27.09', manual: 0, counted: 0, focus: 0 },
+      { week: '14.09–20.09', manual: 0, counted: 0, focus: 0 },
+      { week: '07.09–13.09', manual: 0, counted: 0, focus: 0 },
+      { week: '31.08–06.09', manual: 0, counted: 0, focus: 0 },
+      { week: '24.08–30.08', manual: 1, counted: 1, focus: 0 },
+    ]);
+  });
+
+  it('a Monday is the first day of its own week; a Sunday the last', () => {
+    const monday = new Date(2026, 9, 12, 0, 5);
+    expect(discardWeeks([counted(at(10, 12, 0, 1))], monday)[0]).toEqual({ week: '12.10–18.10', manual: 1, counted: 1, focus: 0 });
+    const sunday = new Date(2026, 9, 18, 23, 55);
+    const weeks = discardWeeks([counted(at(10, 11, 23, 59)), counted(at(10, 18, 23, 50))], sunday);
+    expect(weeks.slice(0, 2)).toEqual([
+      { week: '12.10–18.10', manual: 1, counted: 1, focus: 0 },
+      { week: '05.10–11.10', manual: 1, counted: 1, focus: 0 },
+    ]);
+  });
+
+  it('loadProgressModel reads the weeks from the block history', async () => {
+    const repo = new MemoryRepository();
+    await repo.createSession(session('s', at(10, 14), { endedAt: at(10, 14, 11) }));
+    await repo.addBlock(counted(at(10, 14), { restarts: [{ reason: 'focus_lost', progress: 0.3 }] }), [], []);
+    const model = await loadProgressModel(repo, new Date(2026, 9, 16, 12));
+    expect(model.discards).toHaveLength(8);
+    expect(model.discards[0]).toEqual({ week: '12.10–18.10', manual: 1, counted: 1, focus: 1 });
+    expect((await loadProgressModel(new MemoryRepository(), new Date(2026, 9, 16, 12))).discards.every((w) => w.manual + w.counted + w.focus === 0)).toBe(true);
   });
 });

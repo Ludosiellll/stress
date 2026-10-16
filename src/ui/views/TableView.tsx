@@ -8,6 +8,8 @@ export interface TableViewProps {
   step: StepOf<'table_block'>;
   /** The run is being saved: the cells are locked. */
   busy: boolean;
+  /** After each correct click: correct clicks / cells, the share of the block done (F11). */
+  onProgress: (p: number) => void;
   onSubmit: (run: TableRun) => void;
 }
 
@@ -36,7 +38,7 @@ const same = (a: TableCell, b: TableCell): boolean => a.value === b.value && a.c
  * last correct click or at the deadline. With `reshuffleEvery` the cells are shuffled after every N
  * correct clicks (seeded by the block seed, so a run can be replayed).
  */
-export default function TableView({ step, busy, onSubmit }: TableViewProps) {
+export default function TableView({ step, busy, onProgress, onSubmit }: TableViewProps) {
   const { params, task } = step;
   const sequence = useMemo(() => taskSequence(task, params.size), [task, params.size]);
   const [cells, setCells] = useState(step.cells);
@@ -76,6 +78,7 @@ export default function TableView({ step, busy, onSubmit }: TableViewProps) {
     if (want === undefined || !same(want, cell)) return;
     p.correct++;
     p.lastCorrect = { cell, ts: e.timeStamp };
+    onProgress(p.correct / sequence.length);
     if (p.correct === sequence.length) {
       finish();
       return;

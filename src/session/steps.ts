@@ -54,8 +54,11 @@ export type Step =
    */
   | { kind: 'memory_block'; L: number; mode: MemoryMode; params: MemoryParams; trials: MemoryTrial[]; protocol: 'fixed' | 'span' }
   | { kind: 'summary'; view: BlockSummaryView }
-  /** Diagnostics: the reaction block just played was timingUnreliable and is replayed once (I1); ackNotice() starts it. */
-  | { kind: 'notice'; module: ReactionModuleId; text: string }
+  /**
+   * Diagnostics: the block is played again, and this says why; ackNotice() starts it. A reaction block that was
+   * timingUnreliable is replayed once (I1); the first Esc of a task restarts it (F11, Р32).
+   */
+  | { kind: 'notice'; module: ModuleId; text: string }
   | { kind: 'fatigue_prompt'; module: ModuleId }
   /** canAbandon: abandonPending() may drop the unsaved writes (not for the session row itself). */
   | { kind: 'save_error'; message: string; canAbandon: boolean; what: SaveErrorWhat }
@@ -129,12 +132,24 @@ export interface BlockSummaryView {
   assessment?: BlockAssessment;
 }
 
-/** One number-series answer; `given` null = no valid answer (time ran out). */
+/** One number-series answer; `given` null = no valid answer (time ran out, or skipped). */
 export interface SeriesAnswer {
   itemId: string;
   given: number | null;
   timeMs: number;
+  /** Skipped (F11: not reached before a counted Esc): a wrong answer, whatever `given` says. */
+  skipped?: boolean;
 }
+
+/**
+ * What Esc (or a focus loss, a drawing error) did to the block on screen (F11): `restarted` — played again for free;
+ * `counted` — stored as s = 0 (`progress` the share done, `levelMoves` whether the level changed, `series` number series,
+ * whose answered items count); `refused` — a diagnostic task whose restart is used up: nothing changed.
+ */
+export type DiscardOutcome =
+  | { kind: 'restarted' }
+  | { kind: 'counted'; progress: number; lBefore: number; lAfter: number; levelMoves: boolean; series: boolean }
+  | { kind: 'refused' };
 
 /** Opens the instruction of an overload table or memory block (finisher, plateau mix). */
 export const OVERLOAD_PREFIX = 'Блок с перегрузкой: уровень на 3 выше обычного. ';
@@ -156,6 +171,10 @@ export function floorLine(windowMs: number, nominalWindowMs: number): string {
 /** The level line of a warm-up block (F5): it plays at L_saved − 1 and moves nothing. */
 export const WARMUP_LEVEL_NOTE = 'Разминка: уровень не меняется';
 export const UNRELIABLE_REPLAY_NOTICE = 'Замер ненадёжен (пропуски кадров). Блок будет повторён.';
+/** The notice after the first Esc of a diagnostic task (F11). */
+export const DIAGNOSTIC_RESTART_NOTICE = 'Блок перезапущен. В диагностике это можно сделать один раз за задание.';
+/** Shown on an Esc in a diagnostic task whose restart is used up (F11). */
+export const RESTART_USED_HINT = 'Перезапуск уже использован — доведи задание до конца.';
 /** Summary line of a block that had sound which did not play (no device, a blocked context, volume 0). */
 export const AUDIO_NOT_PLAYED = 'Звук не воспроизводился: проверь устройство вывода и громкость помех в настройках.';
 export const SERIES_INSTRUCTION_TRAINING =
@@ -202,6 +221,25 @@ export const whole = (x: number): number => Math.round(x) + 0;
 export const round1 = (x: number): number => Number(x.toFixed(1));
 /** Fixed decimals with a comma: 41,2. */
 export const decimal = (x: number, digits: number): string => x.toFixed(digits).replace('.', ',');
+
+/**
+ * The share done in whole percent, rounded up: a block counted as 0 (more than 30 % done) never reads «30 %». The
+ * tolerance keeps 0,45 at 45 (100 · 0,45 is a little above 45 in floating point).
+ */
+const percentDone = (p: number): number => Math.ceil(100 * p - 1e-9);
+
+/**
+ * The first line of the pause after Esc in training (F11): «Блок прерван на 45 % — засчитан как 0, уровень 12,5 → 10,5.»;
+ * «…уровень не меняется.» when it did not move; for number series that their answered items count; «Блок прерван в
+ * начале — не засчитан.» after a free restart.
+ */
+export function discardText(o: Extract<DiscardOutcome, { kind: 'counted' }> | { kind: 'restarted' }): string {
+  if (o.kind === 'restarted') return 'Блок прерван в начале — не засчитан.';
+  const head = `Блок прерван на ${String(percentDone(o.progress))} %`;
+  if (o.series) return `${head} — отвеченные задачи засчитаны, остальные — как пропущенные.`;
+  if (!o.levelMoves) return `${head} — засчитан как 0, уровень не меняется.`;
+  return `${head} — засчитан как 0, уровень ${decimal(o.lBefore, 1)} → ${decimal(o.lAfter, 1)}.`;
+}
 
 /** The outcomes the error penalty counts (PENALTY, F1). */
 export type ErrorKind = 'wrong' | 'false_start' | 'commission';

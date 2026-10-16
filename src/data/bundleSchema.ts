@@ -42,6 +42,7 @@ const BLOCK_FLAGS: Readonly<Record<BlockFlag, true>> = {
   overload: true,
   warmup: true,
   test_format: true,
+  discarded: true,
 };
 const LAYOUTS: Readonly<Record<LayoutId, true>> = { keyboard: true, mouse: true, pult: true };
 const keysOf = <K extends string>(r: Readonly<Record<K, true>>): K[] => Object.keys(r) as K[];

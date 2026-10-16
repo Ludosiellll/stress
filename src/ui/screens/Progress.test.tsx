@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { MemoryRepository } from '../../data/memoryRepository';
 import { rebuildCaches } from '../../data/export';
 import { block, session } from '../../data/repository.contract';
-import { EMPTY_METRICS, type DiagnosticResults } from '../../engine/diagnostic';
+import { EMPTY_RESULTS, type DiagnosticResults } from '../../engine/diagnostic';
 import { L_NORM } from '../../engine/planner';
 import { MODULE_IDS, type ModuleId } from '../../engine/types';
 import { createFakePlatform } from '../../testing/fakePlatform';
@@ -13,7 +13,7 @@ import { renderWithApp } from '../testUtils';
 import Progress from './Progress';
 
 const base: DiagnosticResults = {
-  ...EMPTY_METRICS,
+  ...EMPTY_RESULTS,
   pzmrMedianRt: 320,
   szmrMedianRt: 450,
   gonogoScore: 80,
@@ -143,6 +143,30 @@ describe('Progress after the load bands (F3, spec §3.1.6)', () => {
     await renderProgress(repo);
     const line = screen.getByText('Средний балл блоков перегрузки за 28 дней: 0,74 (блоков: 2)');
     expect(line.closest('section')?.getAttribute('aria-labelledby')).toBe('levels-title');
+  });
+
+  it('«Прерванные блоки по неделям»: eight weeks, newest first, with the columns of the reference (F11)', async () => {
+    const repo = new MemoryRepository();
+    // A moment ago: this week, whatever today is.
+    const now = new Date(Date.now() - 1).toISOString();
+    await repo.createSession(session('s', now, { endedAt: now }));
+    const summaryJson = JSON.stringify({ discarded: { reason: 'user', progress: 0.45 }, restarts: [{ reason: 'user', progress: 0.1 }, { reason: 'focus_lost', progress: 0.3 }] });
+    await repo.addBlock(block('x', 's', now, { flags: ['discarded'], score: 0, summaryJson }), [], []);
+    await renderProgress(repo);
+    const table = screen.getByRole('table', { name: 'Прерванные блоки по неделям' });
+    expect(within(table).getAllByRole('columnheader').map((c) => c.textContent)).toEqual([
+      'Неделя',
+      'Прервано вручную',
+      'Из них засчитано как 0',
+      'Из-за потери фокуса',
+    ]);
+    const rows = within(table)
+      .getAllByRole('row')
+      .slice(1)
+      .map((r) => within(r).getAllByRole('cell').map((c) => c.textContent));
+    expect(rows).toHaveLength(8);
+    expect(rows[0]?.[0]).toMatch(/^\d\d\.\d\d–\d\d\.\d\d$/);
+    expect(rows.map((r) => r.slice(1))).toEqual([['2', '1', '1'], ...Array<string[]>(7).fill(['0', '0', '0'])]);
   });
 
   it('says there were no overload blocks', async () => {

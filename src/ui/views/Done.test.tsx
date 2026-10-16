@@ -1,10 +1,11 @@
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { parseResults, type DiagnosticResults } from '../../engine/diagnostic';
+import { EMPTY_RESULTS, parseResults, type DiagnosticResults } from '../../engine/diagnostic';
 import { conditionLines, type BlockSummaryView, type DiagnosticComparison } from '../../session/steps';
 import Done from './Done';
 
 const RESULTS: DiagnosticResults = {
+  ...EMPTY_RESULTS,
   pzmrMedianRt: 251.4,
   pzmrMeanRt: 262.4,
   szmrMedianRt: 402,
@@ -102,9 +103,14 @@ function rawCells(): string[][] {
     .map((r) => within(r).getAllByRole('cell').map((td) => td.textContent));
 }
 
-/** The cells with plain spaces, as the tests write them. */
+/** The cells with plain spaces, as the tests write them, without the last column «Перезапуск» (restartCells reads it). */
 function cells(): string[][] {
-  return rawCells().map((r) => r.map((text) => text.replaceAll('\u00a0', ' ')));
+  return rawCells().map((r) => r.slice(0, -1).map((text) => text.replaceAll('\u00a0', ' ')));
+}
+
+/** The column «Перезапуск», row by row. */
+function restartCells(): string[] {
+  return rawCells().map((r) => r.at(-1) ?? '');
 }
 
 describe('Done', () => {
@@ -124,6 +130,19 @@ describe('Done', () => {
       ['Переключение правил — цена переключения', '−12 мс', '—'],
       ['Память — объём', '7', 'средний'],
     ]);
+  });
+
+  it('«Перезапуск» is the last column: «да» for a module restarted with Esc; focus losses do not count (Р22)', () => {
+    const restarts = { pzmr: { user: 1, focus: 0 }, gorbov: { user: 1, focus: 2 }, szmr: { user: 0, focus: 3 } };
+    render(<Done diagnostic={{ ...RESULTS, restarts }} seriesTotal={20} summaries={[]} comparison={WITH_PREVIOUS} onHome={vi.fn()} />);
+    expect(headers().at(-1)).toBe('Перезапуск');
+    // Горбов: its three rows.
+    expect(restartCells()).toEqual(['да', '—', '—', '—', 'да', 'да', 'да', '—', '—', '—', '—', '—']);
+  });
+
+  it('«Перезапуск» reads «—» everywhere without restarts (a diagnostic stored before F11)', () => {
+    render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} onHome={vi.fn()} />);
+    expect(restartCells()).toEqual(Array<string>(12).fill('—'));
   });
 
   it('«Подробности диагностики»: spread and errors as lines under the table, which keeps its twelve rows (F7, Р20)', () => {
@@ -150,7 +169,7 @@ describe('Done', () => {
 
   it('with a previous diagnostic: Прошлая, Изменение, Ориентир', () => {
     render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} comparison={WITH_PREVIOUS} onHome={vi.fn()} />);
-    expect(headers()).toEqual(['Показатель', 'Результат', 'Прошлая (№3, 12.10.2026)', 'Изменение', 'Ориентир']);
+    expect(headers()).toEqual(['Показатель', 'Результат', 'Прошлая (№3, 12.10.2026)', 'Изменение', 'Ориентир', 'Перезапуск']);
     expect(cells()).toEqual([
       ['ПЗМР — медиана времени реакции', '251 мс', '264 мс', '−13 мс, лучше', 'по среднему 262 мс: средний'],
       ['Сложная реакция (СЗМР) — медиана времени реакции', '402 мс', '398 мс', 'без изменений', 'по среднему 402 мс: ниже среднего'],
@@ -173,7 +192,7 @@ describe('Done', () => {
     render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} comparison={{ previous: null, readiness: 60, readinessPrevious: null, earlierUnreadable: false }} onHome={vi.fn()} />);
     expect(screen.getByText('Первая диагностика — сравнивать пока не с чем')).toBeTruthy();
     expect(screen.getByText('Индекс: 60')).toBeTruthy();
-    expect(headers()).toEqual(['Показатель', 'Результат', 'Ориентир']);
+    expect(headers()).toEqual(['Показатель', 'Результат', 'Ориентир', 'Перезапуск']);
     expect(cells()[0]).toEqual(['ПЗМР — медиана времени реакции', '251 мс', 'по среднему 262 мс: средний']);
   });
 
@@ -182,7 +201,7 @@ describe('Done', () => {
     render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} comparison={comparison} onHome={vi.fn()} />);
     expect(screen.getByText('Прошлые диагностики не прочитаны — сравнивать не с чем.')).toBeTruthy();
     expect(screen.queryByText(/Первая диагностика/)).toBeNull();
-    expect(headers()).toEqual(['Показатель', 'Результат', 'Ориентир']);
+    expect(headers()).toEqual(['Показатель', 'Результат', 'Ориентир', 'Перезапуск']);
     expect(screen.getByText('Индекс: 60')).toBeTruthy();
   });
 
@@ -238,7 +257,7 @@ describe('Done', () => {
 
   it('without a comparison: result and reference only, no index line', () => {
     render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} comparison={null} onHome={vi.fn()} />);
-    expect(headers()).toEqual(['Показатель', 'Результат', 'Ориентир']);
+    expect(headers()).toEqual(['Показатель', 'Результат', 'Ориентир', 'Перезапуск']);
     expect(screen.queryByText(/Индекс:/)).toBeNull();
     expect(screen.queryByText(/Первая диагностика/)).toBeNull();
   });
@@ -246,8 +265,8 @@ describe('Done', () => {
   it('a number never breaks from its unit in a comparison cell (A-R22)', () => {
     render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} comparison={WITH_PREVIOUS} onHome={vi.fn()} />);
     const rows = rawCells();
-    expect(rows[0]).toEqual(['ПЗМР — медиана времени реакции', '251\u00a0мс', '264\u00a0мс', '−13\u00a0мс, лучше', 'по среднему 262\u00a0мс: средний']);
-    expect(rows[4]?.slice(1)).toEqual(['41,3\u00a0с', '45,0\u00a0с', '−3,7\u00a0с, лучше', 'средний']);
+    expect(rows[0]).toEqual(['ПЗМР — медиана времени реакции', '251\u00a0мс', '264\u00a0мс', '−13\u00a0мс, лучше', 'по среднему 262\u00a0мс: средний', '—']);
+    expect(rows[4]?.slice(1)).toEqual(['41,3\u00a0с', '45,0\u00a0с', '−3,7\u00a0с, лучше', 'средний', '—']);
     expect(rows[2]?.slice(1, 4)).toEqual(['93\u00a0%', '90\u00a0%', '+3\u00a0%, лучше']);
   });
 
@@ -255,8 +274,8 @@ describe('Done', () => {
     render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} comparison={WITH_PREVIOUS} onHome={vi.fn()} />);
     const table = screen.getByRole('table', { name: 'Результаты диагностики' });
     const first = within(table).getAllByRole('row')[1] as HTMLElement;
-    expect(within(first).getAllByRole('cell').map((td) => td.classList.contains('num'))).toEqual([false, true, true, false, false]);
-    expect(within(table).getAllByRole('columnheader').map((th) => th.classList.contains('num'))).toEqual([false, true, true, false, false]);
+    expect(within(first).getAllByRole('cell').map((td) => td.classList.contains('num'))).toEqual([false, true, true, false, false, false]);
+    expect(within(table).getAllByRole('columnheader').map((th) => th.classList.contains('num'))).toEqual([false, true, true, false, false, false]);
   });
 
   it('a difference reads as in the block summary: from the rounded medians (B9)', () => {

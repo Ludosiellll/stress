@@ -7,6 +7,8 @@ import {
   AUDIO_NOT_PLAYED,
   conditionLines,
   dayFormLine,
+  DIAGNOSTIC_RESTART_NOTICE,
+  discardText,
   ERROR_KINDS,
   errorLine,
   floorLine,
@@ -16,6 +18,7 @@ import {
   overloadBandPrefix,
   plural,
   reactionLines,
+  RESTART_USED_HINT,
   seriesDiagnosticInstruction,
   seriesLines,
   spanLines,
@@ -405,5 +408,30 @@ describe('dayFormLine', () => {
 
   it('the level note of a warm-up', () => {
     expect(WARMUP_LEVEL_NOTE).toBe('Разминка: уровень не меняется');
+  });
+});
+
+describe('discardText (F11)', () => {
+  const counted = { kind: 'counted', progress: 0.45, lBefore: 12.5, lAfter: 10.5, levelMoves: true, series: false } as const;
+
+  it('the pause line of an Esc block: counted with the level, without it, number series; restarted', () => {
+    expect(discardText(counted)).toBe('Блок прерван на 45 % — засчитан как 0, уровень 12,5 → 10,5.');
+    expect(discardText({ ...counted, levelMoves: false })).toBe('Блок прерван на 45 % — засчитан как 0, уровень не меняется.');
+    expect(discardText({ ...counted, levelMoves: false, series: true })).toBe(
+      'Блок прерван на 45 % — отвеченные задачи засчитаны, остальные — как пропущенные.',
+    );
+    expect(discardText({ kind: 'restarted' })).toBe('Блок прерван в начале — не засчитан.');
+  });
+
+  it('levels with one decimal; the share rounded up, so a counted block never reads 30 % or less', () => {
+    expect(discardText({ ...counted, progress: 0.31, lBefore: 5, lAfter: 3 })).toBe('Блок прерван на 31 % — засчитан как 0, уровень 5,0 → 3,0.');
+    expect(discardText({ ...counted, progress: 7 / 23, lBefore: 1, lAfter: 0 })).toBe('Блок прерван на 31 % — засчитан как 0, уровень 1,0 → 0,0.');
+    expect(discardText({ ...counted, progress: 0.4, levelMoves: false })).toBe('Блок прерван на 40 % — засчитан как 0, уровень не меняется.');
+    expect(discardText({ ...counted, progress: 1, levelMoves: false })).toBe('Блок прерван на 100 % — засчитан как 0, уровень не меняется.');
+  });
+
+  it('the diagnostic notice and the hint after its one restart', () => {
+    expect(DIAGNOSTIC_RESTART_NOTICE).toBe('Блок перезапущен. В диагностике это можно сделать один раз за задание.');
+    expect(RESTART_USED_HINT).toBe('Перезапуск уже использован — доведи задание до конца.');
   });
 });

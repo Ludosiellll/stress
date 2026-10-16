@@ -261,6 +261,18 @@ describe('ReactionBlockRunner: block frame interval (R37)', () => {
   });
 });
 
+describe('ReactionBlockRunner: onsetCount (F11)', () => {
+  it('counts the stimuli shown so far, practice trials included; an abort keeps the count', async () => {
+    const h = setup([{ ...pressTrial(500, 300), practice: true }, pressTrial(400, 300), pressTrial(400, 300)]);
+    expect(h.runner.onsetCount()).toBe(0);
+    while (h.at('show').length < 2) h.clock.step();
+    expect(h.runner.onsetCount()).toBe(2);
+    h.runner.abort('user');
+    expect(await h.done).toEqual({ kind: 'aborted', reason: 'user' });
+    expect(h.runner.onsetCount()).toBe(2);
+  });
+});
+
 describe('ReactionBlockRunner: trial end', () => {
   it('hides on response and schedules next by isi', async () => {
     let first = true;

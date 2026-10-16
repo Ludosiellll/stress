@@ -9,7 +9,7 @@ import { FINISHER_AUDIO } from '../engine/audio/stressors';
 import { deriveModuleStates, deriveRatings, defaultModuleState } from '../engine/derive';
 import {
   DIAGNOSTIC_VOLUME,
-  EMPTY_METRICS,
+  EMPTY_RESULTS,
   diagnosticSegmentSeed,
   diagnosticSeriesSchedule,
   parseResults,
@@ -44,7 +44,7 @@ import {
 } from '../testing/sessionPlayers';
 import { assessBlock } from './assessment';
 import { appendBlock } from './blockHistory';
-import { SessionController, type SessionStartOptions } from './controller';
+import { SessionController, type DiscardOutcome, type SessionStartOptions } from './controller';
 import { testFormatInstruction } from './testFormat';
 import {
   AUDIO_NOT_PLAYED,
@@ -487,9 +487,7 @@ describe('SessionController — flow', () => {
     const tl = playTimeline(expectStep(h.c, 'reaction_block').specs, perfectPlayer);
     const first = h.c.submitReaction(tl);
     await expect(h.c.submitReaction(tl)).rejects.toThrow(/in progress/);
-    expect(() => {
-      h.c.discardBlock('error');
-    }).toThrow(/in progress/);
+    await expect(h.c.discardBlock('error', 0)).rejects.toThrow(/in progress/);
     await first;
     expect(await h.repo.listBlocks()).toHaveLength(1);
   });
@@ -912,7 +910,7 @@ describe('SessionController — levels and persistence', () => {
     h.c.ackInstruction();
     const gen = (salt: string, L: number): unknown => pzmr.generateBlock(pzmr.params(L), createRng(deriveSeed(77, salt)), 'keyboard', 15);
     expect(expectStep(h.c, 'reaction_block').specs).toEqual(gen('0:0:0', 0));
-    h.c.discardBlock('focus_lost');
+    await h.c.discardBlock('focus_lost', 0.5);
     expect(expectStep(h.c, 'reaction_block').specs).toEqual(gen('0:0:1', 0));
     await h.c.submitReaction(playTimeline(expectStep(h.c, 'reaction_block').specs, perfectPlayer));
     await h.c.continueAfterSummary();
@@ -926,7 +924,7 @@ describe('SessionController — levels and persistence', () => {
     const before = expectStep(h.c, 'reaction_block');
     const blocksBefore = await h.repo.listBlocks();
     const stateBefore = await h.repo.getModuleStates();
-    h.c.discardBlock('focus_lost');
+    expect(await h.c.discardBlock('focus_lost', 0.9)).toEqual({ kind: 'restarted' });
     const after = expectStep(h.c, 'reaction_block');
     expect(after.module).toBe('szmr');
     expect(after.L).toBe(before.L);
@@ -944,7 +942,7 @@ describe('SessionController — levels and persistence', () => {
     const t = await begin(planFree('schulte', 5));
     t.c.ackInstruction();
     const table = expectStep(t.c, 'table_block');
-    t.c.discardBlock('user');
+    expect(await t.c.discardBlock('user', 0.3)).toEqual({ kind: 'restarted' });
     expect(t.c.discards).toEqual([{ module: 'schulte', reason: 'user' }]);
     const again = expectStep(t.c, 'table_block');
     expect(again.seed).not.toBe(table.seed);
@@ -953,7 +951,7 @@ describe('SessionController — levels and persistence', () => {
     const n = await begin(planFree('numseries', 5));
     n.c.ackInstruction();
     const items = expectStep(n.c, 'numseries_block').items;
-    n.c.discardBlock('error');
+    expect(await n.c.discardBlock('error', 0.9, [])).toEqual({ kind: 'restarted' });
     expect(expectStep(n.c, 'numseries_block').items).not.toEqual(items);
     expect(await n.repo.listBlocks()).toEqual([]);
   });
@@ -2377,7 +2375,7 @@ describe('SessionController — memory', () => {
     const before = memoryBlock(h);
     expect(before.L).toBe(lAfter);
     const blocksBefore = await h.repo.listBlocks();
-    h.c.discardBlock('user');
+    expect(await h.c.discardBlock('user', 0)).toEqual({ kind: 'restarted' });
     const after = expectStep(h.c, 'memory_block');
     expect(after.L).toBe(lAfter);
     expect(after.mode).toBe(before.mode);
@@ -2566,7 +2564,7 @@ describe('SessionController — diagnostics', () => {
     expect(seen).not.toContain('wellbeing');
 
     const expected: DiagnosticResults = {
-      ...EMPTY_METRICS,
+      ...EMPTY_RESULTS,
       pzmrMedianRt: 300,
       pzmrMeanRt: 300,
       szmrMedianRt: 300,
@@ -2609,7 +2607,7 @@ describe('SessionController — diagnostics', () => {
 
     const repo = new MemoryRepository();
     await repo.createSession(session('w1', '2026-10-01T10:00:00.000Z', { kind: 'diagnostic' }));
-    const w1: DiagnosticResults = { ...EMPTY_METRICS, pzmrMedianRt: 300, szmrMedianRt: 450, gonogoScore: 90, numseriesCorrect: 14, unreliable: [] };
+    const w1: DiagnosticResults = { ...EMPTY_RESULTS, pzmrMedianRt: 300, szmrMedianRt: 450, gonogoScore: 90, numseriesCorrect: 14, unreliable: [] };
     await repo.addDiagnostic({ id: 'd1', sessionId: 'w1', number: 1, at: '2026-10-01T10:30:00.000Z', resultsJson: JSON.stringify(w1) });
     const clock = new Clock();
     const upgrade = await play(await begin(planDiagnostic(2), { repo, clock, scale: 0.02 }));
@@ -2637,9 +2635,9 @@ describe('SessionController — diagnostics', () => {
 
   it('the done step compares with the previous diagnostic by date (W2-R33); both indexes come from readinessOfLatest', async () => {
     const repo = new MemoryRepository();
-    const m2: DiagnosticResults = { ...EMPTY_METRICS, pzmrMedianRt: 320, szmrMedianRt: 450, gonogoScore: 85, numseriesCorrect: 12, unreliable: [] };
+    const m2: DiagnosticResults = { ...EMPTY_RESULTS, pzmrMedianRt: 320, szmrMedianRt: 450, gonogoScore: 85, numseriesCorrect: 12, unreliable: [] };
     const m1: DiagnosticResults = {
-      ...EMPTY_METRICS,
+      ...EMPTY_RESULTS,
       pzmrMedianRt: 300,
       pzmrMeanRt: 310,
       szmrMedianRt: 430,
@@ -2821,6 +2819,7 @@ describe('SessionController — diagnostics', () => {
       switchCostMs: 80,
       memorySpan: 7,
       unreliable: [],
+      restarts: {},
     });
     const [row] = await h.repo.listDiagnostics();
     expect(JSON.parse(row?.resultsJson ?? '')).toEqual(done.diagnostic);
@@ -2928,7 +2927,7 @@ describe('SessionController — diagnostics', () => {
     const h = await begin(planDiagnostic(1));
     h.c.ackInstruction();
     const first = expectStep(h.c, 'reaction_block');
-    h.c.discardBlock('focus_lost');
+    await h.c.discardBlock('focus_lost', 0.5);
     const again = expectStep(h.c, 'reaction_block');
     const seed = deriveSeed(diagnosticSegmentSeed(1, 'pzmr'), 'retry:1');
     const p = pzmr.params(0);
@@ -3079,5 +3078,292 @@ describe('SessionController — scale (e2e)', () => {
 
   it('rejects a non-positive scale', async () => {
     await expect(begin(planFree('pzmr', 1), { scale: 0 })).rejects.toThrow(RangeError);
+  });
+});
+
+describe('SessionController — Esc policy (F11)', () => {
+  const YESTERDAY = new Date(new Date(T0).getTime() - DAY).toISOString();
+  const training = (...segments: Segment[]): SessionPlan => ({ kind: 'training', seed: 3, phase: 'development', segments });
+  /** The block rows this session stored, in order. */
+  const storedRows = async (h: Harness): Promise<BlockRow[]> => (await h.repo.listBlocks()).filter((b) => b.sessionId === h.c.sessionId);
+  const summaryOf = (row: BlockRow | undefined): Record<string, unknown> => JSON.parse(row?.summaryJson ?? '{}') as Record<string, unknown>;
+  /** Misses the first trial: s = 14/15 on ПЗМР. */
+  const missFirst: Respond = (spec, idx) => (idx === 0 ? null : perfectPlayer(spec, idx));
+
+  it('p = 0.30 restarts for free, p = 0.31 counts as 0', async () => {
+    const repo = await calibratedRepo(stateWith('szmr', { lSaved: 6, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    const h = await begin(planFree('szmr', 5), { repo });
+    h.c.ackInstruction();
+    const first = expectStep(h.c, 'reaction_block');
+    expect(first.L).toBe(5);
+    expect(await h.c.discardBlock('user', 0.3)).toEqual({ kind: 'restarted' });
+    const again = expectStep(h.c, 'reaction_block');
+    expect(again.L).toBe(5);
+    expect(again.specs).not.toEqual(first.specs);
+    expect(await storedRows(h)).toEqual([]);
+    expect(h.c.discards).toEqual([{ module: 'szmr', reason: 'user' }]);
+
+    expect(await h.c.discardBlock('user', 0.31)).toEqual({ kind: 'counted', progress: 0.31, lBefore: 5, lAfter: 3, levelMoves: true, series: false });
+    const [row] = await storedRows(h);
+    expect(row).toMatchObject({ module: 'szmr', lBefore: 5, lAfter: 3, score: 0, flags: ['discarded'] });
+    expect(await h.repo.listTrials(row?.id ?? '')).toEqual([]);
+    // The free restart is recorded in the next stored block of the segment: this one.
+    expect(summaryOf(row)).toEqual({ discarded: { reason: 'user', progress: 0.31 }, restarts: [{ reason: 'user', progress: 0.3 }] });
+    // A counted block is stored, not thrown away.
+    expect(h.c.discards).toHaveLength(1);
+    // It counts for the level like any block: the session's end level so far (the old session ended at 6).
+    expect((await repo.getModuleStates()).szmr.sessionEndLevels).toEqual([6, 3]);
+    // The next step is the next block, at the level the Esc left.
+    const next = expectStep(h.c, 'reaction_block');
+    expect(next.L).toBe(3);
+    await h.c.submitReaction(playTimeline(next.specs, perfectPlayer));
+    const after = summaryOf((await storedRows(h))[1]);
+    expect(after).not.toHaveProperty('restarts');
+    expect(after).not.toHaveProperty('discarded');
+  });
+
+  it('a counted Esc in a warm-up, an overload block or a test-format run keeps the level', async () => {
+    const counted = (lBefore: number): DiscardOutcome => ({ kind: 'counted', progress: 0.5, lBefore, lAfter: lBefore, levelMoves: false, series: false });
+
+    // The warm-up plays L_saved − 1.
+    const warmRepo = await calibratedRepo(stateWith('pzmr', { lSaved: 6, lastTrainedAt: YESTERDAY, lifetimeBlocks: 10 }));
+    const warm = await begin(training({ module: 'pzmr', budgetMs: 2 * MIN, purpose: 'warmup' }), { repo: warmRepo });
+    warm.c.ackInstruction();
+    expect(await warm.c.discardBlock('user', 0.5)).toEqual(counted(5));
+    expect((await storedRows(warm))[0]).toMatchObject({ lBefore: 5, lAfter: 5, score: 0, flags: ['warmup', 'discarded'] });
+    expect((await warmRepo.getModuleStates()).pzmr.lSaved).toBe(6);
+    expect(expectStep(warm.c, 'reaction_block').L).toBe(5);
+
+    // The overload block of a band module's plateau mix (its second block) plays the segment level and keeps it.
+    const mixRepo = await calibratedRepo(stateWith('szmr', { lSaved: 9, lastTrainedAt: YESTERDAY, lifetimeBlocks: 10 }));
+    const mix = await begin(training({ module: 'szmr', budgetMs: 5 * MIN, purpose: 'reaction', overload: 'mix' }), { repo: mixRepo });
+    const normal = await playReaction(mix);
+    await mix.c.continueAfterSummary();
+    if (mix.c.step.kind === 'instruction') mix.c.ackInstruction();
+    expect(expectStep(mix.c, 'reaction_block').L).toBe(normal.view.lAfter);
+    expect(await mix.c.discardBlock('user', 0.5)).toEqual(counted(normal.view.lAfter));
+    expect((await storedRows(mix))[1]).toMatchObject({ flags: ['overload', 'discarded'], lAfter: normal.view.lAfter, score: 0 });
+
+    // A finisher of РДО plays L_saved + 3: a counted Esc leaves its level there too.
+    const finRepo = await calibratedRepo(stateWith('rdo', { lSaved: 10, lastTrainedAt: YESTERDAY, lifetimeBlocks: 10 }));
+    const fin = await begin(training({ module: 'rdo', budgetMs: 5 * MIN, purpose: 'finisher', overload: 'finisher' }), { repo: finRepo });
+    fin.c.ackInstruction();
+    expect(await fin.c.discardBlock('user', 0.5)).toEqual(counted(13));
+    expect((await storedRows(fin))[0]).toMatchObject({ flags: ['overload', 'discarded'], lBefore: 13, lAfter: 13 });
+    expect(expectStep(fin.c, 'reaction_block').L).toBe(13);
+
+    // A test-format run is one block: the next segment follows.
+    const runRepo = await calibratedRepo(stateWith('pzmr', { lSaved: 6, lastTrainedAt: YESTERDAY, lifetimeBlocks: 10 }));
+    const runSegment: Segment = { module: 'pzmr', budgetMs: 0, purpose: 'test_format', trialCount: 50, practiceTrials: 5 };
+    const run = await begin(training(runSegment, { module: 'szmr', budgetMs: 5 * MIN, purpose: 'reaction' }), { repo: runRepo });
+    run.c.ackInstruction();
+    expect(await run.c.discardBlock('user', 0.5)).toEqual(counted(6));
+    const [runRow] = await storedRows(run);
+    expect(runRow).toMatchObject({ module: 'pzmr', flags: ['test_format', 'discarded'], lBefore: 6, lAfter: 6, score: 0 });
+    // No metrics: the run is never anyone's best.
+    expect(summaryOf(runRow)).toEqual({ discarded: { reason: 'user', progress: 0.5 } });
+    expect(expectStep(run.c, 'instruction').module).toBe('szmr');
+  });
+
+  it('number series: the answered items count, the rest are skipped', async () => {
+    const h = await begin(planFree('numseries', 21));
+    h.c.ackInstruction();
+    const block = expectStep(h.c, 'numseries_block');
+    expect(block.items).toHaveLength(10);
+    const answers = perfectSeriesAnswers(block.items).slice(0, 4);
+    answers[1] = { itemId: block.items[1]?.id ?? '', given: (block.items[1]?.answer ?? 0) + 1, timeMs: 9000 };
+    expect(await h.c.discardBlock('user', 0.4, answers)).toEqual({ kind: 'counted', progress: 0.4, lBefore: 0, lAfter: 0, levelMoves: false, series: true });
+
+    const items = await h.repo.listLogicItems();
+    expect(items).toHaveLength(10);
+    expect(items.map((i) => i.given === null)).toEqual([false, false, false, false, true, true, true, true, true, true]);
+    expect(items.map((i) => i.correct)).toEqual([true, false, true, true, false, false, false, false, false, false]);
+    expect(items.slice(4).map((i) => i.timeMs)).toEqual(Array<number>(6).fill(0));
+    const ratings = await h.repo.getRatings();
+    expect(ratings).toEqual(deriveRatings(items));
+    expect([...ratings.values()].reduce((n, r) => n + r.n, 0)).toBe(10);
+
+    const [row] = await storedRows(h);
+    expect(row).toMatchObject({ module: 'numseries', flags: ['discarded'], score: 0.3, lBefore: 0, lAfter: 0 });
+    const summary = summaryOf(row) as { correct: number; total: number; discarded: unknown; items: { itemId: string; skipped?: boolean }[] };
+    expect(summary).toMatchObject({ correct: 3, total: 10, discarded: { reason: 'user', progress: 0.4 } });
+    expect(summary.items.map((it) => it.skipped)).toEqual([undefined, undefined, undefined, undefined, true, true, true, true, true, true]);
+    expect(summary.items.map((it) => it.itemId)).toEqual(block.items.map((it) => it.id));
+    // The next block follows.
+    expect(expectStep(h.c, 'numseries_block').items).not.toEqual(block.items);
+  });
+
+  it('number series: answers that are not the first items of the block are rejected', async () => {
+    const h = await begin(planFree('numseries', 21));
+    h.c.ackInstruction();
+    const block = expectStep(h.c, 'numseries_block');
+    const answers = perfectSeriesAnswers(block.items);
+    await expect(h.c.discardBlock('user', 0.4, answers.slice(1, 5))).rejects.toThrow(RangeError);
+    await expect(h.c.discardBlock('user', 0.4, [...answers, ...answers])).rejects.toThrow(RangeError);
+    expect(expectStep(h.c, 'numseries_block')).toBe(block);
+    expect(await h.repo.listBlocks()).toEqual([]);
+  });
+
+  it('tables and memory count an Esc after 30 % as 0 too', async () => {
+    const t = await begin(planFree('schulte', 5), { repo: await calibratedRepo(stateWith('schulte', { lSaved: 6, lastTrainedAt: T0, lifetimeBlocks: 10 })) });
+    t.c.ackInstruction();
+    expect(await t.c.discardBlock('user', 0.5)).toEqual({ kind: 'counted', progress: 0.5, lBefore: 5, lAfter: 3, levelMoves: true, series: false });
+    expect((await storedRows(t))[0]).toMatchObject({ module: 'schulte', flags: ['discarded'], score: 0 });
+
+    const m = await begin(planFree('memory', 5), { repo: await calibratedRepo(stateWith('memory', { lSaved: 1, lastTrainedAt: T0, lifetimeBlocks: 10 })) });
+    m.c.ackInstruction();
+    expect(await m.c.discardBlock('user', 0.5)).toEqual({ kind: 'counted', progress: 0.5, lBefore: 0, lAfter: 0, levelMoves: false, series: false });
+    expect((await storedRows(m))[0]).toMatchObject({ module: 'memory', flags: ['discarded'], score: 0, lBefore: 0, lAfter: 0 });
+  });
+
+  it('focus loss and drawing errors restart for free and are recorded', async () => {
+    const h = await begin(planFree('pzmr', 1));
+    h.c.ackInstruction();
+    expect(await h.c.discardBlock('focus_lost', 0.9)).toEqual({ kind: 'restarted' });
+    expect(await h.c.discardBlock('error', 0.6)).toEqual({ kind: 'restarted' });
+    expect(h.c.discards).toEqual([
+      { module: 'pzmr', reason: 'focus_lost' },
+      { module: 'pzmr', reason: 'error' },
+    ]);
+    expect(await h.repo.listBlocks()).toEqual([]);
+    await playReaction(h);
+    const [row] = await storedRows(h);
+    expect(row?.flags).toEqual(['calibration']);
+    expect(summaryOf(row)['restarts']).toEqual([
+      { reason: 'focus_lost', progress: 0.9 },
+      { reason: 'error', progress: 0.6 },
+    ]);
+  });
+
+  it('a counted Esc block moves the level, so the next block is not the first of the segment (T-R37)', async () => {
+    const repo = await calibratedRepo(stateWith('pzmr', { lSaved: 6, lastTrainedAt: T0, lifetimeBlocks: 3 }));
+    const h = await begin(planFree('pzmr', 1), { repo });
+    h.c.ackInstruction();
+    expect(await h.c.discardBlock('user', 0.5)).toMatchObject({ kind: 'counted', lBefore: 5, lAfter: 3 });
+    // s 14/15 ≥ 0.9 gets no first-block boost: g = 1.
+    const next = await playReaction(h, missFirst);
+    expect(next.view.lBefore).toBe(3);
+    expect(next.view.lAfter - 3).toBeCloseTo((14 / 15 - 0.8) / 0.2, 9);
+  });
+
+  it('a counted Esc block is not the previous block of g = 2 (T-R10)', async () => {
+    const repo = await calibratedRepo(stateWith('pzmr', { lSaved: 6, lastTrainedAt: T0, lifetimeBlocks: 3 }));
+    const h = await begin(planFree('pzmr', 1), { repo });
+    const first = await playReaction(h);
+    expect(first.view.score).toBe(1);
+    await h.c.continueAfterSummary();
+    if (h.c.step.kind === 'instruction') h.c.ackInstruction();
+    expect(await h.c.discardBlock('user', 0.5)).toMatchObject({ kind: 'counted', lBefore: first.view.lAfter, lAfter: first.view.lAfter - 2 });
+    // The previous block of the module is the s = 1 one: s 14/15 gets g = 2.
+    const third = await playReaction(h, missFirst);
+    expect(third.view.lAfter - third.view.lBefore).toBeCloseTo((2 * (14 / 15 - 0.8)) / 0.2, 9);
+  });
+
+  it('a counted Esc block stays out of fatigue (T-R10)', async () => {
+    // Two fast blocks and a slow one: with an s = 0 block after them the last two would look tired.
+    let blockNo = 0;
+    const slowThird: Respond = (spec, idx) => {
+      if (idx === 0) blockNo++;
+      const e = spec.expected;
+      return blockNo === 3 && e.kind === 'press' ? { key: e.key, rtMs: 400 } : perfectPlayer(spec, idx);
+    };
+    const h = await begin({ kind: 'training', seed: 11, segments: [segment('szmr', 5 * MIN)] });
+    for (let i = 0; i < 3; i++) {
+      h.clock.advance(30_000);
+      await playReaction(h, slowThird);
+      await h.c.continueAfterSummary();
+    }
+    h.clock.advance(30_000);
+    if (h.c.step.kind === 'instruction') h.c.ackInstruction();
+    expect(await h.c.discardBlock('user', 0.5)).toMatchObject({ kind: 'counted' });
+    expectStep(h.c, 'reaction_block');
+  });
+
+  it('a share outside [0, 1] or a step without a block is rejected', async () => {
+    const h = await begin(planFree('pzmr', 1));
+    await expect(h.c.discardBlock('user', 0)).rejects.toThrow(/expected a block step/);
+    h.c.ackInstruction();
+    const block = expectStep(h.c, 'reaction_block');
+    for (const p of [-0.1, 1.01, Number.NaN]) await expect(h.c.discardBlock('user', p)).rejects.toThrow(RangeError);
+    expect(h.c.step).toBe(block);
+    expect(h.c.escAllowed).toBe(true);
+  });
+});
+
+describe('SessionController — Esc in a diagnostic (F11)', () => {
+  const NOTICE = 'Блок перезапущен. В диагностике это можно сделать один раз за задание.';
+
+  it('the first Esc in a task restarts it with a notice', async () => {
+    const h = await begin(planDiagnostic(1), { scale: 0.02 });
+    h.c.ackInstruction();
+    const first = expectStep(h.c, 'reaction_block');
+    expect(h.c.escAllowed).toBe(true);
+    // Whatever the share: a diagnostic never counts a block as 0.
+    expect(await h.c.discardBlock('user', 0.8)).toEqual({ kind: 'restarted' });
+    expect(h.c.step).toEqual({ kind: 'notice', module: 'pzmr', text: NOTICE });
+    expect(h.c.escAllowed).toBe(false);
+    expect(await h.repo.listBlocks()).toEqual([]);
+    h.c.ackNotice();
+    const again = expectStep(h.c, 'reaction_block');
+    expect(again.specs).not.toEqual(first.specs);
+    expect(h.c.escAllowed).toBe(false);
+  });
+
+  it('a second Esc in a diagnostic task is refused', async () => {
+    const h = await begin(planDiagnostic(1), { scale: 0.02 });
+    h.c.ackInstruction();
+    await h.c.discardBlock('user', 0.1);
+    h.c.ackNotice();
+    const block = expectStep(h.c, 'reaction_block');
+    expect(await h.c.discardBlock('user', 0.9)).toEqual({ kind: 'refused' });
+    expect(h.c.step).toBe(block);
+    expect(h.c.discards).toEqual([{ module: 'pzmr', reason: 'user' }]);
+    expect(await h.repo.listBlocks()).toEqual([]);
+  });
+
+  it('focus loss in a diagnostic does not use up the restart', async () => {
+    const h = await begin(planDiagnostic(1), { scale: 0.02 });
+    h.c.ackInstruction();
+    expect(await h.c.discardBlock('focus_lost', 0.5)).toEqual({ kind: 'restarted' });
+    // No notice of its own: the session screen explains a focus loss.
+    expectStep(h.c, 'reaction_block');
+    expect(h.c.escAllowed).toBe(true);
+    expect(await h.c.discardBlock('user', 0.2)).toEqual({ kind: 'restarted' });
+    expect(h.c.escAllowed).toBe(false);
+    h.c.ackNotice();
+    await h.c.submitReaction(playTimeline(expectStep(h.c, 'reaction_block').specs, perfectPlayer));
+    const [pzmrRow] = await h.repo.listBlocks();
+    expect((JSON.parse(pzmrRow?.summaryJson ?? '{}') as { restarts: unknown }).restarts).toEqual([
+      { reason: 'focus_lost', progress: 0.5 },
+      { reason: 'user', progress: 0.2 },
+    ]);
+    await h.c.continueAfterSummary();
+    // The next task has its own restart.
+    expectStep(h.c, 'instruction');
+    expect(h.c.escAllowed).toBe(true);
+    await drive(h);
+    const done = expectStep(h.c, 'done');
+    expect(done.diagnostic?.restarts).toEqual({ pzmr: { user: 1, focus: 1 } });
+    const [row] = await h.repo.listDiagnostics();
+    expect(parseResults(row ?? { resultsJson: '' })?.restarts).toEqual({ pzmr: { user: 1, focus: 1 } });
+  });
+
+  it('each Горбов task has its own restart; drawing errors restart without a count', async () => {
+    const plan: SessionPlan = { ...planDiagnostic(4), segments: [planDiagnostic(4).segments[4] as Segment] };
+    const h = await begin(plan);
+    h.c.ackInstruction();
+    expect(await h.c.discardBlock('error', 0.5)).toEqual({ kind: 'restarted' });
+    expect(await h.c.discardBlock('user', 0.5)).toEqual({ kind: 'restarted' });
+    expect(expectStep(h.c, 'notice').module).toBe('gorbov');
+    h.c.ackNotice();
+    expect(await h.c.discardBlock('user', 0.5)).toEqual({ kind: 'refused' });
+    await h.c.submitTable(perfectTableRun(expectStep(h.c, 'table_block')));
+    await h.c.continueAfterSummary();
+    h.c.ackInstruction();
+    expect(h.c.escAllowed).toBe(true);
+    expect(await h.c.discardBlock('user', 0.5)).toEqual({ kind: 'restarted' });
+    h.c.ackNotice();
+    await drive(h);
+    expect(expectStep(h.c, 'done').diagnostic?.restarts).toEqual({ gorbov: { user: 2, focus: 0 } });
   });
 });

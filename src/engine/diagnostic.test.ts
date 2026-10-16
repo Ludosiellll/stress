@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DIAGNOSTIC_VOLUME,
   EMPTY_METRICS,
+  EMPTY_RESULTS,
   diagnosticSegmentSeed,
   diagnosticSeriesSchedule,
   isReactionId,
@@ -98,7 +99,7 @@ describe('diagnosticSeriesSchedule', () => {
   });
 });
 
-const EMPTY: DiagnosticResults = { ...EMPTY_METRICS, unreliable: [] };
+const EMPTY: DiagnosticResults = EMPTY_RESULTS;
 
 describe('parseResults', () => {
   it('reads rows stored before `unreliable` existed as reliable', () => {
@@ -146,6 +147,7 @@ describe('parseResults', () => {
       switchSwitchRt: null,
       switchCostMs: null,
       memorySpan: null,
+      restarts: {},
     });
   });
 
@@ -184,6 +186,42 @@ describe('parseResults', () => {
     // A row with them keeps them; a damaged one reads null.
     const now = parseResults({ resultsJson: JSON.stringify({ ...before, pzmrSdRt: 38.5, szmrWrong: 2, rdoSignedBiasMs: -6.2, gonogoOmissions: '1' }) });
     expect(now).toMatchObject({ pzmrSdRt: 38.5, szmrWrong: 2, rdoSignedBiasMs: -6.2, gonogoOmissions: null });
+  });
+
+  it('EMPTY_RESULTS: every metric missing, nothing unreliable, no restarts; frozen', () => {
+    expect(EMPTY_RESULTS).toEqual({ ...EMPTY_METRICS, unreliable: [], restarts: {} });
+    expect(Object.isFrozen(EMPTY_RESULTS)).toBe(true);
+    expect(Object.isFrozen(EMPTY_RESULTS.unreliable)).toBe(true);
+    expect(Object.isFrozen(EMPTY_RESULTS.restarts)).toBe(true);
+  });
+
+  it('a row stored before F11 reads its restarts as {}', () => {
+    const old = Object.fromEntries(Object.entries({ ...EMPTY, pzmrMedianRt: 300 }).filter(([k]) => k !== 'restarts'));
+    expect(old).not.toHaveProperty('restarts');
+    expect(parseResults({ resultsJson: JSON.stringify(old) })?.restarts).toEqual({});
+  });
+
+  it('keeps the restarts of each module (F11)', () => {
+    const restarts = { pzmr: { user: 1, focus: 2 }, gorbov: { user: 2, focus: 0 } };
+    expect(parseResults({ resultsJson: JSON.stringify({ ...EMPTY, restarts }) })?.restarts).toEqual(restarts);
+  });
+
+  it('damaged restarts: an entry of an unknown module or not an object is dropped, a bad count reads 0 (T-R22)', () => {
+    const read = (restarts: unknown): unknown => parseResults({ resultsJson: JSON.stringify({ ...EMPTY, restarts }) })?.restarts;
+    for (const bad of ['x', 3, null, [], [{ user: 1, focus: 0 }]]) expect(read(bad), JSON.stringify(bad)).toEqual({});
+    expect(
+      read({
+        pzmr: { user: 1, focus: 0 },
+        tetris: { user: 1, focus: 1 },
+        szmr: 'x',
+        stroop: null,
+        gonogo: { user: -1, focus: 2 },
+        rdo: { user: 1.5, focus: 'a' },
+        memory: { focus: 3 },
+        gorbov: { user: 0, focus: 0 },
+        schulte: [1, 2],
+      }),
+    ).toEqual({ pzmr: { user: 1, focus: 0 }, gonogo: { user: 0, focus: 2 }, memory: { user: 0, focus: 3 } });
   });
 
   it('keeps only reaction module ids in `unreliable`', () => {

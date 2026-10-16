@@ -80,6 +80,7 @@ export default function ProbeHarness({ measureFrames = sampleFrames }: ProbeHarn
         <ReactionView
           step={STEP}
           nominalFrameMs={frameMs}
+          escAllowed
           onDone={() => { setStatus('done'); }}
           onAbort={() => { setStatus('aborted'); }}
           onError={() => { setStatus('error'); }}

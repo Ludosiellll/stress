@@ -14,7 +14,7 @@ import {
   readinessOfLatest,
   sdScore,
 } from './readiness';
-import { EMPTY_METRICS, type DiagnosticMetrics, type DiagnosticResults } from './diagnostic';
+import { EMPTY_METRICS, EMPTY_RESULTS, type DiagnosticMetrics, type DiagnosticResults } from './diagnostic';
 
 /** A 0.1.0 diagnostic: the W2 metrics are null. */
 const full = (over: Partial<DiagnosticMetrics> = {}): DiagnosticMetrics => ({
@@ -342,7 +342,7 @@ describe('readiness', () => {
   });
 });
 
-const EMPTY: DiagnosticResults = { ...EMPTY_METRICS, unreliable: [] };
+const EMPTY: DiagnosticResults = EMPTY_RESULTS;
 
 describe('mergedBaseline (M2)', () => {
   it('takes every metric from the first diagnostic that has it', () => {

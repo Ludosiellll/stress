@@ -20,6 +20,8 @@ const FLAG_TEXT: Record<BlockFlag, string> = {
   overload: 'Блок с перегрузкой: на сохранённый уровень не влияет',
   warmup: 'Разминка: на сохранённый уровень не влияет',
   test_format: 'Прогон в формате теста: на сохранённый уровень не влияет',
+  // Never on a summary screen (a counted Esc block has none, F11): the pause says it. Here for completeness.
+  discarded: 'Блок прерван — засчитан как 0',
 };
 
 /** Notes, not warnings. */

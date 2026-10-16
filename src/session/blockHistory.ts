@@ -342,9 +342,12 @@ export function normSamples(row: NormRow & Pick<BlockRow, 'summaryJson'>, kind: 
   return normsFrom(row, parseObject(row.summaryJson), kind);
 }
 
-/** Training and free blocks without overload or timing_unreliable (fatigued and calibration count). */
+/** Flags that keep a block out of the history: another load, a timing that measured nothing, a block counted as 0 after Esc (Р29). */
+const OUT_OF_HISTORY: readonly BlockFlag[] = ['overload', 'timing_unreliable', 'discarded'];
+
+/** Training and free blocks without overload, timing_unreliable or discarded (fatigued and calibration count). */
 export function entersHistory(flags: readonly BlockFlag[], kind: SessionKind): boolean {
-  return isCountedSession(kind) && !flags.includes('overload') && !flags.includes('timing_unreliable');
+  return isCountedSession(kind) && !flags.some((f) => OUT_OF_HISTORY.includes(f));
 }
 
 /** The entry and its variant from one parse of the summary; null: no variant or no number. */

@@ -47,7 +47,11 @@ afterEach(() => {
 });
 
 function renderView(s: StepOf<'memory_block'>, o: { exposeAnswer?: boolean; busy?: boolean } = {}) {
-  const handlers = { onSubmit: vi.fn<(a: MemoryAnswer[]) => void>(), onFocusLost: vi.fn<() => void>() };
+  const handlers = {
+    onSubmit: vi.fn<(a: MemoryAnswer[]) => void>(),
+    onFocusLost: vi.fn<() => void>(),
+    onProgress: vi.fn<(p: number) => void>(),
+  };
   const view = render(<MemoryView step={s} exposeAnswer={o.exposeAnswer ?? false} busy={o.busy ?? false} {...handlers} />);
   return { ...handlers, ...view };
 }
@@ -212,10 +216,14 @@ describe('MemoryView', () => {
 
   it('plays every trial in turn and submits all answers after the last', async () => {
     const trials = [trial(), trial({ items: ['5', '2', '6', '0'] })];
-    const { onSubmit } = renderView(step(trials));
+    const { onSubmit, onProgress } = renderView(step(trials));
     await showTrial();
+    key('Enter'); // empty: no answer, nothing to report
+    expect(onProgress).not.toHaveBeenCalled();
     key('7');
     key('Enter');
+    // The share done: answers / rows (F11).
+    expect(onProgress.mock.calls).toEqual([[0.5]]);
     expect(onSubmit).not.toHaveBeenCalled();
     expect(document.querySelector('.memory canvas')).not.toBeNull();
     await showTrial();

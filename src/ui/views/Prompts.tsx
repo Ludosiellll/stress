@@ -1,4 +1,5 @@
 import type { SaveErrorWhat } from '../../session/steps';
+import { noBreakUnits } from '../format';
 import { fromControl, isEnter, useKeyDown } from '../keys';
 
 /** Small session screens: fatigue question, save error, interruption notice, pause menu. */
@@ -107,21 +108,24 @@ export function Notice({ title = 'Блок прерван', text, onContinue, on
 }
 
 export interface PauseMenuProps {
-  /** The pause interrupted a block (it was discarded). */
-  blockDiscarded: boolean;
+  /** What Escape did to the block on screen (discardText, F11); '' when the pause stopped no block. */
+  text: string;
+  /** The block starts again (a free restart): «Продолжить блок заново»; otherwise «Продолжить». */
+  restartBlock: boolean;
   onResume: () => void;
   onExit: () => void;
 }
 
 /** Escape does nothing here: going on takes Enter on the focused button or a click. */
-export function PauseMenu({ blockDiscarded, onResume, onExit }: PauseMenuProps) {
+export function PauseMenu({ text, restartBlock, onResume, onExit }: PauseMenuProps) {
   return (
     <div className="screen-center">
       <h2 tabIndex={-1}>Пауза</h2>
-      <p>{blockDiscarded ? 'Блок начнётся заново. Уже сохранённые блоки не пропадут.' : 'Уже сохранённые блоки не пропадут.'}</p>
+      {text !== '' && <p>{noBreakUnits(text)}</p>}
+      <p>Уже сохранённые блоки не пропадут.</p>
       <div className="actions">
         <button type="button" className="primary" autoFocus onClick={onResume}>
-          {blockDiscarded ? 'Продолжить блок заново' : 'Продолжить'}
+          {restartBlock ? 'Продолжить блок заново' : 'Продолжить'}
         </button>
         <button type="button" onClick={onExit}>
           Завершить сессию

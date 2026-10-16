@@ -318,6 +318,15 @@ describe('entersHistory', () => {
     expect(entersHistory(['overload'], 'training')).toBe(false);
     expect(entersHistory(['timing_unreliable'], 'free')).toBe(false);
   });
+
+  it('a block counted as 0 after Esc stays out (Р29): it measured nothing', () => {
+    expect(entersHistory(['discarded'], 'training')).toBe(false);
+    expect(entersHistory(['warmup', 'discarded'], 'free')).toBe(false);
+    // A counted number-series block keeps its answered items: its summary would read, so the flag alone keeps it out.
+    const series = row({ module: 'numseries', flags: ['discarded'], summaryJson: '{"correct":3,"total":10}' });
+    expect(keyMetric(series)).toBe(30);
+    expect(buildBlockHistory([series, { ...series, id: 'kept', flags: [] }], [session('t', ago(1))]).get('numseries')).toHaveLength(1);
+  });
 });
 
 const SESSIONS = [session('t', ago(10)), session('f', ago(3), { kind: 'free' }), session('d', ago(5), { kind: 'diagnostic' })];
