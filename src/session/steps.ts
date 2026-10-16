@@ -2,6 +2,7 @@ import { LAPSE_HOLD_CAP } from '../engine/adaptive';
 import { DAY_FORM_DAYS, DAY_FORM_MIN_DAYS, type DayForm } from '../engine/dayForm';
 import type { DiagnosticResults } from '../engine/diagnostic';
 import { BASE_ITEM_LIMIT_MS } from '../engine/itemLimit';
+import { LAYOUT_NAMES } from '../engine/layouts';
 import { condPairOf, type ConditionStats } from '../engine/reaction/conditions';
 import { LAPSE_MEDIAN_FACTOR, type Stability } from '../engine/reaction/stability';
 import { penaltyPoints } from '../engine/reaction/summary';
@@ -76,6 +77,8 @@ export type Step =
       seriesTotal: number | null;
       indexDeferred: boolean;
       comparison: DiagnosticComparison | null;
+      /** The user's own layout, the one a diagnostic plays: on the mouse ПЗМР and СЗМР get no norm (T-R23). */
+      layout: LayoutId;
     };
 
 /** A stored diagnostic as parseResults read it. */
@@ -170,6 +173,14 @@ export function floorLine(windowMs: number, nominalWindowMs: number): string {
 
 /** The level line of a warm-up block (F5): it plays at L_saved − 1 and moves nothing. */
 export const WARMUP_LEVEL_NOTE = 'Разминка: уровень не меняется';
+
+/**
+ * «Сегодня раскладка: пульт (стрелки и цифры). Основная — клавиатура.» (F9): on Home and at the start of the session's
+ * first instruction, when the layout of the day is not the primary.
+ */
+export function dayLayoutLine(day: LayoutId, primary: LayoutId): string {
+  return `Сегодня раскладка: ${LAYOUT_NAMES[day]}. Основная — ${LAYOUT_NAMES[primary]}.`;
+}
 export const UNRELIABLE_REPLAY_NOTICE = 'Замер ненадёжен (пропуски кадров). Блок будет повторён.';
 /** The notice after the first Esc of a diagnostic task (F11). */
 export const DIAGNOSTIC_RESTART_NOTICE = 'Блок перезапущен. В диагностике это можно сделать один раз за задание.';

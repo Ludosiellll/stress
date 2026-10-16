@@ -1,5 +1,5 @@
 import { isReactionId, type DiagnosticResults } from '../../engine/diagnostic';
-import type { ModuleId } from '../../engine/types';
+import type { LayoutId, ModuleId } from '../../engine/types';
 import { moduleTitles } from '../../modules/registry';
 import {
   DIAGNOSTIC_ROW_IDS,
@@ -27,6 +27,8 @@ export interface DoneProps {
   indexDeferred?: boolean;
   /** A diagnostic: the previous one and the indexes (§3.3); null: training, free, or the earlier ones unreadable. */
   comparison?: DiagnosticComparison | null;
+  /** The layout the diagnostic played (the user's own; default the keyboard): on the mouse ПЗМР and СЗМР get no norm (T-R23). */
+  layout?: LayoutId;
   onHome: () => void;
 }
 
@@ -136,7 +138,17 @@ function DetailLines({ d }: { d: DiagnosticResults }) {
   );
 }
 
-function ResultsTable({ d, seriesTotal, comparison }: { d: DiagnosticResults; seriesTotal: number | null; comparison: DiagnosticComparison | null }) {
+function ResultsTable({
+  d,
+  seriesTotal,
+  comparison,
+  layout,
+}: {
+  d: DiagnosticResults;
+  seriesTotal: number | null;
+  comparison: DiagnosticComparison | null;
+  layout: LayoutId;
+}) {
   const previous = comparison?.previous ?? null;
   return (
     <table className="results" aria-label="Результаты диагностики">
@@ -172,7 +184,7 @@ function ResultsTable({ d, seriesTotal, comparison }: { d: DiagnosticResults; se
                 </td>
               </>
             )}
-            <td>{noBreakUnits(diagnosticNorm(d, id) ?? NONE)}</td>
+            <td>{noBreakUnits(diagnosticNorm(d, id, layout) ?? NONE)}</td>
             <td>{restartText(d, id)}</td>
           </tr>
         ))}
@@ -197,13 +209,21 @@ function moduleLines(summaries: readonly BlockSummaryView[]): string[] {
   });
 }
 
-export default function Done({ diagnostic, seriesTotal, summaries, indexDeferred = false, comparison = null, onHome }: DoneProps) {
+export default function Done({
+  diagnostic,
+  seriesTotal,
+  summaries,
+  indexDeferred = false,
+  comparison = null,
+  layout = 'keyboard',
+  onHome,
+}: DoneProps) {
   const lines = moduleLines(summaries);
   const index = comparison === null ? null : indexLine(comparison);
   return (
     <div className="screen-center done">
       <h2 tabIndex={-1}>Сессия завершена</h2>
-      {diagnostic !== null && <ResultsTable d={diagnostic} seriesTotal={seriesTotal} comparison={comparison} />}
+      {diagnostic !== null && <ResultsTable d={diagnostic} seriesTotal={seriesTotal} comparison={comparison} layout={layout} />}
       {diagnostic !== null && <DetailLines d={diagnostic} />}
       {diagnostic !== null && firstOneTable(diagnostic, comparison) && <p className="muted">{FIRST_ONE_TABLE}</p>}
       {diagnostic !== null && comparison !== null && comparison.previous === null && (

@@ -288,6 +288,26 @@ describe('normSamples', () => {
     expect(normSamples(played('pzmr', JSON.stringify(pzmr.params(16))), 'diagnostic')).toEqual(norms);
   });
 
+  it('ПЗМР and СЗМР played on the mouse get no published norm, in any session; the remote control is a keyboard (T-R23)', () => {
+    const clean = { hit: 15, miss: 0, late: 0 };
+    const played = (module: 'pzmr' | 'szmr', paramsJson: string): BlockRow =>
+      row({ module, lBefore: 0, paramsJson, summaryJson: JSON.stringify({ meanRt: 262.4, sdRt: 50.2, counts: clean }) });
+    const pzmrNorms = [
+      { id: 'pzmrMean', value: 262 },
+      { id: 'pzmrSd', value: 50 },
+    ];
+    for (const kind of ['training', 'free', 'diagnostic'] as const) {
+      expect(normSamples(played('pzmr', '{"layout":"mouse"}'), kind), kind).toEqual([]);
+      expect(normSamples(played('szmr', '{"nColors":2,"nKeys":2,"layout":"mouse"}'), kind), kind).toEqual([]);
+      expect(normSamples(played('pzmr', '{"layout":"keyboard"}'), kind), kind).toEqual(pzmrNorms);
+      expect(normSamples(played('pzmr', '{"layout":"pult"}'), kind), kind).toEqual(pzmrNorms);
+      expect(normSamples(played('szmr', '{"nColors":2,"nKeys":2,"layout":"pult"}'), kind), kind).toEqual([{ id: 'szmrMean', value: 262 }]);
+      // Read defensively: an old row without the layout, or a layout of the wrong type, played the keyboard.
+      expect(normSamples(played('pzmr', '{}'), kind), kind).toEqual(pzmrNorms);
+      expect(normSamples(played('pzmr', '{"layout":7}'), kind), kind).toEqual(pzmrNorms);
+    }
+  });
+
   it('СЗМР: the 2-choice norm only for 2 colours on 2 keys, by the parameters of its level', () => {
     expect(normSamples(row({ module: 'szmr', lBefore: 7.9, summaryJson: '{"meanRt":401.6}' }), 'diagnostic')).toEqual([{ id: 'szmrMean', value: 402 }]);
     expect(normSamples(row({ module: 'szmr', lBefore: 8, summaryJson: '{"meanRt":401.6}' }), 'diagnostic')).toEqual([]);

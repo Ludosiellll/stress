@@ -119,6 +119,7 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [layout, setLayout] = useState<LayoutId>('keyboard');
+  const [rotation, setRotation] = useState(true);
   const [testDate, setTestDate] = useState('');
   const [volume, setVolume] = useState(60);
   // Known at once when the window has no Web Audio: no need to click to find out.
@@ -153,6 +154,7 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
         ]);
         if (signal.aborted) return;
         setLayout(s.layout);
+        setRotation(s.layoutRotation);
         setTestDate(s.testDate ?? '');
         setVolume(s.stressVolume);
         audio.setVolume(s.stressVolume / 100);
@@ -198,6 +200,11 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
     const previous = layout;
     setLayout(next);
     void save('раскладка', { layout: next }, () => { setLayout(previous); });
+  };
+
+  const changeRotation = (next: boolean): void => {
+    setRotation(next);
+    void save('чередование раскладок', { layoutRotation: next }, () => { setRotation(!next); });
   };
 
   const changeDate = (value: string): void => {
@@ -370,6 +377,10 @@ export default function Settings({ onBack, measureFrames = (signal) => collectFr
             <input type="radio" name="layout" checked={layout === id} disabled={restoring} onChange={() => { chooseLayout(id); }} /> {label}
           </label>
         ))}
+        <label className="choice">
+          <input type="checkbox" checked={rotation} disabled={restoring} onChange={(e) => { changeRotation(e.target.checked); }} />{' '}
+          Чередовать раскладки по дням
+        </label>
       </fieldset>
 
       <section>

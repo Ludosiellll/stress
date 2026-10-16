@@ -137,6 +137,22 @@ describe('loadHomeModel', () => {
     expect(later).toMatchObject({ module: 'gonogo', purpose: 'test_format' });
   });
 
+  it('loadHomeModel plans the layout of the day and says so when it is not the primary (F9)', async () => {
+    const repo = new MemoryRepository();
+    // Day 1: the primary, no line.
+    expect(await loadHomeModel(repo, TODAY)).toMatchObject({ plan: { layout: 'keyboard' }, layoutLine: null });
+    // A training yesterday: today is day 2, the remote control.
+    await repo.createSession(session('y', '2026-10-13T10:00:00'));
+    expect(await loadHomeModel(repo, TODAY)).toMatchObject({
+      plan: { layout: 'pult' },
+      layoutLine: 'Сегодня раскладка: пульт (стрелки и цифры). Основная — клавиатура.',
+    });
+    await repo.saveSettings({ layout: 'pult' });
+    expect((await loadHomeModel(repo, TODAY)).layoutLine).toBe('Сегодня раскладка: клавиатура. Основная — пульт (стрелки и цифры).');
+    await repo.saveSettings({ layoutRotation: false });
+    expect(await loadHomeModel(repo, TODAY)).toMatchObject({ plan: { layout: 'pult' }, layoutLine: null });
+  });
+
   it('loadHomeModel computes the phase from the first session and the test date', async () => {
     const repo = new MemoryRepository();
     await repo.createSession(session('t', '2026-10-11T10:00:00'));

@@ -117,6 +117,7 @@ export default function Home({ onStart, onFree, onProgress, onSettings }: HomePr
             </ul>
           )}
         </div>
+        {model.layoutLine !== null && <p>{model.layoutLine}</p>}
         <ol aria-label="План на сегодня" className="plan">
           {model.plan.segments.map((s, i) => (
             <li key={i}>{noBreakUnits(planLine(s))}</li>

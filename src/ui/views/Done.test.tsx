@@ -196,6 +196,11 @@ describe('Done', () => {
     expect(screen.queryByText(/Первая диагностика/)).toBeNull();
   });
 
+  it('a diagnostic played on the mouse: no reference band for ПЗМР and СЗМР, their norms assume a keyboard (T-R23)', () => {
+    render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} layout="mouse" onHome={vi.fn()} />);
+    expect(cells().map((r) => r.at(-1))).toEqual(['—', '—', '—', '—', 'средний', 'высокий', '—', '—', '—', '—', '—', 'средний']);
+  });
+
   it('a previous diagnostic on three tables: its Горбов values are marked and not compared (F10, Р25)', () => {
     const previous = { ...PAST, metrics: { ...PREVIOUS, gorbovOneTable: false } };
     render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} comparison={{ ...WITH_PREVIOUS, previous }} onHome={vi.fn()} />);

@@ -100,6 +100,13 @@ describe('diagnosticCompare', () => {
     expect(diagnosticNorm({ ...D, pzmrMeanRt: null }, 'pzmr')).toBeNull();
   });
 
+  it('a diagnostic played on the mouse: no reference band for ПЗМР and СЗМР, the others as usual (T-R23)', () => {
+    expect(DIAGNOSTIC_ROW_IDS.map((id) => diagnosticNorm(D, id, 'mouse'))).toEqual([
+      null, null, null, null, 'средний', 'высокий', null, null, null, null, null, 'средний']);
+    expect(diagnosticNorm(D, 'pzmr', 'pult')).toBe('по среднему 262 мс: средний');
+    expect(diagnosticNorm(D, 'szmr', 'keyboard')).toBe('по среднему 402 мс: ниже среднего');
+  });
+
   it('no value, no reference band', () => {
     expect(DIAGNOSTIC_ROW_IDS.map((id) => diagnosticNorm(EMPTY_METRICS, id))).toEqual(DIAGNOSTIC_ROW_IDS.map(() => null));
     expect(DIAGNOSTIC_ROW_IDS.map((id) => diagnosticValue(EMPTY_METRICS, id))).toEqual(DIAGNOSTIC_ROW_IDS.map(() => null));

@@ -320,6 +320,26 @@ test('settings layout pult changes key hints to arrows', async ({ page }) => {
   await expect(home(page)).toBeVisible();
 });
 
+test('on a remote-control day the bot presses the arrows', async ({ page }) => {
+  await openApp(page, E2E_URL);
+  // A training yesterday: today is day 2 of the course, the remote control's day for a keyboard user (F9).
+  await restoreBundle(page, await historyBundle(page, { sessions: [{ daysAgo: 1 }] }));
+  await expect(page.getByText('Сегодня раскладка: пульт (стрелки и цифры). Основная — клавиатура.')).toBeVisible();
+  await page.getByRole('button', { name: 'Свободная тренировка' }).click();
+  await page.getByRole('button', { name: 'ПЗМР', exact: true }).click();
+  await playSession(page, { stopAt: 'instruction' });
+  const instruction = page.locator('.instruction');
+  await expect(instruction).toContainText('Сегодня раскладка: пульт (стрелки и цифры). Основная — клавиатура.');
+  await expect(instruction).toContainText('Управление: ↓');
+  // The bot presses the block's expected key: ArrowDown.
+  const titles: string[] = [];
+  await playSession(page, { stopAt: 'summary', onScreen: checkSummaries(page, titles) });
+  expect(titles).toEqual(['ПЗМР']);
+  await pauseWithEscape(page);
+  await page.getByRole('button', { name: 'Завершить сессию' }).click();
+  await expect(home(page)).toBeVisible();
+});
+
 test('focus loss mid-block shows repeat message', async ({ page }) => {
   await openApp(page, E2E_URL);
   await home(page).click();

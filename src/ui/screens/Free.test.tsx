@@ -61,6 +61,27 @@ describe('Free', () => {
     expect((taper.onStart.mock.calls[0]?.[0] as SessionPlan).feedback).toBe('none');
   });
 
+  it('the free plan plays the layout of the day, as Home plans it (F9, Р10)', async () => {
+    const repo = new MemoryRepository();
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString();
+    await repo.createSession(session('y', yesterday, { endedAt: yesterday }));
+    const day2 = await renderFree(repo);
+    fireEvent.click(screen.getByRole('button', { name: moduleTitles.pzmr }));
+    expect((day2.onStart.mock.calls[0]?.[0] as SessionPlan).layout).toBe('pult');
+
+    cleanup();
+    await repo.saveSettings({ layout: 'mouse' });
+    const mouse = await renderFree(repo);
+    fireEvent.click(screen.getByRole('button', { name: moduleTitles.pzmr }));
+    expect((mouse.onStart.mock.calls[0]?.[0] as SessionPlan).layout).toBe('keyboard');
+
+    cleanup();
+    await repo.saveSettings({ layoutRotation: false });
+    const off = await renderFree(repo);
+    fireEvent.click(screen.getByRole('button', { name: moduleTitles.pzmr }));
+    expect((off.onStart.mock.calls[0]?.[0] as SessionPlan).layout).toBe('mouse');
+  });
+
   it('a failed load is shown and logged; «Назад» still works', async () => {
     const repo = new MemoryRepository();
     repo.listSessions = () => Promise.reject(new Error('база занята'));

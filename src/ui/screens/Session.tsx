@@ -498,6 +498,7 @@ function SessionFlow({
           summaries={summaries}
           indexDeferred={step.indexDeferred}
           comparison={step.comparison}
+          layout={step.layout}
           onHome={exit}
         />
       );

@@ -439,9 +439,9 @@ export function repositoryContract(make: () => Promise<Repository>): void {
   });
 
   describe('settings', () => {
-    it('defaults to keyboard, null, null and a stress volume of 60', async () => {
+    it('defaults to keyboard, null, null, a stress volume of 60 and the layouts rotating', async () => {
       const repo = await make();
-      expect(await repo.getSettings()).toEqual({ layout: 'keyboard', testDate: null, lastSelfCheckJson: null, stressVolume: 60 });
+      expect(await repo.getSettings()).toEqual({ layout: 'keyboard', testDate: null, lastSelfCheckJson: null, stressVolume: 60, layoutRotation: true });
     });
 
     it('saves and reads the stress volume', async () => {
@@ -449,18 +449,27 @@ export function repositoryContract(make: () => Promise<Repository>): void {
       await repo.saveSettings({ stressVolume: 0 });
       expect((await repo.getSettings()).stressVolume).toBe(0);
       await repo.saveSettings({ stressVolume: 85, layout: 'mouse' });
-      expect(await repo.getSettings()).toEqual({ layout: 'mouse', testDate: null, lastSelfCheckJson: null, stressVolume: 85 });
+      expect(await repo.getSettings()).toEqual({ layout: 'mouse', testDate: null, lastSelfCheckJson: null, stressVolume: 85, layoutRotation: true });
+    });
+
+    it('saves and reads the layout rotation (F9)', async () => {
+      const repo = await make();
+      await repo.saveSettings({ layoutRotation: false });
+      expect((await repo.getSettings()).layoutRotation).toBe(false);
+      expect(await repo.storedSettingKeys()).toEqual(new Set(['layoutRotation']));
+      await repo.saveSettings({ layoutRotation: true });
+      expect((await repo.getSettings()).layoutRotation).toBe(true);
     });
 
     it('merges partial saves over defaults and earlier saves', async () => {
       const repo = await make();
       await repo.saveSettings({ testDate: '2026-12-01' });
-      expect(await repo.getSettings()).toEqual({ layout: 'keyboard', testDate: '2026-12-01', lastSelfCheckJson: null, stressVolume: 60 });
+      expect(await repo.getSettings()).toEqual({ layout: 'keyboard', testDate: '2026-12-01', lastSelfCheckJson: null, stressVolume: 60, layoutRotation: true });
       await repo.saveSettings({ layout: 'pult', lastSelfCheckJson: '{"hz":60}' });
       await repo.saveSettings({});
-      expect(await repo.getSettings()).toEqual({ layout: 'pult', testDate: '2026-12-01', lastSelfCheckJson: '{"hz":60}', stressVolume: 60 });
+      expect(await repo.getSettings()).toEqual({ layout: 'pult', testDate: '2026-12-01', lastSelfCheckJson: '{"hz":60}', stressVolume: 60, layoutRotation: true });
       await repo.saveSettings({ testDate: null });
-      expect(await repo.getSettings()).toEqual({ layout: 'pult', testDate: null, lastSelfCheckJson: '{"hz":60}', stressVolume: 60 });
+      expect(await repo.getSettings()).toEqual({ layout: 'pult', testDate: null, lastSelfCheckJson: '{"hz":60}', stressVolume: 60, layoutRotation: true });
     });
   });
 

@@ -69,7 +69,7 @@ describe('exportBundle', () => {
     expect(parsed.logicItems).toEqual([item('i1', 'b2', '2026-10-01T08:02:30.000Z')]);
     expect(parsed.diagnostics).toEqual([d]);
     expect(parsed.wellbeing).toEqual([w]);
-    expect(parsed.settings).toEqual({ layout: 'keyboard', testDate: '2026-12-01', lastSelfCheckJson: null, stressVolume: 60 });
+    expect(parsed.settings).toEqual({ layout: 'keyboard', testDate: '2026-12-01', lastSelfCheckJson: null, stressVolume: 60, layoutRotation: true });
   });
 });
 

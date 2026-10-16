@@ -309,12 +309,23 @@ function playedQuiet(paramsJson: string): boolean {
 }
 
 /**
- * Training and free sessions: the response window cuts the slow answers off, so the mean of the hits grades too well
- * unless every trial was answered in time. ПЗМР and СЗМР get their norms only from a block without misses and late
- * answers that is not an overload block (FW2) and played on a quiet screen without sound, as the published norms were
- * measured (T-R23); the diagnostic plays the frozen 0.2.0 parameters with a wide window, so its blocks always do.
+ * Played on the mouse: the stored `layout` is 'mouse' (F9). A row without it (before F9), or with a value of the wrong
+ * type, played the keyboard; the remote control (arrows and digits) is a keyboard too.
+ */
+function playedOnMouse(paramsJson: string): boolean {
+  return parseObject(paramsJson)?.['layout'] === 'mouse';
+}
+
+/**
+ * The RT norms add KEYBOARD_OFFSET_MS for a keyboard: a ПЗМР or СЗМР block played on the mouse is never graded, in a
+ * diagnostic either (a user whose own layout is the mouse plays it there), T-R23. Training and free sessions: the
+ * response window cuts the slow answers off, so the mean of the hits grades too well unless every trial was answered in
+ * time. ПЗМР and СЗМР get their norms only from a block without misses and late answers that is not an overload block
+ * (FW2) and played on a quiet screen without sound, as the published norms were measured (T-R23); the diagnostic plays
+ * the frozen 0.2.0 parameters with a wide window, so its keyboard blocks always do.
  */
 function rtGradable(row: NormRow, summary: Json | null, kind: SessionKind): boolean {
+  if (playedOnMouse(row.paramsJson)) return false;
   if (!isCountedSession(kind)) return true;
   const counts = objectField(summary, 'counts');
   return !row.flags.includes('overload') && num(counts, 'miss') === 0 && num(counts, 'late') === 0 && playedQuiet(row.paramsJson);

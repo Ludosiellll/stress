@@ -21,6 +21,7 @@ import { hashString } from '../engine/rng';
 import { computeStreak } from '../engine/streak';
 import type { ModuleId, ReactionModuleId } from '../engine/types';
 import { moduleTitles } from '../modules/registry';
+import { dayLayoutLine } from '../session/steps';
 import { signalsText, TEST_FORMAT_NAMES } from '../session/testFormat';
 import { budgetMinutes } from './format';
 
@@ -43,6 +44,8 @@ export interface HomeModel {
   hints: string[];
   /** A taper rehearsal is due (Home shows the regular diagnostic banner instead when that one is due). */
   rehearsalDue: boolean;
+  /** «Сегодня раскладка: … Основная — …» when the plan's layout of the day is not the user's own (F9); else null. */
+  layoutLine: string | null;
 }
 
 const NO_ABILITIES: Record<Ability, number | null> = { reaction: null, attention: null, switching: null, memory: null, logic: null };
@@ -192,7 +195,9 @@ export async function loadHomeModel(repo: Repository, today: string): Promise<Ho
     .filter((b) => b.flags.includes('test_format'))
     .map((b) => b.startedAt)
     .sort((a, b) => Date.parse(a) - Date.parse(b));
-  const plan = planTraining(states, today, hashString(`${today}:${String(sessions.length)}`), phase, { testFormatRuns });
+  const extras = { testFormatRuns, layout: settings.layout, layoutRotation: settings.layoutRotation };
+  const plan = planTraining(states, today, hashString(`${today}:${String(sessions.length)}`), phase, extras);
+  const dayLayout = plan.layout ?? settings.layout;
   const untried = new Set(MODULE_IDS.filter((m) => states[m].lifetimeBlocks === 0));
   const texts = phaseTexts(phase, plan, untried);
   return {
@@ -207,5 +212,6 @@ export async function loadHomeModel(repo: Repository, today: string): Promise<Ho
     phaseWhy: texts.why,
     hints: texts.hints,
     rehearsalDue: isRehearsalDue(phase, diagnostics.map((d) => d.at), settings.testDate, today),
+    layoutLine: dayLayout === settings.layout ? null : dayLayoutLine(dayLayout, settings.layout),
   };
 }

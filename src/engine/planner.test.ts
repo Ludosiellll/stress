@@ -24,6 +24,7 @@ import {
   warmupLevel,
   type ModuleState,
   type SessionPlan,
+  type TrainingExtras,
 } from './planner';
 import { localDayIso } from './dates';
 import { MODULE_IDS, type ModuleId } from './types';
@@ -64,6 +65,9 @@ const phaseInfo = (phase: PhaseId, over: Partial<PhaseInfo> = {}): PhaseInfo => 
 });
 
 const DEV = phaseInfo('development');
+
+/** The extras of a keyboard user with the rotation on and these stored runs. */
+const runsOf = (testFormatRuns: readonly string[]): TrainingExtras => ({ testFormatRuns, layout: 'keyboard', layoutRotation: true });
 
 describe('daysBetween', () => {
   it('counts calendar days between date-only strings', () => {
@@ -475,7 +479,7 @@ describe('test-format runs (F4)', () => {
 
   it('no run before day 15', () => {
     expect(testFormatDue([], 14, TODAY)).toBe(false);
-    expect(planTraining(trained(), TODAY, 1, day(14, 'base'), { testFormatRuns: [] }).segments.some((s) => s.purpose === 'test_format')).toBe(false);
+    expect(planTraining(trained(), TODAY, 1, day(14, 'base'), runsOf([])).segments.some((s) => s.purpose === 'test_format')).toBe(false);
     expect(testFormatDue([], 15, TODAY)).toBe(true);
   });
 
@@ -483,7 +487,7 @@ describe('test-format runs (F4)', () => {
     // ПЗМР trained long ago: it would win a reaction slot without the run.
     const states = trained({ pzmr: { lastTrainedAt: '2026-09-01' } });
     expect(planTraining(states, TODAY, 1, day(14)).segments[1]).toMatchObject({ module: 'pzmr', purpose: 'reaction' });
-    const plan = planTraining(states, TODAY, 1, day(15), { testFormatRuns: [] });
+    const plan = planTraining(states, TODAY, 1, day(15), runsOf([]));
     expect(plan.segments[0]).toEqual({ module: 'pzmr', budgetMs: 0, purpose: 'test_format', trialCount: 50, practiceTrials: 5 });
     expect(purposes(plan)).not.toContain('warmup');
     const reaction = plan.segments.filter((s) => s.purpose === 'reaction');
@@ -494,7 +498,7 @@ describe('test-format runs (F4)', () => {
 
   it('rotation by the number of stored runs', () => {
     const at = (n: number): SessionPlan =>
-      planTraining(trained(), TODAY, 1, day(40), { testFormatRuns: Array.from({ length: n }, (_, i) => ago(30 + i)) });
+      planTraining(trained(), TODAY, 1, day(40), runsOf(Array.from({ length: n }, (_, i) => ago(30 + i))));
     const run = (n: number) => at(n).segments[0];
     expect(run(1)).toEqual({ module: 'szmr', budgetMs: 0, purpose: 'test_format', trialCount: 70, practiceTrials: 5 });
     expect(run(2)).toEqual({ module: 'gonogo', budgetMs: 0, purpose: 'test_format', trialCount: 60, practiceTrials: 5 });
@@ -526,7 +530,7 @@ describe('test-format runs (F4)', () => {
     // The order of the list does not matter.
     expect(testFormatDue(runs(3, 20, 10), 30, TODAY)).toBe(true);
     expect(testFormatDue(runs(2, 20, 10), 30, TODAY)).toBe(false);
-    const plan = (r: string[]): string[] => purposes(planTraining(trained(), TODAY, 1, day(30), { testFormatRuns: r }));
+    const plan = (r: string[]): string[] => purposes(planTraining(trained(), TODAY, 1, day(30), runsOf(r)));
     expect(plan(runs(6, 3))[0]).toBe('warmup');
     expect(plan(runs(7, 3))[0]).toBe('test_format');
     // Without extras the plan has no run (the simulations and tests that plan without the history).
@@ -535,7 +539,7 @@ describe('test-format runs (F4)', () => {
 
   it('the taper keeps the runs', () => {
     const taper = phaseInfo('taper', { dayNumber: 40, daysToTest: 5 });
-    const plan = planTraining(trained(), TODAY, 1, taper, { testFormatRuns: runs(10) });
+    const plan = planTraining(trained(), TODAY, 1, taper, runsOf(runs(10)));
     // The run keeps its volume; the other budgets are cut.
     expect(plan.segments.map((s) => [s.module, s.purpose, s.budgetMs])).toEqual([
       ['szmr', 'test_format', 0],
@@ -551,7 +555,7 @@ describe('test-format runs (F4)', () => {
   it('the finisher never takes the run\'s module', () => {
     // РДО is the finisher of this plan without a run (see «development: finisher…»).
     expect(planTraining(trained(), TODAY, 1, day(30)).segments.at(-1)).toMatchObject({ module: 'rdo', purpose: 'finisher' });
-    const plan = planTraining(trained(), TODAY, 1, day(30), { testFormatRuns: runs(30, 29, 28) });
+    const plan = planTraining(trained(), TODAY, 1, day(30), runsOf(runs(30, 29, 28)));
     expect(plan.segments[0]).toMatchObject({ module: 'rdo', purpose: 'test_format' });
     const finisher = plan.segments.at(-1);
     expect(finisher?.purpose).toBe('finisher');
@@ -566,7 +570,7 @@ describe('test-format runs (F4)', () => {
       fc.property(phaseArb, fc.integer({ min: 1, max: 120 }), agoArb, fc.boolean(), (ph, dayNumber, days, plateau) => {
         const states = trained({ szmr: { plateau }, rdo: { plateau } });
         const r = runs(...days);
-        const plan = planTraining(states, TODAY, 1, phaseInfo(ph, { dayNumber }), { testFormatRuns: r });
+        const plan = planTraining(states, TODAY, 1, phaseInfo(ph, { dayNumber }), runsOf(r));
         const due = testFormatDue(r, dayNumber, TODAY);
         const [first, ...rest] = plan.segments;
         if (first === undefined) return false;
@@ -614,6 +618,25 @@ describe('isRehearsalDue', () => {
       expect(isRehearsalDue(phaseInfo(ph), [], TEST, TODAY)).toBe(false);
     }
     expect(isRehearsalDue(TAPER, [], null, TODAY)).toBe(false);
+  });
+});
+
+describe('the layout of the day (F9)', () => {
+  it('planTraining plays dayLayout of its day; without extras it names none', () => {
+    const plan = (dayNumber: number, extras: Partial<TrainingExtras> = {}) =>
+      planTraining(trained(), TODAY, 1, phaseInfo('development', { dayNumber }), { ...runsOf([]), ...extras }).layout;
+    expect([29, 30, 31, 32].map((n) => plan(n))).toEqual(['keyboard', 'pult', 'keyboard', 'mouse']);
+    expect([30, 32].map((n) => plan(n, { layout: 'mouse' }))).toEqual(['keyboard', 'pult']);
+    expect(plan(30, { layoutRotation: false })).toBe('keyboard');
+    expect(planTraining(trained(), TODAY, 1, phaseInfo('taper', { dayNumber: 30, daysToTest: 3 }), runsOf([])).layout).toBe('keyboard');
+    expect(planTraining(trained(), TODAY, 1, DEV)).not.toHaveProperty('layout');
+  });
+
+  it('planFree with the layout plays dayLayout of the phase’s day; without a phase, the primary', () => {
+    expect(planFree('szmr', 7, phaseInfo('development', { dayNumber: 2 }), { primary: 'keyboard', rotation: true }).layout).toBe('pult');
+    expect(planFree('szmr', 7, phaseInfo('development', { dayNumber: 2 }), { primary: 'keyboard', rotation: false }).layout).toBe('keyboard');
+    expect(planFree('szmr', 7, undefined, { primary: 'mouse', rotation: true }).layout).toBe('mouse');
+    expect(planFree('szmr', 7, DEV)).not.toHaveProperty('layout');
   });
 });
 

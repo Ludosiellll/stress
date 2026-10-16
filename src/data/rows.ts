@@ -94,6 +94,8 @@ export interface Settings {
   lastSelfCheckJson: string | null;
   /** Volume of the sound stressors, 0..100 % (default 60). */
   stressVolume: number;
+  /** The layout of a training day rotates keyboard, remote control and mouse (default true, F9); local, never restored. */
+  layoutRotation: boolean;
 }
 
 /**

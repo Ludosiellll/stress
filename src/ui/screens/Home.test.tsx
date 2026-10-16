@@ -61,6 +61,11 @@ describe('Home without history', () => {
     expect(screen.queryByRole('list', { name: 'Напоминания' })).toBeNull();
   });
 
+  it('the layout of the day: a line only when it is not the primary (F9)', async () => {
+    await renderHome();
+    expect(screen.queryByText(/Сегодня раскладка/)).toBeNull();
+  });
+
   it('a plan line keeps its minutes with the number (T-R26)', async () => {
     await renderHome();
     expect(planItems()[0]?.textContent).toBe('ПЗМР — 2\u00a0мин');
@@ -183,6 +188,15 @@ describe('Home in the taper', () => {
 });
 
 describe('Home actions', () => {
+  it('a training yesterday: today the remote control, said above the plan (F9)', async () => {
+    const repo = new MemoryRepository();
+    await repo.createSession(session('y', daysFromNow(-1).toISOString(), { endedAt: daysFromNow(-1).toISOString() }));
+    const { onStart } = await renderHome(repo);
+    expect(screen.getByText('Сегодня раскладка: пульт (стрелки и цифры). Основная — клавиатура.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Начать тренировку' }));
+    expect((onStart.mock.calls[0]?.[0] as SessionPlan).layout).toBe('pult');
+  });
+
   it('Enter starts the training with the plan that is on screen', async () => {
     const { onStart } = await renderHome();
     const shown = planLines();

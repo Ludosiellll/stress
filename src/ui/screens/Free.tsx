@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { PhaseInfo } from '../../engine/phases';
 import { planFree, type SessionPlan } from '../../engine/planner';
 import { hashString } from '../../engine/rng';
-import { MODULE_IDS, type ModuleId } from '../../engine/types';
+import { MODULE_IDS, type LayoutId, type ModuleId } from '../../engine/types';
 import { moduleTitles } from '../../modules/registry';
 import { useApp } from '../AppContext';
 import { phaseOfDay } from '../homeModel';
@@ -15,15 +15,19 @@ export interface FreeProps {
   onBack: () => void;
 }
 
-/** What a free plan needs: the number of sessions (its seed) and the phase of the day (its marks, F15). */
+/**
+ * What a free plan needs: the number of sessions (its seed), the phase of the day (its marks, F15) and the user's layout
+ * with its rotation (the layout of the day, F9).
+ */
 interface FreeContext {
   sessions: number;
   phase: PhaseInfo;
+  layout: { primary: LayoutId; rotation: boolean };
 }
 
 /**
- * Free training: one module for 5 minutes. The seed changes with every session started; the marks after a trial follow
- * the phase of the day, as Home computes it (F15, Р10).
+ * Free training: one module for 5 minutes. The seed changes with every session started; the marks after a trial and the
+ * layout follow the phase and the layout of the day, as Home computes them (F15, F9, Р10).
  */
 export default function Free({ onStart, onBack }: FreeProps) {
   const { repo } = useApp();
@@ -35,7 +39,7 @@ export default function Free({ onStart, onBack }: FreeProps) {
     Promise.all([repo.getModuleStates(), repo.listSessions(), repo.getSettings()]).then(
       ([states, list, settings]) => {
         const phase = phaseOfDay(states, list, settings, localDate());
-        if (live) setContext({ sessions: list.length, phase });
+        if (live) setContext({ sessions: list.length, phase, layout: { primary: settings.layout, rotation: settings.layoutRotation } });
       },
       (e: unknown) => {
         const message = e instanceof Error ? e.message : String(e);
@@ -67,7 +71,7 @@ export default function Free({ onStart, onBack }: FreeProps) {
   if (context === null) return <p>Загрузка…</p>;
 
   const start = (module: ModuleId): void => {
-    onStart(planFree(module, hashString(`free:${localDate()}:${module}:${String(context.sessions)}`), context.phase));
+    onStart(planFree(module, hashString(`free:${localDate()}:${module}:${String(context.sessions)}`), context.phase, context.layout));
   };
 
   return (

@@ -1,6 +1,7 @@
+import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import type { LayoutId } from './types';
-import { keyLabel, layoutKeys, normalizeKey } from './layouts';
+import { dayLayout, keyLabel, LAYOUT_NAMES, layoutKeys, normalizeKey } from './layouts';
 
 const TABLE: Record<LayoutId, (string[] | null)[]> = {
   keyboard: [
@@ -79,5 +80,46 @@ describe('keyLabel', () => {
     ['Enter', 'Enter'],
   ])('%s -> %s', (code, label) => {
     expect(keyLabel(code)).toBe(label);
+  });
+});
+
+describe('dayLayout (F9)', () => {
+  const day = (dayNumber: number, daysToTest: number | null = null) => ({ dayNumber, daysToTest });
+
+  it('days 1–4 play the primary, the first other, the primary, the second other; the others keep the order keyboard, pult, mouse', () => {
+    expect([1, 2, 3, 4, 5, 6, 7, 8].map((n) => dayLayout('keyboard', day(n), true))).toEqual([
+      'keyboard',
+      'pult',
+      'keyboard',
+      'mouse',
+      'keyboard',
+      'pult',
+      'keyboard',
+      'mouse',
+    ]);
+    expect([2, 4].map((n) => dayLayout('pult', day(n), true))).toEqual(['keyboard', 'mouse']);
+    expect([2, 4].map((n) => dayLayout('mouse', day(n), true))).toEqual(['keyboard', 'pult']);
+  });
+
+  it('the primary when the rotation is off or the test is 3 days away or less', () => {
+    expect(dayLayout('keyboard', day(2), false)).toBe('keyboard');
+    expect(dayLayout('keyboard', day(2, 3), true)).toBe('keyboard');
+    expect(dayLayout('keyboard', day(4, 0), true)).toBe('keyboard');
+    expect(dayLayout('keyboard', day(2, 4), true)).toBe('pult');
+  });
+
+  it('any 28 days in a row: the primary on exactly 14', () => {
+    const layout = fc.constantFrom<LayoutId>('keyboard', 'pult', 'mouse');
+    fc.assert(
+      fc.property(layout, fc.integer({ min: 1, max: 10_000 }), (primary, from) => {
+        const days = Array.from({ length: 28 }, (_, i) => dayLayout(primary, day(from + i), true));
+        expect(days.filter((l) => l === primary)).toHaveLength(14);
+      }),
+      { numRuns: 1000 },
+    );
+  });
+
+  it('names', () => {
+    expect(LAYOUT_NAMES).toEqual({ keyboard: 'клавиатура', pult: 'пульт (стрелки и цифры)', mouse: 'мышь' });
   });
 });

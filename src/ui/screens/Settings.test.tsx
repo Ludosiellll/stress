@@ -52,6 +52,28 @@ describe('Settings layout and date', () => {
     });
   });
 
+  it('«Чередовать раскладки по дням» is on by default and saves layoutRotation (F9)', async () => {
+    const { repo } = await renderSettings();
+    const toggle = screen.getByRole<HTMLInputElement>('checkbox', { name: 'Чередовать раскладки по дням' });
+    expect(toggle.checked).toBe(true);
+    fireEvent.click(toggle);
+    await waitFor(async () => {
+      expect((await repo.getSettings()).layoutRotation).toBe(false);
+    });
+    expect(toggle.checked).toBe(false);
+    fireEvent.click(toggle);
+    await waitFor(async () => {
+      expect((await repo.getSettings()).layoutRotation).toBe(true);
+    });
+  });
+
+  it('shows a saved rotation that is off', async () => {
+    const repo = new MemoryRepository();
+    await repo.saveSettings({ layoutRotation: false });
+    await renderSettings({ repo });
+    expect(screen.getByRole<HTMLInputElement>('checkbox', { name: 'Чередовать раскладки по дням' }).checked).toBe(false);
+  });
+
   it('saves the test date and clears it', async () => {
     const { repo } = await renderSettings();
     const input = screen.getByLabelText<HTMLInputElement>('Дата теста');
@@ -239,6 +261,15 @@ describe('Settings failures and cancellation', () => {
     expect(screen.getByRole<HTMLInputElement>('radio', { name: 'Клавиатура' }).checked).toBe(true);
     expect(screen.getByRole<HTMLInputElement>('radio', { name: 'Мышь' }).checked).toBe(false);
     expect((await repo.listLog(5))[0]).toMatchObject({ level: 'error' });
+  });
+
+  it('rolls the rotation back when saving fails', async () => {
+    const { repo } = await renderSettings();
+    vi.spyOn(repo, 'saveSettings').mockRejectedValueOnce(new Error('диск полон'));
+    const toggle = screen.getByRole<HTMLInputElement>('checkbox', { name: 'Чередовать раскладки по дням' });
+    fireEvent.click(toggle);
+    expect(await screen.findByText(/Не удалось сохранить: чередование раскладок\. диск полон/)).toBeTruthy();
+    expect(toggle.checked).toBe(true);
   });
 
   it('rolls the test date back when saving fails', async () => {
@@ -559,6 +590,7 @@ describe('Settings restore', () => {
       expect(disabled(name), name).toBe(true);
     }
     for (const radio of screen.getAllByRole<HTMLInputElement>('radio')) expect(radio.disabled).toBe(true);
+    expect(screen.getByRole<HTMLInputElement>('checkbox', { name: 'Чередовать раскладки по дням' }).disabled).toBe(true);
     expect(screen.getByLabelText<HTMLInputElement>('Дата теста').disabled).toBe(true);
     expect(screen.getByRole<HTMLInputElement>('slider', { name: 'Громкость помех' }).disabled).toBe(true);
     fireEvent.keyDown(document.body, { key: 'Escape' });
@@ -593,7 +625,7 @@ describe('Settings after a restore', () => {
     await renderSettings();
     const source = new MemoryRepository();
     await source.createSession(session('s1', '2026-10-01T08:00:00.000Z'));
-    await source.saveSettings({ layout: 'pult', testDate: '2026-12-01' });
+    await source.saveSettings({ layout: 'pult', testDate: '2026-12-01', layoutRotation: false });
     const text = await exportBundle(source, '0.2.0');
     fireEvent.change(screen.getByLabelText('Файл экспорта'), { target: { files: [new File([text], 'trainer-export.json')] } });
     await settleUntil(() => screen.queryByRole('button', { name: 'Восстановить' }) !== null, 'the preview');
@@ -603,5 +635,7 @@ describe('Settings after a restore', () => {
       expect(screen.getByRole<HTMLInputElement>('radio', { name: 'Пульт (стрелки и цифры)' }).checked).toBe(true);
     });
     expect(screen.getByLabelText<HTMLInputElement>('Дата теста').value).toBe('2026-12-01');
+    // The rotation is local: the file's «off» is not taken (F9).
+    expect(screen.getByRole<HTMLInputElement>('checkbox', { name: 'Чередовать раскладки по дням' }).checked).toBe(true);
   });
 });

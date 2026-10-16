@@ -1,5 +1,6 @@
 import type { DiagnosticFormat, DiagnosticMetrics } from '../engine/diagnostic';
 import { NORMS, gradeByBands, type NormId } from '../engine/norms';
+import type { LayoutId } from '../engine/types';
 import { decimal, round1, shownCost, signedMs, whole } from './steps';
 
 /** One row of the diagnostic results on «Сессия завершена». */
@@ -143,10 +144,12 @@ const ROW_NORMS: Partial<Record<DiagnosticRowId, NormId>> = { gorbovV: 'gorbovSi
 
 /**
  * The reference band of a row: «по среднему 262 мс: средний» for ПЗМР and СЗМР (the norms are of the mean, О7),
- * the band alone for V, P and the span; null where there is no norm (Π included) or no value.
+ * the band alone for V, P and the span; null where there is no norm (Π included) or no value. `layout`: the one the
+ * diagnostic played; on the mouse ПЗМР and СЗМР have none, their norms assume a keyboard (T-R23).
  */
-export function diagnosticNorm(d: DiagnosticMetrics, id: DiagnosticRowId): string | null {
+export function diagnosticNorm(d: DiagnosticMetrics, id: DiagnosticRowId, layout: LayoutId = 'keyboard'): string | null {
   if (id === 'pzmr' || id === 'szmr') {
+    if (layout === 'mouse') return null;
     // The СЗМР norm is the 2-choice one: valid because the diagnostic plays СЗМР with 2 colours on 2 keys (isTwoChoice).
     const mean = id === 'pzmr' ? d.pzmrMeanRt : d.szmrMeanRt;
     if (mean === null) return null;

@@ -322,7 +322,7 @@ describe('Session steps', () => {
       [{ kind: 'fatigue_prompt', module: 'szmr' }, () => screen.getByText(/Похоже на усталость/)],
       [{ kind: 'save_error', message: 'Не удалось сохранить результаты.', canAbandon: true, what: 'block' }, () => screen.getByText('Не удалось сохранить результаты.')],
       [{ kind: 'wellbeing' }, () => screen.getByRole('button', { name: 'Пропустить' })],
-      [{ kind: 'done', sessionId: 's', diagnostic: null, seriesTotal: null, indexDeferred: false, comparison: null }, () => screen.getByText('Сессия завершена')],
+      [{ kind: 'done', sessionId: 's', diagnostic: null, seriesTotal: null, indexDeferred: false, comparison: null, layout: 'keyboard' }, () => screen.getByText('Сессия завершена')],
     ];
     for (const [step, find] of cases) {
       const r = await renderSession(fakeDriver(step));
@@ -346,7 +346,7 @@ describe('Session steps', () => {
       return Promise.resolve();
     });
     c.submitWellbeing.mockImplementation(() => {
-      c.step = { kind: 'done', sessionId: 's', diagnostic: null, seriesTotal: null, indexDeferred: false, comparison: null };
+      c.step = { kind: 'done', sessionId: 's', diagnostic: null, seriesTotal: null, indexDeferred: false, comparison: null, layout: 'keyboard' };
       return Promise.resolve();
     });
     const { onExit, platform } = await renderSession(c);
@@ -471,7 +471,7 @@ describe('Session steps', () => {
       unreliable: [],
     };
     const comparison = { previous: null, readiness: 61.6, readinessPrevious: null, earlierUnreadable: false };
-    await renderSession(fakeDriver({ kind: 'done', sessionId: 's', diagnostic, seriesTotal: 20, indexDeferred: true, comparison }), {
+    await renderSession(fakeDriver({ kind: 'done', sessionId: 's', diagnostic, seriesTotal: 20, indexDeferred: true, comparison, layout: 'keyboard' }), {
       plan: { ...PLAN, kind: 'diagnostic' },
     });
     expect(screen.getByText('Новые показатели войдут в индекс со следующей диагностики.')).toBeTruthy();
@@ -500,7 +500,7 @@ describe('Session steps', () => {
 
   it('marks missing diagnostic metrics', async () => {
     const diagnostic: DiagnosticResults = EMPTY_RESULTS;
-    await renderSession(fakeDriver({ kind: 'done', sessionId: 's', diagnostic, seriesTotal: null, indexDeferred: false, comparison: null }));
+    await renderSession(fakeDriver({ kind: 'done', sessionId: 's', diagnostic, seriesTotal: null, indexDeferred: false, comparison: null, layout: 'keyboard' }));
     expect(screen.getAllByText('нет данных')).toHaveLength(12);
     expect(screen.queryByText(/войдут в индекс/)).toBeNull();
   });

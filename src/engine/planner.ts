@@ -1,7 +1,8 @@
 import { daysBetween, localDayNumber, signedDaysBetween } from './dates';
 import { DIAGNOSTIC_VOLUME } from './diagnostic';
+import { dayLayout } from './layouts';
 import { TAPER_DAYS, isCalibrated, type PhaseId, type PhaseInfo } from './phases';
-import type { ModuleId, SessionKind } from './types';
+import type { LayoutId, ModuleId, SessionKind } from './types';
 
 export { daysBetween };
 
@@ -87,6 +88,11 @@ export interface SessionPlan {
   phase?: PhaseId;
   /** Training and free plans: the mark rate of their phase (F15, Р10); absent: no marks. */
   feedback?: FeedbackRate;
+  /**
+   * Training and free plans: the layout of the day (dayLayout, F9, Р10); absent: the user's own. Diagnostics and
+   * test-format runs play the user's own whatever it says.
+   */
+  layout?: LayoutId;
   diagnosticNumber?: number;
   /** Diagnostics: the index their block seeds come from (diagnosticSegmentSeed); diagnosticNumber when absent. */
   diagnosticSeedIndex?: number;
@@ -143,6 +149,9 @@ const RUN_PRACTICE = 5;
 export interface TrainingExtras {
   /** startedAt of the stored test-format blocks, chronological. */
   testFormatRuns: readonly string[];
+  /** The user's own layout (the primary) and whether the days rotate it (Settings.layoutRotation, F9). */
+  layout: LayoutId;
+  layoutRotation: boolean;
 }
 
 const TEST_FORMATS: ReadonlySet<ModuleId> = new Set<ModuleId>(TEST_FORMAT_ORDER);
@@ -231,7 +240,7 @@ function pick(
  * nothing does in the taper (it cuts the load).
  * When a test-format run is due (testFormatDue over `extras`; none without them), it comes first, before the warm-up
  * (a cold start), in the taper too (F4): it takes one reaction slot, its module plays in no other slot, and a ПЗМР run
- * replaces the warm-up.
+ * replaces the warm-up. With the extras the plan also names the layout of the day (dayLayout, F9).
  */
 export function planTraining(
   states: Record<ModuleId, ModuleState>,
@@ -275,7 +284,8 @@ export function planTraining(
       segments.push({ module: finisher, budgetMs: finisherMinutes * MS_PER_MIN, purpose: 'finisher', overload: 'finisher' });
     }
   }
-  return { kind: 'training', seed, phase: phase.phase, feedback: feedbackRate(phase.phase), segments };
+  const plan: SessionPlan = { kind: 'training', seed, phase: phase.phase, feedback: feedbackRate(phase.phase), segments };
+  return extras === undefined ? plan : { ...plan, layout: dayLayout(extras.layout, phase, extras.layoutRotation) };
 }
 
 /**
@@ -296,10 +306,15 @@ export function isRehearsalDue(
   return localDayNumber(todayIso) - last >= REHEARSAL_GAP_DAYS;
 }
 
-/** One module for 5 minutes; with the phase of the day, its mark rate (F15, Р10). */
-export function planFree(module: ModuleId, seed: number, phase?: PhaseInfo): SessionPlan {
-  const plan: SessionPlan = { kind: 'free', seed, segments: [{ module, budgetMs: 5 * MS_PER_MIN, purpose: 'free' }] };
-  return phase === undefined ? plan : { ...plan, feedback: feedbackRate(phase.phase) };
+/**
+ * One module for 5 minutes; with the phase of the day, its mark rate (F15, Р10); with the user's layout and rotation,
+ * the layout of the day (F9; the primary without a phase).
+ */
+export function planFree(module: ModuleId, seed: number, phase?: PhaseInfo, layout?: { primary: LayoutId; rotation: boolean }): SessionPlan {
+  let plan: SessionPlan = { kind: 'free', seed, segments: [{ module, budgetMs: 5 * MS_PER_MIN, purpose: 'free' }] };
+  if (phase !== undefined) plan = { ...plan, feedback: feedbackRate(phase.phase) };
+  if (layout !== undefined) plan = { ...plan, layout: phase === undefined ? layout.primary : dayLayout(layout.primary, phase, layout.rotation) };
+  return plan;
 }
 
 /** A control diagnostic is due if none was done yet or ≥ 14 days have passed since the last one. */

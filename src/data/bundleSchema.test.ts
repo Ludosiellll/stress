@@ -22,7 +22,7 @@ function minimal(): Record<string, unknown> {
     logicItems: [item('i1', 'b2', '2026-10-01T08:06:00.000Z', { timeLimitMs: 11_900 })],
     diagnostics: [{ id: 'd1', sessionId: 's2', number: 1, at: '2026-10-02T08:30:00.000Z', resultsJson: '{}' }],
     wellbeing: [{ id: 'w1', date: '2026-10-01', sleepH: 7, caffeine: false, mood: 3 }],
-    settings: { layout: 'keyboard', testDate: '2026-12-01', lastSelfCheckJson: null, stressVolume: 60 },
+    settings: { layout: 'keyboard', testDate: '2026-12-01', lastSelfCheckJson: null, stressVolume: 60, layoutRotation: false },
   };
 }
 
@@ -117,6 +117,8 @@ describe('parseExportBundle: valid files', () => {
     expect(parsed(variant((b) => delete b.settings)).settings).toEqual({});
     expect(parsed(variant((b) => (b.settings = { testDate: null }))).settings).toEqual({ testDate: null });
     expect(parsed(variant((b) => (b.settings = { stressVolume: 'loud' }))).settings).toEqual({});
+    // The layout rotation is local (F9): a restore never takes it.
+    expect(parsed(variant((b) => (b.settings = { layoutRotation: false }))).settings).toEqual({});
   });
 
   it('W2-R32: a bad testDate or layout is dropped and named; it never vetoes the history', () => {

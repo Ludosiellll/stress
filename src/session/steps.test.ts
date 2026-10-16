@@ -7,6 +7,7 @@ import {
   AUDIO_NOT_PLAYED,
   conditionLines,
   dayFormLine,
+  dayLayoutLine,
   DIAGNOSTIC_RESTART_NOTICE,
   discardText,
   ERROR_KINDS,
@@ -244,6 +245,14 @@ describe('speedLine (F14)', () => {
   it('a bias that rounds to 0 has no side', () => {
     expect(speedLine(rdo(0.3), 3000)).toBe('Скорость: оборот за 3 с · смещение 0 мс · точно 12 из 20 · рано 5, поздно 3.');
     expect(speedLine(rdo(-0.4), 2000)).toBe('Скорость: оборот за 2 с · смещение 0 мс · точно 12 из 20 · рано 5, поздно 3.');
+  });
+});
+
+describe('dayLayoutLine (F9)', () => {
+  it('names the layout of the day and the primary', () => {
+    expect(dayLayoutLine('pult', 'keyboard')).toBe('Сегодня раскладка: пульт (стрелки и цифры). Основная — клавиатура.');
+    expect(dayLayoutLine('mouse', 'pult')).toBe('Сегодня раскладка: мышь. Основная — пульт (стрелки и цифры).');
+    expect(dayLayoutLine('keyboard', 'mouse')).toBe('Сегодня раскладка: клавиатура. Основная — мышь.');
   });
 });
 

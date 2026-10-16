@@ -86,9 +86,15 @@ export interface Repository {
 
 export const LOG_LIMIT = 500;
 
-export const DEFAULT_SETTINGS: Readonly<Settings> = { layout: 'keyboard', testDate: null, lastSelfCheckJson: null, stressVolume: 60 };
+export const DEFAULT_SETTINGS: Readonly<Settings> = {
+  layout: 'keyboard',
+  testDate: null,
+  lastSelfCheckJson: null,
+  stressVolume: 60,
+  layoutRotation: true,
+};
 
-export const SETTINGS_KEYS: readonly (keyof Settings)[] = ['layout', 'testDate', 'lastSelfCheckJson', 'stressVolume'];
+export const SETTINGS_KEYS: readonly (keyof Settings)[] = ['layout', 'testDate', 'lastSelfCheckJson', 'stressVolume', 'layoutRotation'];
 
 function assertFinite(what: string, fields: Record<string, number | null>): void {
   for (const [name, v] of Object.entries(fields)) {

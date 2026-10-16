@@ -225,7 +225,7 @@ describe.each(TARGETS)('importBundle into %s', (_name, make) => {
     const ownLayout = await make();
     await ownLayout.saveSettings({ layout: 'mouse', stressVolume: 30 });
     expect((await importBundle(ownLayout, withSettings, { pause: noPause })).settingsFilled).toEqual(['testDate']);
-    expect(await ownLayout.getSettings()).toEqual({ layout: 'mouse', testDate: '2026-12-01', lastSelfCheckJson: null, stressVolume: 30 });
+    expect(await ownLayout.getSettings()).toEqual({ layout: 'mouse', testDate: '2026-12-01', lastSelfCheckJson: null, stressVolume: 30, layoutRotation: true });
 
     // A date cleared on this computer counts as saved.
     const cleared = await make();

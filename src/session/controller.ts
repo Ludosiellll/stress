@@ -60,6 +60,7 @@ import {
   AUDIO_NOT_PLAYED,
   conditionLines,
   dayFormLine,
+  dayLayoutLine,
   DIAGNOSTIC_RESTART_NOTICE,
   floorLine,
   memoryLines,
@@ -84,7 +85,10 @@ import {
 export interface SessionStartOptions {
   repo: Repository;
   plan: SessionPlan;
-  /** The user's layout; a block that needs more keys than the mouse has switches to the keyboard. */
+  /**
+   * The user's own layout (the primary): diagnostics and test-format runs play it, the other blocks the plan's layout of
+   * the day when it has one (F9). A block that needs more keys than the mouse has switches to the keyboard.
+   */
   layout: LayoutId;
   /** Wall clock: session/block dates and segment budgets (never trial timing). */
   now: () => Date;
@@ -315,8 +319,10 @@ export class SessionController {
   /** Replaced before start() resolves. */
   private current: Step = { kind: 'wellbeing' };
   private seg: SegmentRun | null = null;
-  /** The block the instruction on screen introduces. */
-  private next: BlockPlan | null = null;
+  /** The block the instruction on screen introduces, and that instruction without the day line. */
+  private next: { plan: BlockPlan; instruction: string } | null = null;
+  /** The day line (dayLayoutLine) still opens the next instruction of a block on the layout of the day (F9). */
+  private dayLineDue: boolean;
   private active: ActiveBlock | null = null;
   private saving: SaveContext | null = null;
   private busy = false;
@@ -363,6 +369,7 @@ export class SessionController {
     this.repo = o.repo;
     this.plan = o.plan;
     this.layout = o.layout;
+    this.dayLineDue = o.plan.layout !== undefined && o.plan.layout !== o.layout;
     this.now = o.now;
     this.scale = scale;
     this.queue = new SaveQueue(o.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))));
@@ -458,12 +465,12 @@ export class SessionController {
   }
 
   ackInstruction(): void {
-    const step = this.take('instruction');
+    this.take('instruction');
     const seg = this.segment();
     if (this.next === null) throw new Error('SessionController: instruction without a block');
     seg.clockStart ??= this.now().getTime();
-    seg.lastInstruction = step.text + '\n' + step.keysHint;
-    this.startBlock(this.next);
+    seg.lastInstruction = this.next.instruction;
+    this.startBlock(this.next.plan);
   }
 
   async submitReaction(tl: BlockTimeline): Promise<void> {
@@ -856,7 +863,7 @@ export class SessionController {
   private planContext(seg: SegmentRun): PlanContext {
     const floored = this.counted && seg.segment.purpose !== 'test_format';
     return {
-      layout: this.layout,
+      layout: this.blockLayout(seg.segment),
       scale: this.scale,
       diagnostic: !this.counted,
       planSeed: this.plan.seed,
@@ -867,14 +874,34 @@ export class SessionController {
     };
   }
 
-  /** Instruction first if the segment just started, for every Gorbov run, or when the rules changed. */
+  /**
+   * The layout a block of `segment` plays (F9): the user's own in a diagnostic and a test-format run, else the plan's
+   * layout of the day (the user's own when the plan names none).
+   */
+  private blockLayout(segment: Segment): LayoutId {
+    if (!this.counted || segment.purpose === 'test_format') return this.layout;
+    return this.plan.layout ?? this.layout;
+  }
+
+  /**
+   * Instruction first if the segment just started, for every Gorbov run, or when the rules changed. The first one of a
+   * block on the layout of the day, when that is not the user's own, opens with dayLayoutLine (F9); the day line is no
+   * change of rules.
+   */
   private presentNext(): void {
     const seg = this.segment();
+    const layout = this.blockLayout(seg.segment);
     const plan = planBlock(seg.segment, seg.L, seg.blocksDone, this.planContext(seg));
-    const { text, keysHint } = blockInstruction(plan, this.layout);
-    if (seg.segment.module === 'gorbov' || text + '\n' + keysHint !== seg.lastInstruction) {
-      this.next = plan;
-      this.current = { kind: 'instruction', module: seg.segment.module, text, keysHint };
+    const { text, keysHint } = blockInstruction(plan, layout);
+    const instruction = text + '\n' + keysHint;
+    if (seg.segment.module === 'gorbov' || instruction !== seg.lastInstruction) {
+      this.next = { plan, instruction };
+      let shown = text;
+      if (this.dayLineDue && layout !== this.layout) {
+        shown = `${dayLayoutLine(layout, this.layout)} ${text}`;
+        this.dayLineDue = false;
+      }
+      this.current = { kind: 'instruction', module: seg.segment.module, text: shown, keysHint };
     } else {
       this.startBlock(plan);
     }
@@ -934,7 +961,7 @@ export class SessionController {
       indexDeferred = latest.deferred;
       comparison = compareWithPrevious(earlier, latest.overall, this.diagnosticNumber());
     }
-    this.current = { kind: 'done', sessionId: this.sessionId, diagnostic, seriesTotal, indexDeferred, comparison };
+    this.current = { kind: 'done', sessionId: this.sessionId, diagnostic, seriesTotal, indexDeferred, comparison, layout: this.layout };
   }
 
   // ---------- blocks ----------
@@ -946,7 +973,7 @@ export class SessionController {
       : diagnosticBlockSeed(this.plan.diagnosticSeedIndex ?? this.diagnosticNumber(), seg.segment.module, seg.blocksDone, seg.attempt);
     const series = plan.kind === 'table' && plan.table === 'series';
     if (series && seg.blocksDone === 0) seg.tableSeed = seed;
-    const { step, paramsJson } = buildBlock(plan, seed, this.layout, this.ratings, series ? (seg.tableSeed ?? seed) : undefined);
+    const { step, paramsJson } = buildBlock(plan, seed, this.blockLayout(seg.segment), this.ratings, series ? (seg.tableSeed ?? seed) : undefined);
     this.next = null;
     this.active = { plan, startedAt: this.now().toISOString(), paramsJson };
     this.current = step;

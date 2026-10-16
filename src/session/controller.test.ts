@@ -357,6 +357,7 @@ describe('SessionController — flow', () => {
       seriesTotal: null,
       indexDeferred: false,
       comparison: null,
+      layout: 'keyboard',
     });
   });
 
@@ -1852,6 +1853,115 @@ describe('SessionController — re-adaptation after a setup change (F9)', () => 
     const h = await begin(planFree('szmr', SEED), { repo });
     await twoBlocks(h);
     expect(await marks(h)).toEqual([undefined, undefined]);
+  });
+});
+
+describe('SessionController — the layout of the day (F9)', () => {
+  const YESTERDAY = new Date(new Date(T0).getTime() - DAY).toISOString();
+  const PULT_DAY = 'Сегодня раскладка: пульт (стрелки и цифры). Основная — клавиатура. ';
+  const free = (module: ModuleId, layout: LayoutId, seed = 3): SessionPlan => ({ ...planFree(module, seed), layout });
+  /** The paramsJson.layout of the blocks this session stored, in order. */
+  const storedLayouts = async (h: Harness): Promise<unknown[]> =>
+    (await h.repo.listBlocks()).filter((b) => b.sessionId === h.c.sessionId).map((b) => (JSON.parse(b.paramsJson) as { layout?: unknown }).layout);
+
+  it('a remote-control day plays the arrows; only the session’s first instruction names the day', async () => {
+    const plan: SessionPlan = { kind: 'free', seed: 3, layout: 'pult', segments: [segment('pzmr', 5 * MIN), segment('gonogo', 5 * MIN)] };
+    const h = await begin(plan, { layout: 'keyboard' });
+    const first = expectStep(h.c, 'instruction');
+    expect(first.text.startsWith(PULT_DAY)).toBe(true);
+    expect(first.text).toContain('нажми ↓');
+    expect(first.keysHint).toBe('↓');
+    h.c.ackInstruction();
+    expect(expectStep(h.c, 'reaction_block')).toMatchObject({ keys: ['ArrowDown'], layout: 'pult' });
+    await h.c.submitReaction(playTimeline(expectStep(h.c, 'reaction_block').specs, perfectPlayer));
+    await h.c.continueAfterSummary();
+    // The same rules: the next block of the segment comes without an instruction (the day line is no change of rules).
+    expectStep(h.c, 'reaction_block');
+    h.clock.advance(5 * MIN);
+    await h.c.submitReaction(playTimeline(expectStep(h.c, 'reaction_block').specs, perfectPlayer));
+    await h.c.continueAfterSummary();
+    const second = expectStep(h.c, 'instruction');
+    expect(second.module).toBe('gonogo');
+    expect(second.text).not.toContain('Сегодня раскладка');
+    expect(second.keysHint).toBe('↓');
+    expect(await storedLayouts(h)).toEqual(['pult', 'pult']);
+  });
+
+  it('the primary layout of the day: no day line', async () => {
+    const h = await begin(free('pzmr', 'keyboard'), { layout: 'keyboard' });
+    expect(expectStep(h.c, 'instruction').text).not.toContain('Сегодня раскладка');
+    // A plan without a layout plays the user’s own.
+    const own = await begin(planFree('pzmr', 3), { layout: 'pult' });
+    expect(expectStep(own.c, 'instruction')).toMatchObject({ keysHint: '↓' });
+    expect(expectStep(own.c, 'instruction').text).not.toContain('Сегодня раскладка');
+  });
+
+  it('the mouse day falls back to the keyboard for more than two keys', async () => {
+    // L_saved 14: the segment starts at 13, band 3, 4 colours on 4 keys.
+    const repo = await calibratedRepo(stateWith('szmr', { lSaved: 14, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    const h = await begin(free('szmr', 'mouse'), { repo, layout: 'keyboard' });
+    const step = expectStep(h.c, 'instruction');
+    expect(step.text.startsWith('Сегодня раскладка: мышь. Основная — клавиатура. ')).toBe(true);
+    expect(step.text).toContain(' Для этого уровня нужны клавиши: D, F, J, K.');
+    h.c.ackInstruction();
+    expect(expectStep(h.c, 'reaction_block')).toMatchObject({ keys: ['KeyD', 'KeyF', 'KeyJ', 'KeyK'], layout: 'keyboard' });
+    await h.c.submitReaction(playTimeline(expectStep(h.c, 'reaction_block').specs, perfectPlayer));
+    expect(await storedLayouts(h)).toEqual(['keyboard']);
+    // Two keys or one: the mouse.
+    const pzmrDay = await begin(free('pzmr', 'mouse'), { layout: 'keyboard' });
+    pzmrDay.c.ackInstruction();
+    expect(expectStep(pzmrDay.c, 'reaction_block')).toMatchObject({ keys: ['MouseLeft'], layout: 'mouse' });
+  });
+
+  it('a test-format run and a diagnostic play the primary layout', async () => {
+    const run: Segment = { module: 'pzmr', budgetMs: 0, purpose: 'test_format', trialCount: 50, practiceTrials: 5 };
+    const plan: SessionPlan = { kind: 'training', seed: 3, phase: 'development', layout: 'pult', segments: [run, { module: 'gonogo', budgetMs: 5 * MIN, purpose: 'reaction' }] };
+    const h = await begin(plan, { layout: 'keyboard' });
+    const runStep = expectStep(h.c, 'instruction');
+    expect(runStep.text).not.toContain('Сегодня раскладка');
+    expect(runStep.keysHint).toBe('Пробел');
+    h.c.ackInstruction();
+    expect(expectStep(h.c, 'reaction_block')).toMatchObject({ keys: ['Space'], layout: 'keyboard' });
+    await h.c.submitReaction(playTimeline(expectStep(h.c, 'reaction_block').specs, perfectPlayer));
+    await h.c.continueAfterSummary();
+    // The first instruction on the day's layout names it.
+    const next = expectStep(h.c, 'instruction');
+    expect(next.text.startsWith(PULT_DAY)).toBe(true);
+    expect(next.keysHint).toBe('↓');
+    expect(await storedLayouts(h)).toEqual(['keyboard']);
+
+    const diag = await begin({ ...planDiagnostic(1, 1), layout: 'pult' }, { layout: 'keyboard' });
+    const first = expectStep(diag.c, 'instruction');
+    expect(first.text).not.toContain('Сегодня раскладка');
+    expect(first.keysHint).toBe('Пробел');
+  });
+
+  it('a diagnostic on the user’s mouse names its layout for the results table (T-R23)', async () => {
+    const plan = planDiagnostic(1, 1);
+    const h = await begin({ ...plan, segments: plan.segments.slice(0, 1) }, { layout: 'mouse' });
+    await drive(h);
+    expect(expectStep(h.c, 'done')).toMatchObject({ layout: 'mouse' });
+  });
+
+  it('a layout change between days is a setup change: the first block re-adapts, once (Р26)', async () => {
+    const repo = new MemoryRepository();
+    await repo.createSession(session('s0', YESTERDAY, { kind: 'free', endedAt: YESTERDAY }));
+    await repo.addBlock(block('b0', 's0', YESTERDAY, { module: 'pzmr', paramsJson: JSON.stringify({ layout: 'keyboard' }) }), [], []);
+    const h = await begin(free('pzmr', 'pult'), { repo, layout: 'keyboard' });
+    await playReaction(h);
+    await h.c.continueAfterSummary();
+    await playReaction(h);
+    const marks = (await h.repo.listBlocks()).filter((b) => b.sessionId === h.c.sessionId).map((b) => (JSON.parse(b.summaryJson) as { readapt?: unknown }).readapt);
+    expect(marks).toEqual([true, undefined]);
+    // A mouse day whose block falls back to the keyboard plays yesterday's setup: no re-adaptation.
+    const szmrRepo = await calibratedRepo(stateWith('szmr', { lSaved: 14, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    await szmrRepo.createSession(session('s1', YESTERDAY, { kind: 'free', endedAt: YESTERDAY }));
+    const mapping = szmrSegment(13, 3).mapping;
+    await szmrRepo.addBlock(block('b1', 's1', YESTERDAY, { module: 'szmr', paramsJson: JSON.stringify({ layout: 'keyboard', mapping }) }), [], []);
+    const mouse = await begin(free('szmr', 'mouse'), { repo: szmrRepo, layout: 'keyboard' });
+    await playReaction(mouse);
+    const [row] = (await szmrRepo.listBlocks()).filter((b) => b.sessionId === mouse.c.sessionId);
+    expect(JSON.parse(row?.summaryJson ?? '{}')).not.toHaveProperty('readapt');
   });
 });
 
