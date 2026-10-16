@@ -399,6 +399,25 @@ describe('diagnostic reaction blocks', () => {
     }
   });
 
+  it('diagnostic keys, legends and instructions on the mouse are those of 0.2.0 (T-R33)', () => {
+    // The mouse serves up to two keys; Струп's three fall back to the keyboard with its note. The expected key of every
+    // trial is pinned too: a key mapping (F9) must not reach a diagnostic on any layout.
+    const mouse = { ...ctx, layout: 'mouse' } as const;
+    for (const n of [1, 2, 3]) {
+      for (const seg of planDiagnostic(n).segments) {
+        if (!isReactionModule(seg.module)) continue;
+        const plan = planBlock(seg, seg.fixedL ?? 0, 0, mouse);
+        const { step } = buildBlock(plan, diagnosticBlockSeed(n, seg.module, 0, 0), 'mouse', new Map());
+        if (step.kind !== 'reaction_block') throw new Error('expected a reaction block');
+        const { keys, layout, legend, L } = step;
+        const expected = step.specs.map((t) => (t.expected.kind === 'withhold' ? '-' : t.expected.key)).join(' ');
+        expect({ keys, layout, legend, L, instruction: blockInstruction(plan, 'mouse'), expected }).toMatchSnapshot(
+          `${String(n)} ${step.module} mouse keys`,
+        );
+      }
+    }
+  });
+
   it('the span protocol and the Горбов runs of the diagnostic keep their 0.2.0 parameters', () => {
     expect(SPAN_PROTOCOL_PARAMS).toMatchSnapshot('span protocol params');
     expect(planBlock(diagnosticSegment('memory'), 0, 0, ctx)).toMatchSnapshot('memory plan');

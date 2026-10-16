@@ -327,6 +327,354 @@ exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions 
 }
 `;
 
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions on the mouse are those of 0.2.0 (T-R33) > 1 gonogo mouse keys 1`] = `
+{
+  "L": 10,
+  "expected": "MouseLeft MouseLeft - MouseLeft MouseLeft MouseLeft MouseLeft - MouseLeft MouseLeft - MouseLeft - MouseLeft MouseLeft - MouseLeft MouseLeft - MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft - - - MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft - MouseLeft MouseLeft - MouseLeft - MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft - MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft",
+  "instruction": {
+    "keysHint": "ЛКМ",
+    "text": "На красный круг нажимай ЛКМ. На зелёный круг не нажимай ничего.",
+  },
+  "keys": [
+    "MouseLeft",
+  ],
+  "layout": "mouse",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions on the mouse are those of 0.2.0 (T-R33) > 1 pomeh mouse keys 1`] = `
+{
+  "L": 8,
+  "expected": "MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft",
+  "instruction": {
+    "keysHint": "ЛКМ",
+    "text": "Когда в центре появится красный круг, нажми ЛКМ. Иногда вокруг будут появляться другие фигуры, на них не реагируй. Вместе с фигурами будет мерцать фон.",
+  },
+  "keys": [
+    "MouseLeft",
+  ],
+  "layout": "mouse",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions on the mouse are those of 0.2.0 (T-R33) > 1 pzmr mouse keys 1`] = `
+{
+  "L": 0,
+  "expected": "MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft",
+  "instruction": {
+    "keysHint": "ЛКМ",
+    "text": "Когда появится красный круг, как можно быстрее нажми ЛКМ. Не нажимай заранее: это фальстарт.",
+  },
+  "keys": [
+    "MouseLeft",
+  ],
+  "layout": "mouse",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions on the mouse are those of 0.2.0 (T-R33) > 1 rdo mouse keys 1`] = `
+{
+  "L": 0,
+  "expected": "MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft",
+  "instruction": {
+    "keysHint": "ЛКМ",
+    "text": "Метка бежит по кругу. Нажми ЛКМ точно в момент, когда она дойдёт до отметки. Важна точность, а не скорость.",
+  },
+  "keys": [
+    "MouseLeft",
+  ],
+  "layout": "mouse",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions on the mouse are those of 0.2.0 (T-R33) > 1 stroop mouse keys 1`] = `
+{
+  "L": 8,
+  "expected": "KeyF KeyJ KeyD KeyJ KeyJ KeyJ KeyD KeyD KeyD KeyF KeyD KeyF KeyJ KeyF KeyD KeyJ KeyF KeyD KeyF KeyF KeyD KeyD KeyJ KeyF KeyD KeyJ KeyJ KeyJ KeyJ KeyF KeyJ KeyF KeyD KeyF KeyF KeyJ KeyD KeyJ KeyJ KeyJ KeyF KeyD KeyJ KeyF KeyJ KeyJ KeyJ KeyJ KeyJ KeyD KeyJ KeyD KeyD",
+  "instruction": {
+    "keysHint": "D, F, J",
+    "text": "Отвечай по цвету букв, а не по слову: красный — D, зелёный — F, синий — J. Подсказка клавиш — внизу экрана. Для этого уровня нужны клавиши: D, F, J.",
+  },
+  "keys": [
+    "KeyD",
+    "KeyF",
+    "KeyJ",
+  ],
+  "layout": "keyboard",
+  "legend": "красный — D · зелёный — F · синий — J",
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions on the mouse are those of 0.2.0 (T-R33) > 1 szmr mouse keys 1`] = `
+{
+  "L": 0,
+  "expected": "MouseRight MouseLeft MouseLeft MouseRight MouseRight MouseLeft MouseRight MouseRight MouseRight MouseLeft MouseLeft MouseLeft MouseRight MouseRight MouseLeft MouseLeft MouseLeft MouseRight MouseLeft MouseLeft MouseRight MouseLeft MouseRight MouseRight MouseRight MouseRight MouseLeft MouseRight MouseRight MouseLeft MouseRight MouseLeft MouseRight MouseLeft MouseRight MouseLeft MouseLeft MouseLeft MouseLeft MouseRight MouseLeft MouseLeft MouseLeft MouseLeft MouseRight MouseRight MouseRight MouseRight MouseRight MouseRight MouseLeft MouseLeft MouseRight MouseLeft MouseRight MouseRight MouseRight MouseLeft MouseLeft MouseLeft MouseRight MouseRight MouseLeft MouseLeft MouseLeft MouseRight MouseRight MouseLeft MouseLeft MouseRight MouseLeft MouseLeft MouseRight MouseRight MouseLeft",
+  "instruction": {
+    "keysHint": "ЛКМ, ПКМ",
+    "text": "Каждому цвету соответствует своя клавиша: красный — ЛКМ, зелёный — ПКМ. Нажимай нужную как можно быстрее.",
+  },
+  "keys": [
+    "MouseLeft",
+    "MouseRight",
+  ],
+  "layout": "mouse",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions on the mouse are those of 0.2.0 (T-R33) > 1 taskswitch mouse keys 1`] = `
+{
+  "L": 5,
+  "expected": "MouseRight MouseRight MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseRight MouseRight MouseRight MouseRight MouseLeft MouseRight MouseRight MouseLeft MouseRight MouseRight MouseRight MouseLeft MouseLeft MouseLeft MouseRight MouseRight MouseLeft MouseLeft MouseLeft MouseRight MouseLeft MouseLeft MouseLeft MouseRight MouseRight MouseRight MouseRight MouseRight MouseRight MouseLeft MouseRight MouseRight MouseLeft MouseLeft MouseLeft MouseLeft MouseRight MouseLeft MouseRight MouseRight MouseRight MouseLeft MouseLeft MouseLeft MouseRight MouseLeft",
+  "instruction": {
+    "keysHint": "ЛКМ, ПКМ",
+    "text": "Над фигурой написано правило. ЦВЕТ: красная — ЛКМ, синяя — ПКМ. ФОРМА: круг — ЛКМ, квадрат — ПКМ. Правило может смениться в любой момент.",
+  },
+  "keys": [
+    "MouseLeft",
+    "MouseRight",
+  ],
+  "layout": "mouse",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions on the mouse are those of 0.2.0 (T-R33) > 2 gonogo mouse keys 1`] = `
+{
+  "L": 10,
+  "expected": "MouseLeft MouseLeft - MouseLeft MouseLeft - MouseLeft MouseLeft MouseLeft - - MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft - MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft - MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft - - - MouseLeft - - - MouseLeft MouseLeft - MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft",
+  "instruction": {
+    "keysHint": "ЛКМ",
+    "text": "На красный круг нажимай ЛКМ. На зелёный круг не нажимай ничего.",
+  },
+  "keys": [
+    "MouseLeft",
+  ],
+  "layout": "mouse",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions on the mouse are those of 0.2.0 (T-R33) > 2 pomeh mouse keys 1`] = `
+{
+  "L": 8,
+  "expected": "MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft",
+  "instruction": {
+    "keysHint": "ЛКМ",
+    "text": "Когда в центре появится красный круг, нажми ЛКМ. Иногда вокруг будут появляться другие фигуры, на них не реагируй. Вместе с фигурами будет мерцать фон.",
+  },
+  "keys": [
+    "MouseLeft",
+  ],
+  "layout": "mouse",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions on the mouse are those of 0.2.0 (T-R33) > 2 pzmr mouse keys 1`] = `
+{
+  "L": 0,
+  "expected": "MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft",
+  "instruction": {
+    "keysHint": "ЛКМ",
+    "text": "Когда появится красный круг, как можно быстрее нажми ЛКМ. Не нажимай заранее: это фальстарт.",
+  },
+  "keys": [
+    "MouseLeft",
+  ],
+  "layout": "mouse",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions on the mouse are those of 0.2.0 (T-R33) > 2 rdo mouse keys 1`] = `
+{
+  "L": 0,
+  "expected": "MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft",
+  "instruction": {
+    "keysHint": "ЛКМ",
+    "text": "Метка бежит по кругу. Нажми ЛКМ точно в момент, когда она дойдёт до отметки. Важна точность, а не скорость.",
+  },
+  "keys": [
+    "MouseLeft",
+  ],
+  "layout": "mouse",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions on the mouse are those of 0.2.0 (T-R33) > 2 stroop mouse keys 1`] = `
+{
+  "L": 8,
+  "expected": "KeyJ KeyJ KeyF KeyJ KeyD KeyJ KeyF KeyD KeyJ KeyJ KeyD KeyD KeyJ KeyF KeyD KeyF KeyJ KeyJ KeyJ KeyJ KeyJ KeyJ KeyF KeyF KeyJ KeyJ KeyD KeyF KeyD KeyF KeyD KeyD KeyD KeyJ KeyD KeyD KeyJ KeyF KeyJ KeyF KeyD KeyD KeyF KeyJ KeyJ KeyD KeyF KeyF KeyF KeyD KeyD KeyJ KeyD",
+  "instruction": {
+    "keysHint": "D, F, J",
+    "text": "Отвечай по цвету букв, а не по слову: красный — D, зелёный — F, синий — J. Подсказка клавиш — внизу экрана. Для этого уровня нужны клавиши: D, F, J.",
+  },
+  "keys": [
+    "KeyD",
+    "KeyF",
+    "KeyJ",
+  ],
+  "layout": "keyboard",
+  "legend": "красный — D · зелёный — F · синий — J",
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions on the mouse are those of 0.2.0 (T-R33) > 2 szmr mouse keys 1`] = `
+{
+  "L": 0,
+  "expected": "MouseLeft MouseRight MouseLeft MouseRight MouseLeft MouseLeft MouseRight MouseRight MouseLeft MouseRight MouseLeft MouseRight MouseRight MouseRight MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseRight MouseLeft MouseLeft MouseRight MouseLeft MouseLeft MouseRight MouseLeft MouseRight MouseLeft MouseLeft MouseRight MouseLeft MouseLeft MouseLeft MouseRight MouseRight MouseRight MouseLeft MouseLeft MouseRight MouseLeft MouseRight MouseRight MouseLeft MouseLeft MouseRight MouseLeft MouseRight MouseLeft MouseRight MouseRight MouseRight MouseRight MouseRight MouseRight MouseLeft MouseLeft MouseLeft MouseRight MouseRight MouseLeft MouseRight MouseRight MouseLeft MouseRight MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseRight MouseRight MouseLeft MouseRight MouseLeft",
+  "instruction": {
+    "keysHint": "ЛКМ, ПКМ",
+    "text": "Каждому цвету соответствует своя клавиша: красный — ЛКМ, зелёный — ПКМ. Нажимай нужную как можно быстрее.",
+  },
+  "keys": [
+    "MouseLeft",
+    "MouseRight",
+  ],
+  "layout": "mouse",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions on the mouse are those of 0.2.0 (T-R33) > 2 taskswitch mouse keys 1`] = `
+{
+  "L": 5,
+  "expected": "MouseLeft MouseLeft MouseLeft MouseLeft MouseRight MouseRight MouseRight MouseLeft MouseLeft MouseRight MouseLeft MouseLeft MouseLeft MouseLeft MouseRight MouseRight MouseRight MouseRight MouseLeft MouseLeft MouseLeft MouseLeft MouseRight MouseRight MouseLeft MouseRight MouseRight MouseLeft MouseLeft MouseRight MouseLeft MouseRight MouseRight MouseRight MouseRight MouseRight MouseRight MouseLeft MouseLeft MouseLeft MouseRight MouseLeft MouseRight MouseRight MouseLeft MouseLeft MouseLeft MouseRight MouseRight MouseLeft MouseRight MouseLeft MouseRight",
+  "instruction": {
+    "keysHint": "ЛКМ, ПКМ",
+    "text": "Над фигурой написано правило. ЦВЕТ: красная — ЛКМ, синяя — ПКМ. ФОРМА: круг — ЛКМ, квадрат — ПКМ. Правило может смениться в любой момент.",
+  },
+  "keys": [
+    "MouseLeft",
+    "MouseRight",
+  ],
+  "layout": "mouse",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions on the mouse are those of 0.2.0 (T-R33) > 3 gonogo mouse keys 1`] = `
+{
+  "L": 10,
+  "expected": "MouseLeft MouseLeft MouseLeft - MouseLeft MouseLeft MouseLeft MouseLeft - MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft - - - MouseLeft MouseLeft MouseLeft - MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft - MouseLeft MouseLeft - - - MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft - MouseLeft MouseLeft MouseLeft - MouseLeft MouseLeft MouseLeft MouseLeft - MouseLeft",
+  "instruction": {
+    "keysHint": "ЛКМ",
+    "text": "На красный круг нажимай ЛКМ. На зелёный круг не нажимай ничего.",
+  },
+  "keys": [
+    "MouseLeft",
+  ],
+  "layout": "mouse",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions on the mouse are those of 0.2.0 (T-R33) > 3 pomeh mouse keys 1`] = `
+{
+  "L": 8,
+  "expected": "MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft",
+  "instruction": {
+    "keysHint": "ЛКМ",
+    "text": "Когда в центре появится красный круг, нажми ЛКМ. Иногда вокруг будут появляться другие фигуры, на них не реагируй. Вместе с фигурами будет мерцать фон.",
+  },
+  "keys": [
+    "MouseLeft",
+  ],
+  "layout": "mouse",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions on the mouse are those of 0.2.0 (T-R33) > 3 pzmr mouse keys 1`] = `
+{
+  "L": 0,
+  "expected": "MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft",
+  "instruction": {
+    "keysHint": "ЛКМ",
+    "text": "Когда появится красный круг, как можно быстрее нажми ЛКМ. Не нажимай заранее: это фальстарт.",
+  },
+  "keys": [
+    "MouseLeft",
+  ],
+  "layout": "mouse",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions on the mouse are those of 0.2.0 (T-R33) > 3 rdo mouse keys 1`] = `
+{
+  "L": 0,
+  "expected": "MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft",
+  "instruction": {
+    "keysHint": "ЛКМ",
+    "text": "Метка бежит по кругу. Нажми ЛКМ точно в момент, когда она дойдёт до отметки. Важна точность, а не скорость.",
+  },
+  "keys": [
+    "MouseLeft",
+  ],
+  "layout": "mouse",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions on the mouse are those of 0.2.0 (T-R33) > 3 stroop mouse keys 1`] = `
+{
+  "L": 8,
+  "expected": "KeyD KeyF KeyD KeyJ KeyF KeyJ KeyJ KeyD KeyF KeyF KeyF KeyF KeyF KeyJ KeyF KeyD KeyD KeyJ KeyJ KeyF KeyF KeyJ KeyJ KeyJ KeyF KeyJ KeyD KeyJ KeyF KeyF KeyJ KeyF KeyF KeyF KeyD KeyJ KeyJ KeyD KeyD KeyD KeyJ KeyJ KeyF KeyD KeyD KeyF KeyD KeyD KeyJ KeyD KeyF KeyF KeyD",
+  "instruction": {
+    "keysHint": "D, F, J",
+    "text": "Отвечай по цвету букв, а не по слову: красный — D, зелёный — F, синий — J. Подсказка клавиш — внизу экрана. Для этого уровня нужны клавиши: D, F, J.",
+  },
+  "keys": [
+    "KeyD",
+    "KeyF",
+    "KeyJ",
+  ],
+  "layout": "keyboard",
+  "legend": "красный — D · зелёный — F · синий — J",
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions on the mouse are those of 0.2.0 (T-R33) > 3 szmr mouse keys 1`] = `
+{
+  "L": 0,
+  "expected": "MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseRight MouseRight MouseLeft MouseLeft MouseRight MouseRight MouseRight MouseLeft MouseRight MouseLeft MouseLeft MouseLeft MouseRight MouseRight MouseRight MouseLeft MouseLeft MouseLeft MouseRight MouseLeft MouseRight MouseLeft MouseLeft MouseRight MouseRight MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseRight MouseRight MouseRight MouseLeft MouseRight MouseLeft MouseLeft MouseLeft MouseRight MouseRight MouseLeft MouseRight MouseRight MouseRight MouseRight MouseLeft MouseRight MouseLeft MouseLeft MouseLeft MouseLeft MouseLeft MouseRight MouseLeft MouseLeft MouseRight MouseLeft MouseRight MouseLeft MouseRight MouseRight MouseLeft MouseLeft MouseRight MouseLeft MouseLeft",
+  "instruction": {
+    "keysHint": "ЛКМ, ПКМ",
+    "text": "Каждому цвету соответствует своя клавиша: красный — ЛКМ, зелёный — ПКМ. Нажимай нужную как можно быстрее.",
+  },
+  "keys": [
+    "MouseLeft",
+    "MouseRight",
+  ],
+  "layout": "mouse",
+  "legend": null,
+}
+`;
+
+exports[`diagnostic reaction blocks > diagnostic keys, legends and instructions on the mouse are those of 0.2.0 (T-R33) > 3 taskswitch mouse keys 1`] = `
+{
+  "L": 5,
+  "expected": "MouseRight MouseRight MouseLeft MouseRight MouseLeft MouseLeft MouseRight MouseRight MouseRight MouseLeft MouseRight MouseRight MouseLeft MouseRight MouseRight MouseLeft MouseRight MouseRight MouseRight MouseLeft MouseLeft MouseLeft MouseLeft MouseRight MouseLeft MouseLeft MouseLeft MouseLeft MouseRight MouseLeft MouseRight MouseRight MouseRight MouseLeft MouseLeft MouseLeft MouseLeft MouseRight MouseRight MouseLeft MouseRight MouseRight MouseRight MouseLeft MouseLeft MouseLeft MouseRight MouseLeft MouseRight MouseRight MouseRight MouseLeft MouseRight",
+  "instruction": {
+    "keysHint": "ЛКМ, ПКМ",
+    "text": "Над фигурой написано правило. ЦВЕТ: красная — ЛКМ, синяя — ПКМ. ФОРМА: круг — ЛКМ, квадрат — ПКМ. Правило может смениться в любой момент.",
+  },
+  "keys": [
+    "MouseLeft",
+    "MouseRight",
+  ],
+  "layout": "mouse",
+  "legend": null,
+}
+`;
+
 exports[`diagnostic reaction blocks > diagnostic reaction blocks are those of 0.2.0 > 1 gonogo 1`] = `
 {
   "audio": null,
