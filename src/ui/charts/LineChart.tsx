@@ -35,14 +35,17 @@ export interface LineChartProps {
   /** Whole units (milliseconds, %): values are rounded as the results tables round them and the ticks are whole. */
   whole?: boolean;
   /**
-   * The noise band of each series (F7), in its colour: an area from lo to hi over the slots whose labels are the x of
-   * its points. Kept inside the domain; the y scale reaches its edges. A band on fewer than two slots is not drawn.
+   * The noise band of each series (F7), in its colour: an area from lo to hi over the slots of its points (`slot`, or
+   * else the slot with the label x). Kept inside the domain; the y scale reaches its edges. A band on fewer than two
+   * slots is not drawn.
    */
   bands?: ReadonlyArray<ReadonlyArray<BandPoint>>;
 }
 
 export interface BandPoint {
   x: string;
+  /** The point's slot (index among the x slots); two runs on one day share a label, so the label alone is ambiguous. */
+  slot?: number;
   lo: number;
   hi: number;
 }
@@ -188,14 +191,16 @@ function pointTitle(x: string, value: string, series: string | null, note: strin
 }
 
 /**
- * The slots of a band, in slot order: each point takes the first slot with its label that no earlier point took (two
- * runs on one day share a label). Points on no slot are left out.
+ * The slots of a band, in slot order: a point with a `slot` whose label is its x takes that slot (T-R56); any other
+ * takes the first slot with its label that no earlier point took (two runs on one day share a label). Points on no
+ * slot are left out.
  */
 function bandSlots(band: ReadonlyArray<BandPoint>, xLabels: readonly string[]): { i: number; lo: number; hi: number }[] {
   const used = new Set<number>();
   const slots: { i: number; lo: number; hi: number }[] = [];
   for (const b of band) {
-    const i = xLabels.findIndex((x, k) => x === b.x && !used.has(k));
+    const own = b.slot !== undefined && xLabels[b.slot] === b.x && !used.has(b.slot) ? b.slot : null;
+    const i = own ?? xLabels.findIndex((x, k) => x === b.x && !used.has(k));
     if (i < 0) continue;
     used.add(i);
     slots.push({ i, lo: b.lo, hi: b.hi });

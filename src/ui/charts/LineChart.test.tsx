@@ -1,7 +1,7 @@
 import { render, within } from '@testing-library/react';
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import LineChart, { niceTicks } from './LineChart';
+import LineChart, { niceTicks, type BandPoint } from './LineChart';
 
 const three = [
   { x: '№1', y: 312 },
@@ -453,5 +453,22 @@ describe('LineChart noise bands (F7)', () => {
     );
     const xs = (container.querySelector('polygon')?.getAttribute('points') ?? '').split(' ').map((p) => p.split(',')[0]);
     expect(new Set(xs.slice(0, 3)).size).toBe(3);
+  });
+
+  it('a band point with a slot draws in that slot: a window of 6 of 7 runs, the first two on one day (T-R56)', () => {
+    const labels = ['01.10', '01.10', '02.10', '03.10', '04.10', '05.10', '06.10'];
+    const runs = [{ name: 'a', points: labels.map((x, i) => ({ x, y: 300 - i })) }];
+    const window = labels.slice(1).map((x, k) => ({ x, slot: k + 1, lo: 290, hi: 300 }));
+    const xsOf = (bands: BandPoint[][]): number[] => {
+      const { container } = render(<LineChart series={runs} yLabel="мс" bands={bands} />);
+      return (container.querySelector('polygon')?.getAttribute('points') ?? '').split(' ').map((p) => Number(p.split(',')[0]));
+    };
+    const pointXs = (): number[] => {
+      const { container } = render(<LineChart series={runs} yLabel="мс" />);
+      return [...container.querySelectorAll('circle')].map((c) => Number(c.getAttribute('cx')));
+    };
+    const slotXs = pointXs();
+    // The upper edge runs over slots 1–6, not 0 and 2–6.
+    expect(xsOf([window]).slice(0, 6)).toEqual(slotXs.slice(1));
   });
 });

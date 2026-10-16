@@ -46,7 +46,8 @@ export type TrendUnit = 'мс' | '%' | 'с' | '';
  */
 export interface TrendView {
   text: string;
-  band: { x: string; lo: number; hi: number }[];
+  /** slot: the index of the point in the series, the chart slot it draws in (T-R56). */
+  band: { x: string; slot: number; lo: number; hi: number }[];
 }
 
 /** Times, errors, counts and levels are never negative; Go/No-Go is a percentage. */
@@ -209,16 +210,21 @@ interface TimedPoint {
   y: number | null;
 }
 
-/** The trend of a series and its band: the line ± 2σ̂ at the x of the same last ≤ 6 points by date (Р19). */
+/**
+ * The trend of a series and its band: the line ± 2σ̂ at the x of the same last ≤ 6 points by date (Р19). `points` are
+ * the series' points in slot order: each band point keeps its point's index as its slot (T-R56).
+ */
 export function trendView(points: readonly TimedPoint[], lowerIsBetter: boolean, unit: TrendUnit, seriesName?: string): TrendView {
-  const window = trendWindow(points.flatMap((p) => (p.y === null || p.t === null ? [] : [{ x: p.x, t: p.t, y: p.y }])));
+  const window = trendWindow(
+    points.flatMap((p, slot) => (p.y === null || p.t === null ? [] : [{ x: p.x, slot, t: p.t, y: p.y }])),
+  );
   const t = trend(window, lowerIsBetter);
   const band =
     t === null
       ? []
       : window.map((p) => {
           const mid = t.intercept + t.slope * p.t;
-          return { x: p.x, lo: mid - 2 * t.sigma, hi: mid + 2 * t.sigma };
+          return { x: p.x, slot: p.slot, lo: mid - 2 * t.sigma, hi: mid + 2 * t.sigma };
         });
   return { text: trendText(t, unit, seriesName), band };
 }

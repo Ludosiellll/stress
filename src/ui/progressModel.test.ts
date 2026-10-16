@@ -438,6 +438,21 @@ describe('noise band and trend (F7, Р19)', () => {
     expect(trendView(points.slice(0, 2), true, 'мс')).toEqual({ text: 'Полоса шума и тренд появятся после 3 точек.', band: [] });
   });
 
+  it('trendView: each band point carries the slot of its point, so a window that cuts two same-day runs apart lands right (T-R56)', () => {
+    // 7 runs; runs 1 and 2 on one day share the label «01.10». The window is runs 2–7.
+    const labels = ['01.10', '01.10', '02.10', '03.10', '04.10', '05.10', '06.10'];
+    const points = labels.map((x, i) => ({ x, t: i === 0 ? 0 : i - 1, y: 300 - i }));
+    const view = trendView(points, true, 'мс');
+    expect(view.band.map((b) => [b.x, b.slot])).toEqual([
+      ['01.10', 1],
+      ['02.10', 2],
+      ['03.10', 3],
+      ['04.10', 4],
+      ['05.10', 5],
+      ['06.10', 6],
+    ]);
+  });
+
   const weeklyRows = (results: unknown[]): DiagnosticRow[] =>
     results.map((r, i) => ({ ...row(i + 1, r), at: new Date(2026, 6, 1 + 7 * i, 10).toISOString() }));
 

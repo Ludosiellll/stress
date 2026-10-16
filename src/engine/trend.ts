@@ -43,7 +43,8 @@ export function trendWindow<P extends TrendPoint>(points: readonly P[]): P[] {
 }
 
 /**
- * The trend of the last TREND_POINTS points by t; null below TREND_MIN_POINTS. Points all at one time have no slope.
+ * The trend of the last TREND_POINTS points by t; null below TREND_MIN_POINTS. Points all at one time have no slope,
+ * nor do points all of one value: the line is that value (the sums alone leave a rounding residue, T-R56).
  */
 export function trend(points: readonly TrendPoint[], lowerIsBetter: boolean): Trend | null {
   const w = trendWindow(points);
@@ -59,10 +60,11 @@ export function trend(points: readonly TrendPoint[], lowerIsBetter: boolean): Tr
     sxx += (p.t - tMean) ** 2;
     sxy += (p.t - tMean) * (p.y - yMean);
   }
-  const slope = sxx === 0 ? 0 : sxy / sxx;
+  const flat = ys.every((y) => y === first.y);
+  const slope = sxx === 0 || flat ? 0 : sxy / sxx;
   const sigma = noiseSigma(ys);
   const days = last.t - first.t;
   const change = slope * days;
   const verdict = Math.abs(change) <= 2 * sigma ? 'noise' : change < 0 === lowerIsBetter ? 'better' : 'worse';
-  return { slope, intercept: yMean - slope * tMean, sigma, change, days, verdict };
+  return { slope, intercept: flat ? first.y : yMean - slope * tMean, sigma, change, days, verdict };
 }

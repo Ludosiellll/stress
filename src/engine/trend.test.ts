@@ -45,6 +45,14 @@ describe('noise band and trend (F7, Р19)', () => {
     expect(TREND_MIN_POINTS).toBe(3);
   });
 
+  it('a constant series has no slope, even when the mean is not exact in floating point (T-R56)', () => {
+    // Go/No-Go 91,666…% on three diagnostics: the least-squares sum alone gives a change of −4,9e-27, «хуже».
+    const y = (55 / 60) * 100;
+    const t = trend([20640, 20650, 20661].map((day) => ({ t: day, y })), false) as Trend;
+    expect(t).toMatchObject({ slope: 0, change: 0, sigma: 0, days: 21, verdict: 'noise' });
+    expect(t.intercept).toBe(y);
+  });
+
   it('points all on one day have no slope: the change is 0, within the noise', () => {
     expect(trend([{ t: 3, y: 10 }, { t: 3, y: 12 }, { t: 3, y: 11 }], true)).toMatchObject({ slope: 0, change: 0, days: 0, verdict: 'noise' });
   });
