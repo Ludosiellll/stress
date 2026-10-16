@@ -33,6 +33,20 @@ describe('BlockSummary', () => {
     expect(screen.getByText('Enter — дальше')).toBeTruthy();
   });
 
+  it('a change keeps its numbers and units on one line (T-R26, T-R78)', () => {
+    const changes = [
+      { label: 'Окно ответа', from: '412 мс', to: '398 мс' },
+      { label: 'Нагрузка', from: '2 цвета на 2 клавиши', to: '3 цвета на 2 клавиши' },
+    ];
+    render(<BlockSummary view={{ ...VIEW, changes }} busy={false} onContinue={vi.fn()} />);
+    const items = within(screen.getByRole('list', { name: 'Изменения' })).getAllByRole('listitem');
+    expect(items.map((li) => li.textContent)).toEqual([
+      'Окно ответа: 412\u00a0→\u00a0398\u00a0мс',
+      // The arrow stays with the number after it.
+      'Нагрузка: 2 цвета на 2 клавиши\u00a0→\u00a03 цвета на 2 клавиши',
+    ]);
+  });
+
   it('an overload block says it does not touch the saved level', () => {
     render(<BlockSummary view={{ ...VIEW, flags: ['overload'] }} busy={false} onContinue={vi.fn()} />);
     expect(screen.getByText('Блок с перегрузкой: на сохранённый уровень не влияет')).toBeTruthy();

@@ -60,7 +60,7 @@ export default function BlockSummary({ view, busy, onContinue }: BlockSummaryPro
       {view.showLevel && view.changes.length > 0 && (
         <ul aria-label="Изменения">
           {view.changes.map((c) => (
-            <li key={c.label}>{changeText(c)}</li>
+            <li key={c.label}>{noBreakUnits(changeText(c))}</li>
           ))}
         </ul>
       )}
