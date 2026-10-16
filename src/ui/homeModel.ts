@@ -3,6 +3,7 @@ import type { DiagnosticRow, SessionRow, Settings } from '../data/rows';
 import { signedDaysBetween } from '../engine/dates';
 import { MODULE_IDS } from '../engine/derive';
 import { parseResults, planDiagnostic } from '../engine/diagnostic';
+import { trainingDayNumber } from '../engine/layouts';
 import { BASE_DAYS, CALIBRATION_BLOCKS, currentPhase, firstSessionAt, type PhaseId, type PhaseInfo } from '../engine/phases';
 import {
   OVERLOAD_REACTION_MINUTES,
@@ -195,7 +196,8 @@ export async function loadHomeModel(repo: Repository, today: string): Promise<Ho
     .filter((b) => b.flags.includes('test_format'))
     .map((b) => b.startedAt)
     .sort((a, b) => Date.parse(a) - Date.parse(b));
-  const extras = { testFormatRuns, layout: settings.layout, layoutRotation: settings.layoutRotation };
+  // The layout rotates over the training days (T-R64).
+  const extras = { testFormatRuns, layout: settings.layout, layoutRotation: settings.layoutRotation, trainingDay: trainingDayNumber(sessions, today) };
   const plan = planTraining(states, today, hashString(`${today}:${String(sessions.length)}`), phase, extras);
   const dayLayout = plan.layout ?? settings.layout;
   const untried = new Set(MODULE_IDS.filter((m) => states[m].lifetimeBlocks === 0));

@@ -82,6 +82,15 @@ describe('Free', () => {
     expect((off.onStart.mock.calls[0]?.[0] as SessionPlan).layout).toBe('mouse');
   });
 
+  it('a diagnostic is no training day: the day after it plays the primary (T-R64)', async () => {
+    const repo = new MemoryRepository();
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString();
+    await repo.createSession(session('d', yesterday, { kind: 'diagnostic', endedAt: yesterday }));
+    const first = await renderFree(repo);
+    fireEvent.click(screen.getByRole('button', { name: moduleTitles.pzmr }));
+    expect((first.onStart.mock.calls[0]?.[0] as SessionPlan).layout).toBe('keyboard');
+  });
+
   it('a failed load is shown and logged; «Назад» still works', async () => {
     const repo = new MemoryRepository();
     repo.listSessions = () => Promise.reject(new Error('база занята'));

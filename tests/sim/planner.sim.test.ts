@@ -10,7 +10,9 @@ import {
   type Segment,
   type TestFormatId,
 } from '../../src/engine/planner';
+import { trainingDayNumber } from '../../src/engine/layouts';
 import { MODULE_IDS, type BlockFlag, type LayoutId, type ModuleId } from '../../src/engine/types';
+import { Rand } from './models/learner';
 
 /**
  * Ruling W2-R40 (I1): 120 days of daily training planned by the real planTraining, in the phase currentPhase
@@ -112,7 +114,7 @@ function simulateRuns(): { runsByWeek: number[]; formats: Record<TestFormatId, n
     const today = at(day, 0);
     const states = deriveModuleStates(sessions, blocks);
     const phase = currentPhase({ firstSessionAt: firstSessionAt(sessions), today, testDate: null, states });
-    const plan = planTraining(states, today, day + 1, phase, { testFormatRuns: runs, layout: 'keyboard', layoutRotation: true });
+    const plan = planTraining(states, today, day + 1, phase, { testFormatRuns: runs, layout: 'keyboard', layoutRotation: true, trainingDay: 1 });
     const sessionId = `s${String(day)}`;
     sessions.push({ id: sessionId, startedAt: today, kind: 'training' });
     let minute = 1;
@@ -153,47 +155,73 @@ describe('planner simulation: test-format runs (F4)', () => {
 });
 
 /**
- * F9 (spec §4.6): 120 days of training planned by the real planTraining with the layout extras, in the phase
- * currentPhase gives with the test on day 120; once every day, and 6 days a week (every 7th day a rest day). The
- * primary layout takes at least half of the training days in every window of 28 days, and the last 3 days before the
- * test play it.
+ * F9 (spec §4.6, T-R64): 120 days of a course planned by the real planTraining with the layout extras, the training day
+ * from the real trainingDayNumber over the sessions so far, in the phase currentPhase gives with the test on the last
+ * day. The course starts with a diagnostic on day 1 (it starts the calendar count, not the training days). Schedules:
+ * every day, 6 days a week, every other day from day 1 and from day 2, and a seeded 70 % of the days. The primary layout
+ * takes at least half of the training days, overall and in every 28 training days in a row, and the last 3 days before
+ * the test play it. By calendar day (the rule before T-R64) the every-other-day course from day 2 never got it.
  */
 const LAYOUT_DAYS = 120;
 const WINDOW_DAYS = 28;
+const RANDOM_SHARE = 0.7;
 
-/** The layout each training day played (null: a rest day), course days 1…LAYOUT_DAYS. */
-function simulateLayouts(primary: LayoutId, restEvery: number | null): (LayoutId | null)[] {
-  const sessions: DeriveSession[] = [];
+type Schedule = 'daily' | '6 of 7' | 'every other day from 1' | 'every other day from 2' | 'random 70 %';
+const SCHEDULES: readonly Schedule[] = ['daily', '6 of 7', 'every other day from 1', 'every other day from 2', 'random 70 %'];
+
+/** Whether course day `day` (1-based) is a training day of the schedule; `r` draws the random one. */
+function trains(schedule: Schedule, day: number, r: Rand): boolean {
+  switch (schedule) {
+    case 'daily':
+      return true;
+    case '6 of 7':
+      return day % REST_EVERY !== 0;
+    case 'every other day from 1':
+      return day % 2 === 1;
+    case 'every other day from 2':
+      return day % 2 === 0;
+    case 'random 70 %':
+      return r.next() < RANDOM_SHARE;
+  }
+}
+
+/** Each training day of the course, in order: its 0-based course day and the layout it played. */
+function simulateLayouts(primary: LayoutId, schedule: Schedule): { day: number; layout: LayoutId }[] {
+  const sessions: DeriveSession[] = [{ id: 'diagnostic', startedAt: at(0, 0), kind: 'diagnostic' }];
   const testDate = at(LAYOUT_DAYS - 1, 0).slice(0, 10);
-  const played: (LayoutId | null)[] = [];
+  const r = new Rand(7);
+  const played: { day: number; layout: LayoutId }[] = [];
   for (let day = 0; day < LAYOUT_DAYS; day++) {
-    if (restEvery !== null && (day + 1) % restEvery === 0) {
-      played.push(null);
-      continue;
-    }
-    const today = at(day, 0);
+    if (!trains(schedule, day + 1, r)) continue;
+    const today = at(day, 30);
     const states = deriveModuleStates(sessions, []);
     const phase = currentPhase({ firstSessionAt: firstSessionAt(sessions), today, testDate, states });
-    const plan = planTraining(states, today, day + 1, phase, { testFormatRuns: [], layout: primary, layoutRotation: true });
+    const trainingDay = trainingDayNumber(sessions, today);
+    const plan = planTraining(states, today, day + 1, phase, { testFormatRuns: [], layout: primary, layoutRotation: true, trainingDay });
     sessions.push({ id: `s${String(day)}`, startedAt: today, kind: 'training' });
-    played.push(plan.layout ?? null);
+    played.push({ day, layout: plan.layout ?? primary });
   }
   return played;
 }
 
-describe('planner simulation: the layout of the day (F9)', () => {
-  it('the primary layout takes at least half of the days', () => {
+describe('planner simulation: the layout of the day (F9, T-R64)', () => {
+  it('the primary layout takes at least half of the training days for every schedule; the last 3 days play it', () => {
     for (const primary of ['keyboard', 'pult', 'mouse'] as const) {
-      for (const restEvery of [null, REST_EVERY]) {
-        const played = simulateLayouts(primary, restEvery);
-        const what = `${primary}, rest every ${String(restEvery)}`;
+      for (const schedule of SCHEDULES) {
+        const played = simulateLayouts(primary, schedule);
+        const layouts = played.map((p) => p.layout);
+        const what = `${primary}, ${schedule}`;
+        const share = (days: readonly LayoutId[]): number => days.filter((l) => l === primary).length / days.length;
         // Every layout is played: the rotation is on.
-        expect(new Set(played.filter((l) => l !== null)).size, what).toBe(3);
-        for (let from = 0; from + WINDOW_DAYS <= LAYOUT_DAYS; from++) {
-          const days = played.slice(from, from + WINDOW_DAYS).filter((l) => l !== null);
-          expect(days.filter((l) => l === primary).length / days.length, `${what}, days ${String(from + 1)}…`).toBeGreaterThanOrEqual(0.5);
+        expect(new Set(layouts).size, what).toBe(3);
+        expect(share(layouts), what).toBeGreaterThanOrEqual(0.5);
+        for (let from = 0; from + WINDOW_DAYS <= layouts.length; from++) {
+          expect(share(layouts.slice(from, from + WINDOW_DAYS)), `${what}, training days ${String(from + 1)}…`).toBeGreaterThanOrEqual(0.5);
         }
-        expect(played.slice(-3).filter((l) => l !== null).every((l) => l === primary), what).toBe(true);
+        // The test is on the last day: 3 days or fewer before it the primary only.
+        const tail = played.filter((p) => p.day >= LAYOUT_DAYS - 4);
+        expect(tail.length, what).toBeGreaterThan(0);
+        expect(tail.every((p) => p.layout === primary), what).toBe(true);
       }
     }
   });

@@ -67,7 +67,7 @@ const phaseInfo = (phase: PhaseId, over: Partial<PhaseInfo> = {}): PhaseInfo => 
 const DEV = phaseInfo('development');
 
 /** The extras of a keyboard user with the rotation on and these stored runs. */
-const runsOf = (testFormatRuns: readonly string[]): TrainingExtras => ({ testFormatRuns, layout: 'keyboard', layoutRotation: true });
+const runsOf = (testFormatRuns: readonly string[]): TrainingExtras => ({ testFormatRuns, layout: 'keyboard', layoutRotation: true, trainingDay: 1 });
 
 describe('daysBetween', () => {
   it('counts calendar days between date-only strings', () => {
@@ -622,20 +622,25 @@ describe('isRehearsalDue', () => {
 });
 
 describe('the layout of the day (F9)', () => {
-  it('planTraining plays dayLayout of its day; without extras it names none', () => {
-    const plan = (dayNumber: number, extras: Partial<TrainingExtras> = {}) =>
-      planTraining(trained(), TODAY, 1, phaseInfo('development', { dayNumber }), { ...runsOf([]), ...extras }).layout;
-    expect([29, 30, 31, 32].map((n) => plan(n))).toEqual(['keyboard', 'pult', 'keyboard', 'mouse']);
-    expect([30, 32].map((n) => plan(n, { layout: 'mouse' }))).toEqual(['keyboard', 'pult']);
-    expect(plan(30, { layoutRotation: false })).toBe('keyboard');
-    expect(planTraining(trained(), TODAY, 1, phaseInfo('taper', { dayNumber: 30, daysToTest: 3 }), runsOf([])).layout).toBe('keyboard');
+  it('planTraining plays dayLayout of its training day, not of its calendar day (T-R64); without extras it names none', () => {
+    const plan = (trainingDay: number, extras: Partial<TrainingExtras> = {}, dayNumber = 30) =>
+      planTraining(trained(), TODAY, 1, phaseInfo('development', { dayNumber }), { ...runsOf([]), trainingDay, ...extras }).layout;
+    expect([1, 2, 3, 4].map((n) => plan(n))).toEqual(['keyboard', 'pult', 'keyboard', 'mouse']);
+    // The calendar day does not matter: course day 31 as training day 1 plays the primary.
+    expect([29, 30, 31, 32].map((d) => plan(1, {}, d))).toEqual(['keyboard', 'keyboard', 'keyboard', 'keyboard']);
+    expect([2, 4].map((n) => plan(n, { layout: 'mouse' }))).toEqual(['keyboard', 'pult']);
+    expect(plan(2, { layoutRotation: false })).toBe('keyboard');
+    expect(planTraining(trained(), TODAY, 1, phaseInfo('taper', { dayNumber: 30, daysToTest: 3 }), { ...runsOf([]), trainingDay: 2 }).layout).toBe('keyboard');
     expect(planTraining(trained(), TODAY, 1, DEV)).not.toHaveProperty('layout');
   });
 
-  it('planFree with the layout plays dayLayout of the phase’s day; without a phase, the primary', () => {
-    expect(planFree('szmr', 7, phaseInfo('development', { dayNumber: 2 }), { primary: 'keyboard', rotation: true }).layout).toBe('pult');
-    expect(planFree('szmr', 7, phaseInfo('development', { dayNumber: 2 }), { primary: 'keyboard', rotation: false }).layout).toBe('keyboard');
-    expect(planFree('szmr', 7, undefined, { primary: 'mouse', rotation: true }).layout).toBe('mouse');
+  it('planFree with the layout plays dayLayout of the training day; without a phase, the primary', () => {
+    const at = (trainingDay: number, rotation = true) => ({ primary: 'keyboard' as const, rotation, trainingDay });
+    expect(planFree('szmr', 7, phaseInfo('development', { dayNumber: 3 }), at(2)).layout).toBe('pult');
+    expect(planFree('szmr', 7, phaseInfo('development', { dayNumber: 2 }), at(3)).layout).toBe('keyboard');
+    expect(planFree('szmr', 7, phaseInfo('development', { dayNumber: 2 }), at(2, false)).layout).toBe('keyboard');
+    expect(planFree('szmr', 7, phaseInfo('taper', { dayNumber: 30, daysToTest: 2 }), at(4)).layout).toBe('keyboard');
+    expect(planFree('szmr', 7, undefined, { primary: 'mouse', rotation: true, trainingDay: 2 }).layout).toBe('mouse');
     expect(planFree('szmr', 7, DEV)).not.toHaveProperty('layout');
   });
 });

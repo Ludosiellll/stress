@@ -1,5 +1,6 @@
+import { localDayNumber } from './dates';
 import type { PhaseInfo } from './phases';
-import type { InputKey, LayoutId } from './types';
+import type { InputKey, LayoutId, SessionKind } from './types';
 
 const KEYBOARD: readonly (readonly InputKey[])[] = [
   ['Space'],
@@ -79,14 +80,40 @@ const LAYOUT_ORDER: readonly LayoutId[] = ['keyboard', 'pult', 'mouse'];
 const PRIMARY_DAYS_BEFORE_TEST = 3;
 
 /**
- * The layout of a training day (F9): c = (dayNumber − 1) mod 4; c = 0 and 2 the primary, c = 1 the first of the two
- * others, c = 3 the second, so the primary has exactly half of any 28 days. The primary only with the rotation off or
- * PRIMARY_DAYS_BEFORE_TEST days or fewer before the test. Diagnostics and test-format runs never ask: they play the
- * primary.
+ * Today's number among the training days (T-R64): the local calendar days with a training or free session before today,
+ * plus 1 for today. Diagnostics, today's sessions, later days (a clock moved back) and unreadable dates do not count.
  */
-export function dayLayout(primary: LayoutId, day: Pick<PhaseInfo, 'dayNumber' | 'daysToTest'>, rotation: boolean): LayoutId {
+export function trainingDayNumber(sessions: readonly { startedAt: string; kind: SessionKind }[], todayIso: string): number {
+  const today = localDayNumber(todayIso);
+  const days = new Set<number>();
+  for (const s of sessions) {
+    if (s.kind !== 'training' && s.kind !== 'free') continue;
+    let day: number;
+    try {
+      day = localDayNumber(s.startedAt);
+    } catch {
+      continue;
+    }
+    if (day < today) days.add(day);
+  }
+  return days.size + 1;
+}
+
+/** The day dayLayout plays: its number among the training days (trainingDayNumber) and the days to the test. */
+export interface LayoutDay {
+  trainingDay: number;
+  daysToTest: PhaseInfo['daysToTest'];
+}
+
+/**
+ * The layout of a training day (F9, T-R64): c = (trainingDay − 1) mod 4 over the training days, not the calendar days, so
+ * any schedule gets it; c = 0 and 2 the primary, c = 1 the first of the two others, c = 3 the second, so the primary has
+ * exactly half of any 28 training days. The primary only with the rotation off or PRIMARY_DAYS_BEFORE_TEST days or fewer
+ * before the test. Diagnostics and test-format runs never ask: they play the primary.
+ */
+export function dayLayout(primary: LayoutId, day: LayoutDay, rotation: boolean): LayoutId {
   if (!rotation || (day.daysToTest !== null && day.daysToTest <= PRIMARY_DAYS_BEFORE_TEST)) return primary;
-  const c = (day.dayNumber - 1) % 4;
+  const c = (day.trainingDay - 1) % 4;
   if (c === 0 || c === 2) return primary;
   const others = LAYOUT_ORDER.filter((l) => l !== primary);
   return others[c === 1 ? 0 : 1] as LayoutId;

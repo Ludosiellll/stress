@@ -152,6 +152,8 @@ export interface TrainingExtras {
   /** The user's own layout (the primary) and whether the days rotate it (Settings.layoutRotation, F9). */
   layout: LayoutId;
   layoutRotation: boolean;
+  /** Today's number among the training days (trainingDayNumber): the layout rotates over them (T-R64). */
+  trainingDay: number;
 }
 
 const TEST_FORMATS: ReadonlySet<ModuleId> = new Set<ModuleId>(TEST_FORMAT_ORDER);
@@ -240,7 +242,8 @@ function pick(
  * nothing does in the taper (it cuts the load).
  * When a test-format run is due (testFormatDue over `extras`; none without them), it comes first, before the warm-up
  * (a cold start), in the taper too (F4): it takes one reaction slot, its module plays in no other slot, and a ПЗМР run
- * replaces the warm-up. With the extras the plan also names the layout of the day (dayLayout, F9).
+ * replaces the warm-up. With the extras the plan also names the layout of the day (dayLayout of the training day, F9,
+ * T-R64).
  */
 export function planTraining(
   states: Record<ModuleId, ModuleState>,
@@ -285,7 +288,9 @@ export function planTraining(
     }
   }
   const plan: SessionPlan = { kind: 'training', seed, phase: phase.phase, feedback: feedbackRate(phase.phase), segments };
-  return extras === undefined ? plan : { ...plan, layout: dayLayout(extras.layout, phase, extras.layoutRotation) };
+  if (extras === undefined) return plan;
+  const day = { trainingDay: extras.trainingDay, daysToTest: phase.daysToTest };
+  return { ...plan, layout: dayLayout(extras.layout, day, extras.layoutRotation) };
 }
 
 /**
@@ -306,15 +311,23 @@ export function isRehearsalDue(
   return localDayNumber(todayIso) - last >= REHEARSAL_GAP_DAYS;
 }
 
+/** What a free plan needs for the layout of the day: the user's own, its rotation and today's training day (T-R64). */
+export interface FreeLayout {
+  primary: LayoutId;
+  rotation: boolean;
+  trainingDay: number;
+}
+
 /**
- * One module for 5 minutes; with the phase of the day, its mark rate (F15, Р10); with the user's layout and rotation,
- * the layout of the day (F9; the primary without a phase).
+ * One module for 5 minutes; with the phase of the day, its mark rate (F15, Р10); with the user's layout, its rotation and
+ * the training day, the layout of the day (F9, T-R64; the primary without a phase).
  */
-export function planFree(module: ModuleId, seed: number, phase?: PhaseInfo, layout?: { primary: LayoutId; rotation: boolean }): SessionPlan {
+export function planFree(module: ModuleId, seed: number, phase?: PhaseInfo, layout?: FreeLayout): SessionPlan {
   let plan: SessionPlan = { kind: 'free', seed, segments: [{ module, budgetMs: 5 * MS_PER_MIN, purpose: 'free' }] };
   if (phase !== undefined) plan = { ...plan, feedback: feedbackRate(phase.phase) };
-  if (layout !== undefined) plan = { ...plan, layout: phase === undefined ? layout.primary : dayLayout(layout.primary, phase, layout.rotation) };
-  return plan;
+  if (layout === undefined) return plan;
+  const day = phase === undefined ? null : { trainingDay: layout.trainingDay, daysToTest: phase.daysToTest };
+  return { ...plan, layout: day === null ? layout.primary : dayLayout(layout.primary, day, layout.rotation) };
 }
 
 /** A control diagnostic is due if none was done yet or ≥ 14 days have passed since the last one. */

@@ -322,7 +322,7 @@ test('settings layout pult changes key hints to arrows', async ({ page }) => {
 
 test('on a remote-control day the bot presses the arrows', async ({ page }) => {
   await openApp(page, E2E_URL);
-  // A training yesterday: today is day 2 of the course, the remote control's day for a keyboard user (F9).
+  // A training yesterday: today is the second training day, the remote control's for a keyboard user (F9, T-R64).
   await restoreBundle(page, await historyBundle(page, { sessions: [{ daysAgo: 1 }] }));
   await expect(page.getByText('Сегодня раскладка: пульт (стрелки и цифры). Основная — клавиатура.')).toBeVisible();
   await page.getByRole('button', { name: 'Свободная тренировка' }).click();

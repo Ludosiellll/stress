@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
+import { trainingDayNumber } from '../../engine/layouts';
 import type { PhaseInfo } from '../../engine/phases';
-import { planFree, type SessionPlan } from '../../engine/planner';
+import { planFree, type FreeLayout, type SessionPlan } from '../../engine/planner';
 import { hashString } from '../../engine/rng';
-import { MODULE_IDS, type LayoutId, type ModuleId } from '../../engine/types';
+import { MODULE_IDS, type ModuleId } from '../../engine/types';
 import { moduleTitles } from '../../modules/registry';
 import { useApp } from '../AppContext';
 import { phaseOfDay } from '../homeModel';
@@ -17,12 +18,12 @@ export interface FreeProps {
 
 /**
  * What a free plan needs: the number of sessions (its seed), the phase of the day (its marks, F15) and the user's layout
- * with its rotation (the layout of the day, F9).
+ * with its rotation and today's training day (the layout of the day, F9, T-R64).
  */
 interface FreeContext {
   sessions: number;
   phase: PhaseInfo;
-  layout: { primary: LayoutId; rotation: boolean };
+  layout: FreeLayout;
 }
 
 /**
@@ -38,8 +39,10 @@ export default function Free({ onStart, onBack }: FreeProps) {
     let live = true;
     Promise.all([repo.getModuleStates(), repo.listSessions(), repo.getSettings()]).then(
       ([states, list, settings]) => {
-        const phase = phaseOfDay(states, list, settings, localDate());
-        if (live) setContext({ sessions: list.length, phase, layout: { primary: settings.layout, rotation: settings.layoutRotation } });
+        const today = localDate();
+        const phase = phaseOfDay(states, list, settings, today);
+        const layout = { primary: settings.layout, rotation: settings.layoutRotation, trainingDay: trainingDayNumber(list, today) };
+        if (live) setContext({ sessions: list.length, phase, layout });
       },
       (e: unknown) => {
         const message = e instanceof Error ? e.message : String(e);

@@ -1,7 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import type { LayoutId } from './types';
-import { dayLayout, keyLabel, LAYOUT_NAMES, layoutKeys, normalizeKey } from './layouts';
+import type { LayoutId, SessionKind } from './types';
+import { dayLayout, keyLabel, LAYOUT_NAMES, layoutKeys, normalizeKey, trainingDayNumber } from './layouts';
 
 const TABLE: Record<LayoutId, (string[] | null)[]> = {
   keyboard: [
@@ -83,10 +83,10 @@ describe('keyLabel', () => {
   });
 });
 
-describe('dayLayout (F9)', () => {
-  const day = (dayNumber: number, daysToTest: number | null = null) => ({ dayNumber, daysToTest });
+describe('dayLayout (F9, T-R64)', () => {
+  const day = (trainingDay: number, daysToTest: number | null = null) => ({ trainingDay, daysToTest });
 
-  it('days 1–4 play the primary, the first other, the primary, the second other; the others keep the order keyboard, pult, mouse', () => {
+  it('training days 1–4 play the primary, the first other, the primary, the second other; the others keep the order keyboard, pult, mouse', () => {
     expect([1, 2, 3, 4, 5, 6, 7, 8].map((n) => dayLayout('keyboard', day(n), true))).toEqual([
       'keyboard',
       'pult',
@@ -108,7 +108,7 @@ describe('dayLayout (F9)', () => {
     expect(dayLayout('keyboard', day(2, 4), true)).toBe('pult');
   });
 
-  it('any 28 days in a row: the primary on exactly 14', () => {
+  it('any 28 training days in a row: the primary on exactly 14', () => {
     const layout = fc.constantFrom<LayoutId>('keyboard', 'pult', 'mouse');
     fc.assert(
       fc.property(layout, fc.integer({ min: 1, max: 10_000 }), (primary, from) => {
@@ -118,7 +118,49 @@ describe('dayLayout (F9)', () => {
       { numRuns: 1000 },
     );
   });
+});
 
+describe('trainingDayNumber (T-R64)', () => {
+  const TODAY = '2026-10-14';
+  const at = (startedAt: string, kind: SessionKind = 'training') => ({ startedAt, kind });
+
+  it('no session yet: training day 1', () => {
+    expect(trainingDayNumber([], TODAY)).toBe(1);
+  });
+
+  it('the local days with a training or free session before today, plus 1; two sessions on a day count once', () => {
+    const sessions = [
+      at('2026-10-08T09:00:00'),
+      at('2026-10-08T20:00:00', 'free'),
+      at('2026-10-10T09:00:00', 'free'),
+      at('2026-10-12T23:30:00'),
+    ];
+    expect(trainingDayNumber(sessions, TODAY)).toBe(4);
+  });
+
+  it('diagnostics, today’s sessions, later days and unreadable dates do not count', () => {
+    const sessions = [
+      at('2026-10-11T09:00:00', 'diagnostic'),
+      at('2026-10-14T08:00:00'),
+      at('2026-10-15T09:00:00'),
+      at('yesterday'),
+      at('2026-10-13T09:00:00', 'free'),
+    ];
+    expect(trainingDayNumber(sessions, TODAY)).toBe(2);
+  });
+
+  it('an every-other-day course from day 2 rotates by training day: the primary comes back every other session', () => {
+    // Calendar days 2, 4, 6, 8 of a course begun by a diagnostic on day 1: by calendar day they were all «others».
+    const days = ['2026-10-02', '2026-10-04', '2026-10-06', '2026-10-08'];
+    const layouts = days.map((d, i) => {
+      const trainingDay = trainingDayNumber(days.slice(0, i).map((x) => at(`${x}T09:00:00`)), d);
+      return dayLayout('keyboard', { trainingDay, daysToTest: null }, true);
+    });
+    expect(layouts).toEqual(['keyboard', 'pult', 'keyboard', 'mouse']);
+  });
+});
+
+describe('LAYOUT_NAMES', () => {
   it('names', () => {
     expect(LAYOUT_NAMES).toEqual({ keyboard: 'клавиатура', pult: 'пульт (стрелки и цифры)', mouse: 'мышь' });
   });

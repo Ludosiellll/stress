@@ -153,6 +153,19 @@ describe('loadHomeModel', () => {
     expect(await loadHomeModel(repo, TODAY)).toMatchObject({ plan: { layout: 'pult' }, layoutLine: null });
   });
 
+  it('the layout rotates over training days, not calendar days (T-R64)', async () => {
+    // A diagnostic three days ago starts the course; trainings two days ago and today: today is calendar day 4 but the
+    // second training day, the remote control.
+    const repo = new MemoryRepository();
+    await repo.createSession(session('d', '2026-10-11T10:00:00', { kind: 'diagnostic' }));
+    expect(await loadHomeModel(repo, TODAY)).toMatchObject({ phase: { dayNumber: 4 }, plan: { layout: 'keyboard' } });
+    await repo.createSession(session('t', '2026-10-12T10:00:00'));
+    // Two sessions on one day are one training day; today's sessions are not counted.
+    await repo.createSession(session('f', '2026-10-12T19:00:00', { kind: 'free' }));
+    await repo.createSession(session('now', '2026-10-14T08:00:00'));
+    expect(await loadHomeModel(repo, TODAY)).toMatchObject({ plan: { layout: 'pult' } });
+  });
+
   it('loadHomeModel computes the phase from the first session and the test date', async () => {
     const repo = new MemoryRepository();
     await repo.createSession(session('t', '2026-10-11T10:00:00'));
