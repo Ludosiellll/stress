@@ -34,6 +34,7 @@ import {
   diagnosticResults,
   E2E_COND_MARGIN,
   e2eCondFloor,
+  FEEDBACK_MODULES,
   floorsFrom,
   isOverloadBlock,
   planBlock,
@@ -69,10 +70,10 @@ const summary = (over: Partial<ReactionSummary>): ReactionSummary => ({
   ...over,
 });
 
-/** A plan seed and segment index whose Go/No-Go colours are swapped (F8), or are not; no window floors (F3). */
-function segmentWhere(swapped: boolean): Pick<PlanContext, 'planSeed' | 'segmentIndex' | 'floors'> {
+/** A plan seed and segment index whose Go/No-Go colours are swapped (F8), or are not; no window floors (F3), no marks (F15). */
+function segmentWhere(swapped: boolean): Pick<PlanContext, 'planSeed' | 'segmentIndex' | 'floors' | 'feedback'> {
   for (let planSeed = 1; planSeed <= 100; planSeed++) {
-    if (isSwappedSegment(planSeed, 2) === swapped) return { planSeed, segmentIndex: 2, floors: null };
+    if (isSwappedSegment(planSeed, 2) === swapped) return { planSeed, segmentIndex: 2, floors: null, feedback: 'none' };
   }
   throw new Error('no such plan seed');
 }
@@ -300,7 +301,8 @@ describe('planBlock', () => {
 });
 
 describe('diagnostic reaction blocks', () => {
-  const ctx = { layout: 'keyboard', scale: 1, diagnostic: true, ...SWAPPING } as const;
+  // A plan rate of marks never reaches a diagnostic (F15): the snapshots below hold with 'every'.
+  const ctx = { layout: 'keyboard', scale: 1, diagnostic: true, ...SWAPPING, feedback: 'every' } as const;
   /** Plan and step of block 0, attempt 0 of every reaction segment of diagnostic n. */
   const diagnosticBlocks = (n: number) =>
     planDiagnostic(n).segments.flatMap((seg) => {
@@ -750,6 +752,69 @@ describe('test-format runs (F4)', () => {
     if (step.kind !== 'reaction_block') throw new Error('expected a reaction block');
     const go = new Set(step.specs.flatMap((t) => (t.expected.kind === 'press' ? [JSON.stringify(t.stimulus)] : [])));
     expect([...go]).toEqual([JSON.stringify({ kind: 'shape', shape: 'circle', color: 'red' })]);
+  });
+});
+
+describe('the mark after a trial (F15)', () => {
+  const ctx: PlanContext = { layout: 'keyboard', scale: 1, diagnostic: false, ...PLAIN, feedback: 'every' };
+  const training = (module: ReactionModuleId): Segment => ({ module, budgetMs: 300_000, purpose: 'reaction', practiceTrials: 3 });
+  const specsOf = (seg: Segment, c: PlanContext, seed = 9): TrialSpec[] => {
+    const { step } = buildBlock(planBlock(seg, 6, 0, c), seed, 'keyboard', new Map());
+    if (step.kind !== 'reaction_block') throw new Error('expected a reaction block');
+    return step.specs;
+  };
+  const flags = (specs: readonly TrialSpec[]): (boolean | undefined)[] => specs.map((t) => t.feedback);
+
+  it('the six modules with marks: not РДО', () => {
+    expect(FEEDBACK_MODULES).toEqual(['pzmr', 'szmr', 'gonogo', 'stroop', 'taskswitch', 'pomeh']);
+  });
+
+  it("'every': every trial of a training or free block is marked, the practice trials too", () => {
+    for (const module of FEEDBACK_MODULES) {
+      for (const seg of [training(module), freeSegment(module), { ...training(module), purpose: 'finisher' as const, overload: 'finisher' as const }]) {
+        const specs = specsOf(seg, ctx);
+        expect(specs.length, `${module} ${seg.purpose}`).toBeGreaterThan(0);
+        expect(new Set(flags(specs)), `${module} ${seg.purpose}`).toEqual(new Set([true]));
+      }
+      expect(specsOf(training(module), ctx).filter((t) => t.practice === true)).toHaveLength(3);
+    }
+  });
+
+  it("'half': trial i by the i-th draw of the block's 'feedback' stream, in order; the same seed gives the same flags", () => {
+    const half = { ...ctx, feedback: 'half' as const };
+    for (const module of FEEDBACK_MODULES) {
+      const specs = specsOf(training(module), half, 77);
+      const rng = createRng(deriveSeed(77, 'feedback'));
+      expect(flags(specs), module).toEqual(specs.map(() => rng.next() < 0.5));
+      expect(specsOf(training(module), half, 77)).toEqual(specs);
+    }
+    const all = FEEDBACK_MODULES.flatMap((m) => flags(specsOf(training(m), half, 5)));
+    expect(all.filter((f) => f === true).length / all.length).toBeGreaterThan(0.3);
+    expect(all.filter((f) => f === true).length / all.length).toBeLessThan(0.7);
+  });
+
+  it('marks change nothing else: the trials are those of a block without them', () => {
+    for (const module of FEEDBACK_MODULES) {
+      const plain = specsOf(training(module), { ...ctx, feedback: 'none' });
+      expect(plain.some((t) => 'feedback' in t), module).toBe(false);
+      for (const rate of ['every', 'half'] as const) {
+        const marked = specsOf(training(module), { ...ctx, feedback: rate });
+        expect(marked.map((t) => ({ ...t, feedback: undefined })), `${module} ${rate}`).toEqual(plain.map((t) => ({ ...t, feedback: undefined })));
+      }
+    }
+  });
+
+  it('none in РДО, a warm-up, a test-format run or a diagnostic', () => {
+    const none = (specs: readonly TrialSpec[]): boolean => specs.every((t) => !('feedback' in t));
+    expect(none(specsOf(training('rdo'), ctx))).toBe(true);
+    expect(none(specsOf(freeSegment('rdo'), ctx))).toBe(true);
+    expect(none(specsOf({ module: 'pzmr', budgetMs: 120_000, purpose: 'warmup' }, ctx))).toBe(true);
+    for (const module of TEST_FORMAT_ORDER) expect(none(specsOf(runSegment(module), ctx)), module).toBe(true);
+    for (const seg of planDiagnostic(1).segments.filter((x) => isReactionModule(x.module))) {
+      expect(none(specsOf(seg, { ...ctx, diagnostic: true })), seg.module).toBe(true);
+    }
+    expect(reactionPlan(training('szmr'), 6, ctx).feedback).toBe('every');
+    expect(reactionPlan(training('rdo'), 6, ctx).feedback).toBe('none');
   });
 });
 

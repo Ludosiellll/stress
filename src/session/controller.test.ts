@@ -1252,6 +1252,57 @@ describe('SessionController — warm-up and the form of the day (F5)', () => {
   });
 });
 
+describe('SessionController — the mark after a trial (F15)', () => {
+  /** Plays the whole session; returns every reaction block it showed. */
+  async function reactionBlocks(h: Harness): Promise<StepOf<'reaction_block'>[]> {
+    const seen: StepOf<'reaction_block'>[] = [];
+    const submit = h.c.submitReaction.bind(h.c);
+    h.c.submitReaction = (timeline) => {
+      seen.push(expectStep(h.c, 'reaction_block'));
+      return submit(timeline);
+    };
+    await drive(h, { blockMs: 150_000 });
+    return seen;
+  }
+  const flagsOf = (blocks: readonly StepOf<'reaction_block'>[]): Record<string, (boolean | undefined)[]> => {
+    const out: Record<string, (boolean | undefined)[]> = {};
+    for (const b of blocks) out[b.module] = [...new Set([...(out[b.module] ?? []), ...b.specs.map((t) => t.feedback)])];
+    return out;
+  };
+
+  it('training blocks carry the plan rate; the warm-up, a test-format run and РДО carry none', async () => {
+    const plan: SessionPlan = {
+      kind: 'training',
+      seed: 1,
+      phase: 'base',
+      feedback: 'every',
+      segments: [
+        { module: 'szmr', budgetMs: 0, purpose: 'test_format', trialCount: DIAGNOSTIC_VOLUME.szmr.trialCount, practiceTrials: 5 },
+        { module: 'pzmr', budgetMs: MIN, purpose: 'warmup' },
+        { module: 'gonogo', budgetMs: MIN, purpose: 'reaction' },
+        { module: 'rdo', budgetMs: MIN, purpose: 'reaction' },
+        { module: 'stroop', budgetMs: MIN, purpose: 'finisher', overload: 'finisher' },
+      ],
+    };
+    const blocks = await reactionBlocks(await begin(plan));
+    expect(flagsOf(blocks)).toEqual({ szmr: [undefined], pzmr: [undefined], gonogo: [true], rdo: [undefined], stroop: [true] });
+    // 'half': both kinds of trials, by the block seed.
+    const half = flagsOf(await reactionBlocks(await begin({ ...plan, feedback: 'half' })));
+    expect(new Set(half.gonogo)).toEqual(new Set([true, false]));
+    expect(half.pzmr).toEqual([undefined]);
+    // No rate in the plan (a plan made before F15): none.
+    const older: SessionPlan = { kind: plan.kind, seed: plan.seed, segments: plan.segments };
+    expect(new Set(Object.values(flagsOf(await reactionBlocks(await begin(older)))).flat())).toEqual(new Set([undefined]));
+  });
+
+  it('a free plan of the phase of the day marks its trials; a diagnostic never does, whatever its plan says', async () => {
+    expect(flagsOf(await reactionBlocks(await begin(planFree('pomeh', 3, currentPhase({ firstSessionAt: null, today: T0, testDate: null, states: deriveModuleStates([], []) })))))).toEqual({ pomeh: [true] });
+    const diagnostic = await reactionBlocks(await begin({ ...planDiagnostic(1), feedback: 'every' }));
+    expect(diagnostic.length).toBeGreaterThan(5);
+    expect(diagnostic.every((b) => b.specs.every((t) => !('feedback' in t)))).toBe(true);
+  });
+});
+
 describe('SessionController — test-format runs (F4)', () => {
   const daysAgo = (d: number): string => new Date(new Date(T0).getTime() - d * DAY).toISOString();
   const training = (...segments: Segment[]): SessionPlan => ({ kind: 'training', seed: 1, phase: 'development', segments });

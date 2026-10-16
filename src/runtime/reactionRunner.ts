@@ -26,7 +26,20 @@ export interface StimulusRenderer {
   beginFrame?(ts: number): void;
   /** Called once per frame of the block, after that frame's transitions (background animation: visual noise). */
   frame?(ts: number): void;
+  /**
+   * Draws the mark after a trial (F15) over whatever is on screen, until `clearMark`; a new mark replaces it. Showing
+   * or hiding a stimulus keeps it. Renderers without marks leave both out.
+   */
+  mark?(text: FeedbackMark): void;
+  /** Takes the mark away; the rest of the screen stays. */
+  clearMark?(): void;
 }
+
+/** The mark after a trial (F15): a false start, or a wrong key or a press on a no-go trial. */
+export type FeedbackMark = 'рано' | 'ошибка';
+
+/** A mark stays from the frame after the press to the first frame at or after its own frame + FEEDBACK_MS (F15). */
+export const FEEDBACK_MS = 150;
 
 export type AbortReason = 'focus_lost' | 'user';
 
@@ -61,6 +74,14 @@ export interface RunnerOptions {
    */
   onTrial?: (i: number) => void;
 }
+
+/**
+ * What resolveBlock makes of a press, by its rules 1–3b: the response of a trial (in its window or late), a false start
+ * of a trial not shown yet, or nothing (a second press in a window, a press after the last trial).
+ */
+type Attribution = { kind: 'response'; trial: number; late: boolean } | { kind: 'false_start'; trial: number } | { kind: 'none' };
+
+const NONE: Attribution = { kind: 'none' };
 
 /** leadMs: the RDO presentation lead, fixed at the onset. */
 type Shown = { kind: 'shown'; i: number; onset: number; deadline: number; answeredAt: number | null; leadMs: number };
@@ -132,6 +153,12 @@ function validate(o: RunnerOptions): void {
  *   onset frame is judged against it: dropped if its own delta is longer than 1.5 × frameMs. An onset in the first
  *   frame has no delta and is never dropped.
  * - RDO frames are drawn ahead by the presentation lead (see RunnerOptions); nothing else uses the lead.
+ * - Marks (F15): a press of a trial with `feedback` that resolveBlock scores false_start («рано»: a press before the
+ *   onset that answers no earlier trial, or under FALSE_START_MS after it) or wrong / commission («ошибка»: a wrong key
+ *   in the window, a press on a `withhold` trial) leaves a mark, one per trial, by its first event; late answers and
+ *   misses have none. `press()` only notes it; the next frame draws it, before its transitions, and the first frame at
+ *   or after that frame + FEEDBACK_MS clears it, or the frame of the next onset does, before the stimulus. Onsets,
+ *   deadlines and frame requests never depend on a mark.
  * - Background layers (visual noise): `onTrial(i)` when the wait for trial i begins, `renderer.beginFrame(ts)` in
  *   every frame before its transitions and `renderer.frame(ts)` after them. None changes an onset or a press time.
  * - `abort()` stops the loop and hides the stimulus; if the renderer throws, `start()` rejects with that error.
@@ -163,6 +190,12 @@ export class ReactionBlockRunner {
   private readonly presses: Press[] = [];
   /** Per shown trial: whether resolveBlock gives it a response (in its window or late) from the presses so far. */
   private readonly answered: boolean[] = [];
+  /** The trials that got their mark (F15). */
+  private readonly marked = new Set<number>();
+  /** A mark decided since the last frame, drawn in the next one. */
+  private pendingMark: FeedbackMark | null = null;
+  /** The frame timestamp the mark on screen was drawn in; null: none on screen. */
+  private markAt: number | null = null;
   private result: RunnerEnd | null = null;
   private settle: { resolve: (end: RunnerEnd) => void; reject: (err: Error) => void } | null = null;
 
@@ -196,30 +229,55 @@ export class ReactionBlockRunner {
     const ph = this.phase;
     if (ph.kind === 'idle' || ph.kind === 'finished') return;
     if (ph.kind === 'grace' && p.ts > ph.until) return;
-    const to = this.claim(p.ts);
-    if (ph.kind === 'shown' && ph.answeredAt === null && to === ph.i && p.ts <= ph.deadline) ph.answeredAt = p.ts;
+    const a = this.claim(p.ts);
+    if (ph.kind === 'shown' && ph.answeredAt === null && a.kind === 'response' && a.trial === ph.i && p.ts <= ph.deadline) {
+      ph.answeredAt = p.ts;
+    }
+    this.noteMark(a, p);
     this.presses.push({ key: p.key, ts: p.ts });
   }
 
   /**
-   * The trial resolveBlock gives a press stamped `ts` to as its response, now marked answered; null when it gives it
-   * to none (before the first onset, a false start of the next trial, a second press in a window). Input arrives in
-   * time order, so the presses are seen in the resolver's order: the press belongs to the last trial shown at or
-   * before `ts` (rule 1), answers the previous trial late under rule 3b, is the response in the window (rule 2) or the
-   * late response of an unanswered `press` trial (rule 3).
+   * What resolveBlock makes of a press stamped `ts`; a response marks its trial answered. Input arrives in time order,
+   * so the presses are seen in the resolver's order: the press belongs to the last trial shown at or before `ts`
+   * (rule 1), answers the previous trial late under rule 3b, is the response in the window (rule 2) or the late
+   * response of an unanswered `press` trial (rule 3); otherwise it is a false start of the next trial (of trial 0 before
+   * the first onset), or nothing after the last trial or as a second press in a window.
    */
-  private claim(ts: number): number | null {
+  private claim(ts: number): Attribution {
     let k = this.onsets.length - 1;
     while (k >= 0 && (this.onsets[k] as number) > ts) k--;
-    if (k < 0) return null;
+    if (k < 0) return { kind: 'false_start', trial: 0 };
     const spec = this.specs[k] as TrialSpec;
     const onset = this.onsets[k] as number;
-    let to: number | null = null;
-    if (k > 0 && ts < onset + FALSE_START_MS && this.unansweredPressPast(k - 1, ts)) to = k - 1;
-    else if (ts <= onset + spec.windowMs) to = this.answered[k] === true ? null : k;
-    else if (this.unansweredPressPast(k, ts)) to = k;
-    if (to !== null) this.answered[to] = true;
-    return to;
+    if (k > 0 && ts < onset + FALSE_START_MS && this.unansweredPressPast(k - 1, ts)) return this.respond(k - 1, true);
+    if (ts <= onset + spec.windowMs) return this.answered[k] === true ? NONE : this.respond(k, false);
+    if (this.unansweredPressPast(k, ts)) return this.respond(k, true);
+    return k + 1 < this.specs.length ? { kind: 'false_start', trial: k + 1 } : NONE;
+  }
+
+  private respond(trial: number, late: boolean): Attribution {
+    this.answered[trial] = true;
+    return { kind: 'response', trial, late };
+  }
+
+  /** The mark a press earns its trial (F15), as resolveBlock scores it, noted for the next frame; one per trial. */
+  private noteMark(a: Attribution, p: Press): void {
+    const mark = this.markOf(a, p);
+    if (mark === null || a.kind === 'none' || this.marked.has(a.trial)) return;
+    if ((this.specs[a.trial] as TrialSpec).feedback !== true) return;
+    this.marked.add(a.trial);
+    this.pendingMark = mark;
+  }
+
+  /** «рано» for a false start (before the onset, or a response under FALSE_START_MS); «ошибка» for wrong and commission. */
+  private markOf(a: Attribution, p: Press): FeedbackMark | null {
+    if (a.kind === 'false_start') return 'рано';
+    if (a.kind === 'none' || a.late) return null;
+    const { expected } = this.specs[a.trial] as TrialSpec;
+    if (expected.kind === 'withhold') return 'ошибка';
+    if (p.ts - (this.onsets[a.trial] as number) < FALSE_START_MS) return 'рано';
+    return p.key === expected.key ? null : 'ошибка';
   }
 
   /** Trial k is a `press` trial without a response and `ts` is past its window: the press can be its late answer. */
@@ -245,6 +303,7 @@ export class ReactionBlockRunner {
     this.measureFrame(ts);
     try {
       this.renderer.beginFrame?.(ts);
+      this.updateMark(ts);
       this.advance(ts);
       this.renderer.frame?.(ts);
     } catch (err) {
@@ -254,6 +313,23 @@ export class ReactionBlockRunner {
     }
     if (this.phase.kind !== 'finished') this.frameId = this.clock.request(this.onFrame);
   };
+
+  /** F15: the mark noted since the last frame appears in this one; the one on screen goes FEEDBACK_MS after its frame. */
+  private updateMark(ts: number): void {
+    const mark = this.pendingMark;
+    if (mark !== null) {
+      this.pendingMark = null;
+      this.markAt = ts;
+      this.renderer.mark?.(mark);
+    } else if (this.markAt !== null && ts >= this.markAt + FEEDBACK_MS) {
+      this.clearMark();
+    }
+  }
+
+  private clearMark(): void {
+    this.markAt = null;
+    this.renderer.clearMark?.();
+  }
 
   /** Records the delta of the frame at `ts` (the first frame has none). */
   private measureFrame(ts: number): void {
@@ -318,6 +394,8 @@ export class ReactionBlockRunner {
 
   private show(i: number, ts: number): void {
     const spec = this.specs[i] as TrialSpec;
+    // A mark never shares a frame with a stimulus (F15).
+    if (this.markAt !== null) this.clearMark();
     this.onsets.push(ts);
     this.onsetDeltas.push(this.frameDelta);
     this.answered.push(false);
@@ -342,6 +420,8 @@ export class ReactionBlockRunner {
   private finish(end: RunnerEnd): void {
     this.phase = { kind: 'finished' };
     this.result = end;
+    this.pendingMark = null;
+    if (this.markAt !== null) this.clearMark();
     this.settle?.resolve(end);
   }
 }

@@ -112,7 +112,7 @@ export function e2eHooks(): E2eHooks {
 /**
  * In e2e mode wraps the block's clock and renderer so that every `show` is followed by a stimulus event
  * with that frame's timestamp (the onset the runner records) and the trial's condition; `hide`, `tick`, `cue`,
- * `beginFrame` and `frame` pass through unchanged.
+ * `beginFrame`, `frame`, `mark` and `clearMark` pass through unchanged.
  * Otherwise returns them unchanged.
  */
 export function instrumentBlock(
@@ -157,6 +157,12 @@ export function instrumentBlock(
     },
     frame(ts) {
       base.renderer.frame?.(ts);
+    },
+    mark(text) {
+      base.renderer.mark?.(text);
+    },
+    clearMark() {
+      base.renderer.clearMark?.();
     },
   };
   return { clock, renderer };

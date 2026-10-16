@@ -3,7 +3,7 @@ import { R0, updateRating, type Rating } from '../engine/elo';
 import { itemEffectiveDifficulty } from '../engine/itemLimit';
 import { keyLabel, layoutKeys } from '../engine/layouts';
 import { FINISHER_AUDIO, mergeAudio } from '../engine/audio/stressors';
-import { OVERLOAD_LEVEL_STEP, type Segment } from '../engine/planner';
+import { OVERLOAD_LEVEL_STEP, type FeedbackRate, type Segment } from '../engine/planner';
 import { COND_PAIRS, MIN_COND_RTS, condCost, conditionStats, type CondPair, type ConditionStats } from '../engine/reaction/conditions';
 import { resolveBlock } from '../engine/reaction/resolve';
 import { isCleanHitRt, summarize } from '../engine/reaction/summary';
@@ -167,6 +167,11 @@ export type BlockPlan =
       load: BlockLoad | null;
       /** A test-format run (F4): the frozen diagnostic parameters, its own instruction. */
       testFormat: boolean;
+      /**
+       * The mark rate of its trials (F15): the plan's in a training or free block of FEEDBACK_MODULES; 'none' in a
+       * warm-up, a test-format run, a diagnostic and РДО.
+       */
+      feedback: FeedbackRate;
     }
   | { kind: 'table'; module: TableModuleId; L: number; task: TableTaskId; params: TableParams; overload: boolean }
   /**
@@ -190,7 +195,12 @@ export interface PlanContext {
   segmentIndex: number;
   /** The personal window floors (F3); null: a diagnostic, a test-format run, or the history could not be read (Р18). */
   floors: WindowFloors | null;
+  /** The plan's mark rate (F15); planBlock keeps it to the blocks that have marks. */
+  feedback: FeedbackRate;
 }
+
+/** The modules whose training and free blocks mark a trial after it (F15); not РДО: its dial shows the error. */
+export const FEEDBACK_MODULES: readonly ReactionModuleId[] = ['pzmr', 'szmr', 'gonogo', 'stroop', 'taskswitch', 'pomeh'];
 
 /** Every block of a finisher; the odd blocks (1, 3, …) of a plateau mix. */
 export function isOverloadBlock(segment: Segment, blockIndex: number): boolean {
@@ -210,7 +220,9 @@ export function planBlock(segment: Segment, segmentL: number, blockIndex: number
   if (isReactionModule(module)) {
     const mod = reactionModules[module];
     const testFormat = segment.purpose === 'test_format';
-    const { params, load } = reactionBlock(module, L, overload, ctx.diagnostic || testFormat, ctx);
+    const frozen = ctx.diagnostic || testFormat;
+    const { params, load } = reactionBlock(module, L, overload, frozen, ctx);
+    const marked = !frozen && segment.purpose !== 'warmup' && FEEDBACK_MODULES.includes(module);
     const { keys, effectiveLayout } = layoutKeys(ctx.layout, mod.keyCount(params));
     return {
       kind: 'reaction',
@@ -224,6 +236,7 @@ export function planBlock(segment: Segment, segmentL: number, blockIndex: number
       overload,
       load,
       testFormat,
+      feedback: marked ? ctx.feedback : 'none',
     };
   }
   if (module === 'gorbov') {
@@ -393,7 +406,7 @@ export function buildBlock(
               .generateBlock(plan.params, createRng(deriveSeed(seed, 'practice')), layout, plan.practice)
               .map((t) => ({ ...t, practice: true }))
           : [];
-      const specs = [...practice, ...mod.generateBlock(plan.params, createRng(seed), layout, plan.size)];
+      const specs = withFeedback([...practice, ...mod.generateBlock(plan.params, createRng(seed), layout, plan.size)], plan.feedback, seed);
       const stressors = stressorsOf(mod, plan.params);
       return {
         step: {
@@ -444,6 +457,16 @@ export function buildBlock(
       };
     }
   }
+}
+
+/**
+ * The mark flags of a block's trials (F15): 'every' marks each, 'half' trial i by the i-th draw of
+ * createRng(deriveSeed(seed, 'feedback')) (< 0.5), practice trials included; 'none' leaves the trials as they are.
+ */
+function withFeedback(specs: TrialSpec[], rate: FeedbackRate, seed: number): TrialSpec[] {
+  if (rate === 'none') return specs;
+  const rng = createRng(deriveSeed(seed, 'feedback'));
+  return specs.map((t) => ({ ...t, feedback: rate === 'every' || rng.next() < 0.5 }));
 }
 
 /**

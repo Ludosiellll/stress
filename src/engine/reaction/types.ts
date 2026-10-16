@@ -58,6 +58,11 @@ export interface TrialSpec {
    * window and the press timing do not change. Absent or 0: no cue.
    */
   cueLeadMs?: number;
+  /**
+   * The trial gets a mark after it when its outcome calls for one: «рано» or «ошибка» (F15). Absent: none (diagnostics,
+   * warm-ups, test-format runs, РДО, phases without marks).
+   */
+  feedback?: boolean;
 }
 
 export interface Press {

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { currentPhase, firstSessionAt, type PhaseInfo } from '../../engine/phases';
 import { planFree, type SessionPlan } from '../../engine/planner';
 import { hashString } from '../../engine/rng';
 import { MODULE_IDS, type ModuleId } from '../../engine/types';
@@ -13,17 +14,27 @@ export interface FreeProps {
   onBack: () => void;
 }
 
-/** Free training: one module for 5 minutes. The seed changes with every session started. */
+/** What a free plan needs: the number of sessions (its seed) and the phase of the day (its marks, F15). */
+interface FreeContext {
+  sessions: number;
+  phase: PhaseInfo;
+}
+
+/**
+ * Free training: one module for 5 minutes. The seed changes with every session started; the marks after a trial follow
+ * the phase of the day, as Home computes it (F15, Р10).
+ */
 export default function Free({ onStart, onBack }: FreeProps) {
   const { repo } = useApp();
-  const [sessions, setSessions] = useState<number | null>(null);
+  const [context, setContext] = useState<FreeContext | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
-    repo.listSessions().then(
-      (list) => {
-        if (live) setSessions(list.length);
+    Promise.all([repo.getModuleStates(), repo.listSessions(), repo.getSettings()]).then(
+      ([states, list, settings]) => {
+        const phase = currentPhase({ firstSessionAt: firstSessionAt(list), today: localDate(), testDate: settings.testDate, states });
+        if (live) setContext({ sessions: list.length, phase });
       },
       (e: unknown) => {
         const message = e instanceof Error ? e.message : String(e);
@@ -52,10 +63,10 @@ export default function Free({ onStart, onBack }: FreeProps) {
       </section>
     );
   }
-  if (sessions === null) return <p>Загрузка…</p>;
+  if (context === null) return <p>Загрузка…</p>;
 
   const start = (module: ModuleId): void => {
-    onStart(planFree(module, hashString(`free:${localDate()}:${module}:${String(sessions)}`)));
+    onStart(planFree(module, hashString(`free:${localDate()}:${module}:${String(context.sessions)}`), context.phase));
   };
 
   return (

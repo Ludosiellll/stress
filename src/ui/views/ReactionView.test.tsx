@@ -1,4 +1,4 @@
-import { act, createEvent, fireEvent } from '@testing-library/react';
+import { act, cleanup, createEvent, fireEvent } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRepository } from '../../data/memoryRepository';
 import type { AudioStressorParams } from '../../engine/audio/stressors';
@@ -556,6 +556,38 @@ describe('ReactionView', () => {
     expect(onAbort).toHaveBeenCalledWith('focus_lost', 0.5);
     expect(handle.stop).toHaveBeenCalledTimes(1);
     expect(frames.pending()).toBe(0);
+  });
+
+  it('a block whose trials carry feedback gets the marks of the runner; a diagnostic block, none (F15)', async () => {
+    mockCanvas();
+    for (const feedback of [true, false]) {
+      const spec: TrialSpec = feedback ? { ...TRIAL, feedback } : TRIAL;
+      const { onDone } = renderView(step({ module: 'szmr', keys: ['KeyF', 'KeyJ'], specs: [{ ...spec, expected: { kind: 'press', key: 'KeyF' } }] }));
+      const renderer = vi.mocked(createCanvasRenderer).mock.results.at(-1)?.value as CanvasRenderer;
+      const mark = vi.spyOn(renderer, 'mark');
+      const clearMark = vi.spyOn(renderer, 'clearMark');
+      await nextTask();
+      frames.run(1000);
+      frames.run(1100);
+      // The wrong key 200 ms after the onset.
+      keyDown('KeyJ', 1300);
+      frames.run(1316);
+      frames.run(1466);
+      frames.run(1616);
+      frames.run(1632);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(onDone).toHaveBeenCalledTimes(1);
+      if (feedback) {
+        expect(mark.mock.calls).toEqual([['ошибка']]);
+        expect(clearMark).toHaveBeenCalledTimes(1);
+      } else {
+        expect(mark).not.toHaveBeenCalled();
+        expect(clearMark).not.toHaveBeenCalled();
+      }
+      cleanup();
+    }
   });
 
   it('in e2e mode emits each stimulus with its onset and keeps the resolved results', async () => {

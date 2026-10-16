@@ -69,12 +69,24 @@ export interface Segment {
   totalTimeLimitMs?: number;
 }
 
+/** How many reaction trials get a mark after them (F15): every one, about half, or none. */
+export type FeedbackRate = 'every' | 'half' | 'none';
+
+const FEEDBACK_RATES: Readonly<Record<PhaseId, FeedbackRate>> = { base: 'every', development: 'half', overload: 'none', taper: 'none' };
+
+/** The mark rate of a phase (F15): every trial in «База», half in «Развитие», none in «Перегрузка» and «Подводка». */
+export function feedbackRate(phase: PhaseId): FeedbackRate {
+  return FEEDBACK_RATES[phase];
+}
+
 export interface SessionPlan {
   kind: SessionKind;
   segments: Segment[];
   seed: number;
   /** Training plans: the phase they were planned in (stored with the session). */
   phase?: PhaseId;
+  /** Training and free plans: the mark rate of their phase (F15, Р10); absent: no marks. */
+  feedback?: FeedbackRate;
   diagnosticNumber?: number;
   /** Diagnostics: the index their block seeds come from (diagnosticSegmentSeed); diagnosticNumber when absent. */
   diagnosticSeedIndex?: number;
@@ -263,7 +275,7 @@ export function planTraining(
       segments.push({ module: finisher, budgetMs: finisherMinutes * MS_PER_MIN, purpose: 'finisher', overload: 'finisher' });
     }
   }
-  return { kind: 'training', seed, phase: phase.phase, segments };
+  return { kind: 'training', seed, phase: phase.phase, feedback: feedbackRate(phase.phase), segments };
 }
 
 /**
@@ -284,8 +296,10 @@ export function isRehearsalDue(
   return localDayNumber(todayIso) - last >= REHEARSAL_GAP_DAYS;
 }
 
-export function planFree(module: ModuleId, seed: number): SessionPlan {
-  return { kind: 'free', seed, segments: [{ module, budgetMs: 5 * MS_PER_MIN, purpose: 'free' }] };
+/** One module for 5 minutes; with the phase of the day, its mark rate (F15, Р10). */
+export function planFree(module: ModuleId, seed: number, phase?: PhaseInfo): SessionPlan {
+  const plan: SessionPlan = { kind: 'free', seed, segments: [{ module, budgetMs: 5 * MS_PER_MIN, purpose: 'free' }] };
+  return phase === undefined ? plan : { ...plan, feedback: feedbackRate(phase.phase) };
 }
 
 /** A control diagnostic is due if none was done yet or ≥ 14 days have passed since the last one. */

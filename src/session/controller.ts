@@ -824,7 +824,7 @@ export class SessionController {
   /**
    * What planBlock needs to know about the session and the segment. The window floors come from the history read at
    * start and the blocks stored since (F3); a diagnostic has none, nor a test-format run (F4), nor a session whose
-   * history could not be read (Р18).
+   * history could not be read (Р18). The mark rate is the plan's (F15); planBlock keeps it to the blocks with marks.
    */
   private planContext(seg: SegmentRun): PlanContext {
     const floored = this.counted && seg.segment.purpose !== 'test_format';
@@ -835,6 +835,7 @@ export class SessionController {
       planSeed: this.plan.seed,
       segmentIndex: seg.index,
       floors: floored && this.past !== null ? floorsFrom(this.past) : null,
+      feedback: this.plan.feedback ?? 'none',
     };
   }
 

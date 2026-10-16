@@ -5,7 +5,7 @@ import { stressorsOf } from '../modules/reaction/common';
 import { STROOP_COLORS, stroop } from '../modules/reaction/stroop';
 import { pomeh } from '../modules/reaction/pomeh';
 import { FakeClock, FRAME } from '../testing/fakeClock';
-import { BACKGROUND, COLORS, FLICKER_BACKGROUND, createCanvasRenderer, polarPoint, rdoAngleAt } from './canvasRenderer';
+import { BACKGROUND, COLORS, FLICKER_BACKGROUND, MARK_COLOR, createCanvasRenderer, polarPoint, rdoAngleAt } from './canvasRenderer';
 import { GRID_LINE, LIT_CELL } from './memoryRenderer';
 import { ReactionBlockRunner } from './reactionRunner';
 
@@ -221,6 +221,39 @@ describe('createCanvasRenderer', () => {
     calls.length = 0;
     renderer.show({ kind: 'word', word: 'green', ink: 'red' });
     expect(named(calls, 'stroke')).toEqual([]);
+  });
+
+  it('a mark (F15, Р23): bold, 6 % of the shorter side, #bdbdbd, centred at a sixth of the height, over the stimulus', () => {
+    const { ctx, calls } = mockContext();
+    const canvas = {
+      clientWidth: 1000,
+      clientHeight: 500,
+      width: 0,
+      height: 0,
+      getContext: () => ctx,
+      ownerDocument: { defaultView: { devicePixelRatio: 1 } },
+    } as unknown as HTMLCanvasElement;
+    const renderer = createCanvasRenderer(canvas);
+    renderer.show({ kind: 'shape', shape: 'circle', color: 'red' });
+    calls.length = 0;
+    renderer.mark('рано');
+    expect(named(calls, 'fillText').map((c) => [c.args, c.fillStyle])).toEqual([[['рано', 500, 500 / 6], MARK_COLOR]]);
+    expect(ctx.font).toBe("bold 30px 'Segoe UI', Arial, sans-serif");
+    expect([ctx.textAlign, ctx.textBaseline]).toEqual(['center', 'middle']);
+    // Drawn after the stimulus, in the same draw.
+    const names = calls.map((c) => c.name);
+    expect(names.lastIndexOf('fill')).toBeLessThan(names.indexOf('fillText'));
+    // The stimulus going away keeps the mark; another mark replaces it; clearMark takes it away.
+    calls.length = 0;
+    renderer.hide();
+    expect(named(calls, 'fillText').map((c) => c.args[0])).toEqual(['рано']);
+    calls.length = 0;
+    renderer.mark('ошибка');
+    expect(named(calls, 'fillText').map((c) => c.args[0])).toEqual(['ошибка']);
+    calls.length = 0;
+    renderer.clearMark();
+    expect(named(calls, 'fillText')).toEqual([]);
+    expect(named(calls, 'fillRect')).toHaveLength(1);
   });
 
   it('the word is bold, centred, 12% of the shorter side', () => {
@@ -630,6 +663,12 @@ describe('readability of the word stimuli (WCAG contrast, large text ≥ 3:1)', 
   it('Stroop words are never drawn on the flicker shade: its noise (F3) never flickers', () => {
     for (let L = 0; L <= 60; L++) expect(stressorsOf(stroop, stroop.params(L)).noise?.flicker ?? false, `L ${String(L)}`).toBe(false);
     expect(stressorsOf(stroop, stroop.params(24)).noise).not.toBeNull();
+  });
+
+  it('the mark after a trial (F15) reads at ≥ 4.5:1 on both background shades', () => {
+    expect(MARK_COLOR).toBe('#bdbdbd');
+    expect(contrast(MARK_COLOR, BACKGROUND)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(MARK_COLOR, FLICKER_BACKGROUND)).toBeGreaterThanOrEqual(4.5);
   });
 
   it('the task-switching rule word (white) reads at ≥ 4.5:1 on the background', () => {

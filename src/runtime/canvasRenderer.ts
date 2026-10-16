@@ -1,6 +1,6 @@
 import { flickerOn, noiseFrame, noiseSlots, type Distractor, type VisualNoiseParams } from '../engine/noise';
 import { COLOR_WORDS, RULE_WORDS, type ColorId, type ShapeId, type Stimulus, type SwitchRule } from '../engine/reaction/types';
-import type { StimulusRenderer } from './reactionRunner';
+import type { FeedbackMark, StimulusRenderer } from './reactionRunner';
 
 export const BACKGROUND = '#2b2b2b';
 /** The second shade of a flickering background: 15 grey levels above BACKGROUND. */
@@ -37,6 +37,11 @@ const SWITCH_SIZE = { large: 0.18, small: 0.09 } as const;
 /** The rule word: height and how far above the centre, as shares of the shorter side. */
 const RULE_WORD_SIZE = 0.07;
 const RULE_WORD_RISE = 0.22;
+
+/** The mark after a trial (F15, Р23): its colour, its height as a share of the shorter side, its centre at h · MARK_RISE. */
+export const MARK_COLOR = '#bdbdbd';
+const MARK_TEXT_SIZE = 0.06;
+const MARK_RISE = 1 / 6;
 
 /** RDO dial radius as a share of the shorter side. */
 const RDO_RADIUS = 0.35;
@@ -184,6 +189,15 @@ function drawDistractor(ctx: CanvasRenderingContext2D, d: Distractor, cx: number
   ctx.fill();
 }
 
+/** The mark, centred across the top third of the screen. */
+function drawMark(ctx: CanvasRenderingContext2D, text: FeedbackMark, w: number, h: number, side: number): void {
+  ctx.font = `bold ${String(Math.round(MARK_TEXT_SIZE * side))}px ${WORD_FONT}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = MARK_COLOR;
+  ctx.fillText(text, w / 2, h * MARK_RISE);
+}
+
 function drawRdo(
   ctx: CanvasRenderingContext2D,
   s: Extract<Stimulus, { kind: 'rdo' }>,
@@ -231,6 +245,8 @@ export interface CanvasRenderer extends StimulusRenderer {
   beginFrame(ts: number): void;
   /** Once per frame, after its transitions: noise time moves on; redraws only when the noise looks different. */
   frame(ts: number): void;
+  mark(text: FeedbackMark): void;
+  clearMark(): void;
 }
 
 export interface CanvasRendererOptions {
@@ -252,7 +268,7 @@ function sameLook(a: NoiseLook | null, b: NoiseLook | null): boolean {
 /**
  * Draws stimuli on a canvas, outside React. The backing store follows the canvas's CSS size × devicePixelRatio
  * (checked on every draw); drawing coordinates are CSS pixels. Each draw paints the whole frame: the background
- * (flickering while the noise is on), the noise figures, then the stimulus or the cue.
+ * (flickering while the noise is on), the noise figures, the stimulus or the cue, then the mark after a trial (F15).
  */
 export function createCanvasRenderer(canvas: HTMLCanvasElement, o: CanvasRendererOptions = {}): CanvasRenderer {
   const ctx = canvas.getContext('2d');
@@ -268,6 +284,8 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement, o: CanvasRendere
   let noiseMs = 0;
   /** The noise as the last draw painted it. */
   let drawnLook: NoiseLook | null = null;
+  /** The mark after a trial on screen (F15); showing or hiding a stimulus keeps it. */
+  let markText: FeedbackMark | null = null;
 
   const setNoiseTime = (ts: number): void => {
     noiseStart ??= ts;
@@ -295,6 +313,11 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement, o: CanvasRendere
       const box = { halfW: w / 2 / side, halfH: h / 2 / side };
       for (const d of noiseFrame(noise.params, noise.seed, noiseMs, box)) drawDistractor(ctx, d, w / 2, h / 2, side);
     }
+    drawStimulus(w, h, side);
+    if (markText !== null) drawMark(ctx, markText, w, h, side);
+  };
+
+  const drawStimulus = (w: number, h: number, side: number): void => {
     if (current === null) {
       if (cueRule !== null) drawRule(ctx, cueRule, w / 2, h / 2, side);
       return;
@@ -341,6 +364,14 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement, o: CanvasRendere
     },
     setNoiseActive(on) {
       noiseOn = on;
+    },
+    mark(text) {
+      markText = text;
+      draw();
+    },
+    clearMark() {
+      markText = null;
+      draw();
     },
     beginFrame: setNoiseTime,
     frame(ts) {

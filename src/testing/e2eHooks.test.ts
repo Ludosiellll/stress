@@ -165,6 +165,24 @@ describe('instrumentBlock', () => {
     expect(() => instrumentBlock(hooks, 'pzmr', [spec('Space')], b).renderer.cue?.(stimulus)).not.toThrow();
   });
 
+  it('instrumentBlock forwards mark and clearMark (F15)', () => {
+    const b = base();
+    const mark = vi.fn<NonNullable<StimulusRenderer['mark']>>();
+    const clearMark = vi.fn<NonNullable<StimulusRenderer['clearMark']>>();
+    const hooks = installE2eHooks(host('?e2e=1'));
+    const out = instrumentBlock(hooks, 'szmr', [spec('KeyF')], { clock: b.clock, renderer: { ...b.renderer, mark, clearMark } });
+    out.renderer.mark?.('ошибка');
+    out.renderer.clearMark?.();
+    expect(mark).toHaveBeenCalledWith('ошибка');
+    expect(clearMark).toHaveBeenCalledTimes(1);
+    // A renderer without them: forwarding is a no-op.
+    const plain = instrumentBlock(hooks, 'pzmr', [spec('Space')], b).renderer;
+    expect(() => {
+      plain.mark?.('рано');
+      plain.clearMark?.();
+    }).not.toThrow();
+  });
+
   it('instrumentBlock forwards beginFrame and frame', () => {
     const b = base();
     const beginFrame = vi.fn<NonNullable<StimulusRenderer['beginFrame']>>();

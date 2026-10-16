@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { MemoryRepository } from '../../data/memoryRepository';
 import { session } from '../../data/repository.contract';
 import type { SessionPlan } from '../../engine/planner';
+import { localDate } from '../format';
 import { MODULE_IDS } from '../../engine/types';
 import { moduleTitles } from '../../modules/registry';
 import { createFakePlatform } from '../../testing/fakePlatform';
@@ -43,6 +44,21 @@ describe('Free', () => {
       expect(second.onStart).toHaveBeenCalled();
     });
     expect((second.onStart.mock.calls[0]?.[0] as SessionPlan).seed).not.toBe(plan.seed);
+  });
+
+  it('the free plan carries the mark rate of the phase of the day (F15)', async () => {
+    // No sessions yet: day 1, «База», a mark after every trial.
+    const first = await renderFree();
+    fireEvent.click(screen.getByRole('button', { name: moduleTitles.szmr }));
+    expect((first.onStart.mock.calls[0]?.[0] as SessionPlan).feedback).toBe('every');
+
+    // The test in 5 days: «Подводка», no marks.
+    cleanup();
+    const repo = new MemoryRepository();
+    await repo.saveSettings({ testDate: localDate(new Date(Date.now() + 5 * 86_400_000)) });
+    const taper = await renderFree(repo);
+    fireEvent.click(screen.getByRole('button', { name: moduleTitles.szmr }));
+    expect((taper.onStart.mock.calls[0]?.[0] as SessionPlan).feedback).toBe('none');
   });
 
   it('a failed load is shown and logged; «Назад» still works', async () => {

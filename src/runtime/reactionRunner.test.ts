@@ -3,9 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { FALSE_START_MS, resolveBlock } from '../engine/reaction/resolve';
 import type { BlockTimeline, Stimulus, TrialSpec } from '../engine/reaction/types';
 import {
+  FEEDBACK_MS,
   LATE_GRACE_MS,
   MIN_FRAME_SAMPLES,
   ReactionBlockRunner,
+  type FeedbackMark,
   type RunnerEnd,
   type StimulusRenderer,
 } from './reactionRunner';
@@ -16,7 +18,9 @@ type Call =
   | { op: 'cue'; at: number; stimulus: Stimulus }
   | { op: 'show'; at: number; stimulus: Stimulus }
   | { op: 'hide'; at: number }
-  | { op: 'tick'; at: number; elapsed: number };
+  | { op: 'tick'; at: number; elapsed: number }
+  | { op: 'mark'; at: number; text: FeedbackMark }
+  | { op: 'clearMark'; at: number };
 
 const circle: Stimulus = { kind: 'shape', shape: 'circle', color: 'red' };
 const rdoStim: Stimulus = { kind: 'rdo', startDeg: 30, targetDeg: 120, periodMs: 2000 };
@@ -81,6 +85,12 @@ function setup(
     },
     tick(elapsed) {
       calls.push({ op: 'tick', at: clock.now, elapsed });
+    },
+    mark(text) {
+      calls.push({ op: 'mark', at: clock.now, text });
+    },
+    clearMark() {
+      calls.push({ op: 'clearMark', at: clock.now });
     },
   };
   const runner = new ReactionBlockRunner({
@@ -655,6 +665,210 @@ describe('ReactionBlockRunner: chained late answers (T-R40)', () => {
           const end = r.rtMs !== null && r.rtMs <= windowMs ? onset + r.rtMs : onset + windowMs;
           expect(hides[i], `trial ${String(i)}`).toBe(h.clock.firstFrameAtOrAfter(end));
         });
+      }),
+      { numRuns: 1000 },
+    );
+  });
+});
+
+describe('ReactionBlockRunner: the mark after a trial (F15)', () => {
+  const marked = (t: TrialSpec): TrialSpec => ({ ...t, feedback: true });
+  /** Presses `presses[i]` (offset after onset i, key) once trial i is shown, each delivered before the first frame at or after it. */
+  function pressesAfterOnsets(specs: readonly TrialSpec[], presses: readonly (readonly [number, string][])[], o: { frameMs?: number; before?: readonly [number, string][] } = {}): Harness {
+    let shown = 0;
+    const seen = new Set<number>();
+    const h = setup(specs, {
+      ...(o.frameMs === undefined ? {} : { frameMs: o.frameMs, nominalFrameMs: o.frameMs }),
+      onShow: (at) => {
+        for (const [d, key] of presses[shown++] ?? []) schedule(at + d, key);
+      },
+    });
+    // Two presses at one time stamp would be an order the runner cannot see (it takes input as it comes): one each.
+    function schedule(ts: number, key: string): void {
+      if (seen.has(ts)) return;
+      seen.add(ts);
+      h.pressAt(ts, key);
+    }
+    for (const [ts, key] of o.before ?? []) schedule(ts, key);
+    return h;
+  }
+  const marksOf = (h: Harness): FeedbackMark[] => h.calls.flatMap((c) => (c.op === 'mark' ? [c.text] : []));
+  const outcomes = async (h: Harness, specs: readonly TrialSpec[]): Promise<string[]> => resolveBlock(specs, await timelineOf(h)).map((r) => r.outcome);
+
+  it('the same presses give the same onsets and timeline with and without marks', async () => {
+    const specs = [withholdTrial(400, 300), pressTrial(300, 300), pressTrial(300, 300), pressTrial(200, 300)];
+    const presses: [number, string][][] = [[[150, 'Space']], [[50, 'Space'], [400, 'Space']], [[120, 'KeyF']], [[30, 'Space']]];
+    const plain = pressesAfterOnsets(specs, presses);
+    const withMarks = pressesAfterOnsets(specs.map(marked), presses);
+    plain.clock.runOut();
+    withMarks.clock.runOut();
+    expect(await timelineOf(withMarks)).toEqual(await timelineOf(plain));
+    // A no-go press; under 100 ms after the onset; a press in the ISI (a false start of trial 2, whose wrong key later
+    // adds nothing); under 100 ms after the onset.
+    expect(await outcomes(withMarks, specs)).toEqual(['commission', 'false_start', 'false_start', 'false_start']);
+    expect(marksOf(withMarks)).toEqual(['ошибка', 'рано', 'рано', 'рано']);
+    expect(marksOf(plain)).toEqual([]);
+    const rest = (h: Harness): Call[] => h.calls.filter((c) => c.op !== 'mark' && c.op !== 'clearMark');
+    expect(rest(withMarks)).toEqual(rest(plain));
+    expect(withMarks.clock.frames).toEqual(plain.clock.frames);
+  });
+
+  it('a mark lives 150 ms or until the next onset frame', async () => {
+    // A wrong key 200 ms after the onset; the next trial is due 1000 ms after it.
+    const h = pressesAfterOnsets([marked(pressTrial(500, 1000)), pressTrial(1000, 1000)], [[[200, 'KeyF']]]);
+    h.clock.runOut();
+    const [onset] = (await timelineOf(h)).onsets as [number];
+    const markAt = h.clock.firstFrameAtOrAfter(onset + 200);
+    expect(h.at('mark')).toEqual([markAt]);
+    // In the frame after the press: the mark, then the trial ends.
+    expect(h.calls.filter((c) => c.at === markAt).map((c) => c.op)).toEqual(['mark', 'hide']);
+    expect(h.at('clearMark')).toEqual([h.clock.firstFrameAtOrAfter(markAt + FEEDBACK_MS)]);
+
+    // The next stimulus is due 50 ms after the press: the mark goes in its frame, just before the stimulus.
+    const soon = pressesAfterOnsets([marked(pressTrial(500, 1000)), pressTrial(50, 1000)], [[[200, 'KeyF']]]);
+    soon.clock.runOut();
+    const next = (await timelineOf(soon)).onsets[1] as number;
+    expect(next - (soon.at('mark')[0] as number)).toBeLessThan(FEEDBACK_MS);
+    expect(soon.at('clearMark')).toEqual([next]);
+    const ops = soon.calls.filter((c) => c.at === next).map((c) => c.op);
+    expect(ops.slice(ops.indexOf('clearMark'), ops.indexOf('clearMark') + 2)).toEqual(['clearMark', 'show']);
+  });
+
+  it('an abort clears a mark on screen, without another frame', () => {
+    const a = pressesAfterOnsets([marked(pressTrial(500, 300)), pressTrial(500, 300)], [[[200, 'KeyF']]]);
+    for (let i = 0; i < 200 && a.at('mark').length === 0; i++) a.clock.step();
+    expect(a.at('mark')).toHaveLength(1);
+    const frames = a.clock.frames.length;
+    a.runner.abort('user');
+    expect(a.ops().slice(-2)).toEqual(['clearMark', 'hide']);
+    expect(a.clock.hasPending).toBe(false);
+    expect(a.clock.frames).toHaveLength(frames);
+  });
+
+  it('the number of frame requests does not change', () => {
+    const count = (specs: TrialSpec[]): { requests: number; frames: number[] } => {
+      const h = pressesAfterOnsets(specs, [[[30, 'Space']], [[120, 'KeyF']], [[150, 'Space']]]);
+      let requests = 0;
+      const request = h.clock.request.bind(h.clock);
+      h.clock.request = (cb) => {
+        requests++;
+        return request(cb);
+      };
+      h.clock.runOut();
+      return { requests, frames: h.clock.frames };
+    };
+    const specs = [pressTrial(300, 300), pressTrial(300, 300), withholdTrial(300, 300)];
+    const plain = count(specs);
+    expect(count(specs.map(marked))).toEqual(plain);
+    expect(plain.requests).toBeGreaterThan(10);
+  });
+
+  it('one mark per trial, by the first event', async () => {
+    // A false start before the onset, then a wrong key in the window: «рано» only.
+    const early = pressesAfterOnsets([marked(pressTrial(400, 300))], [[[150, 'KeyF']]], { before: [[100, 'Space']] });
+    early.clock.runOut();
+    expect(marksOf(early)).toEqual(['рано']);
+    expect(await outcomes(early, [pressTrial(400, 300)])).toEqual(['false_start']);
+    // A wrong key, then the right one later in the window: «ошибка» only.
+    const wrong = pressesAfterOnsets([marked(pressTrial(400, 600))], [[[200, 'KeyF'], [400, 'Space']]]);
+    wrong.clock.runOut();
+    expect(marksOf(wrong)).toEqual(['ошибка']);
+    // A press on a no-go trial, then another: «ошибка» once.
+    const nogo = pressesAfterOnsets([marked(withholdTrial(400, 600))], [[[200, 'Space'], [400, 'Space']]]);
+    nogo.clock.runOut();
+    expect(marksOf(nogo)).toEqual(['ошибка']);
+    // A right answer, then more presses in the window: nothing.
+    const right = pressesAfterOnsets([marked(pressTrial(400, 600))], [[[200, 'Space'], [300, 'KeyF']]]);
+    right.clock.runOut();
+    expect(marksOf(right)).toEqual([]);
+  });
+
+  it('late answers and misses get no mark; a press past the window of an answered trial is the next one’s «рано»', async () => {
+    const specs = [marked(pressTrial(400, 300)), marked(pressTrial(500, 300)), marked(pressTrial(500, 300))];
+    // Trial 0 answered late (400 ms); trial 1 answered, then a press in the ISI: trial 2 false-starts. Trial 2 has no other press.
+    const h = pressesAfterOnsets(specs, [[[400, 'Space']], [[200, 'Space'], [450, 'Space']], []]);
+    h.clock.runOut();
+    expect(await outcomes(h, specs)).toEqual(['late', 'hit', 'false_start']);
+    expect(marksOf(h)).toEqual(['рано']);
+    // Without feedback on trial 2, the same presses mark nothing.
+    const quiet = pressesAfterOnsets([...specs.slice(0, 2), pressTrial(500, 300)], [[[400, 'Space']], [[200, 'Space'], [450, 'Space']], []]);
+    quiet.clock.runOut();
+    expect(marksOf(quiet)).toEqual([]);
+  });
+
+  it('T-R32 rule 3b: a press under 100 ms after an onset answers an unanswered press trial late, no mark; after a no-go trial it marks the next', async () => {
+    // Press trial 0 unanswered past its window; the press 50 ms after onset 1 is its late answer.
+    const late = [marked(pressTrial(300, 300)), marked(pressTrial(300, 300))];
+    const h = pressesAfterOnsets(late, [[], [[50, 'Space']]]);
+    h.clock.runOut();
+    expect(await outcomes(h, late)).toEqual(['late', 'miss']);
+    expect(marksOf(h)).toEqual([]);
+    // After a no-go trial the same press is the next trial's false start: «рано»; on a second no-go, a commission.
+    for (const [next, outcome, mark] of [
+      [pressTrial(300, 300), 'false_start', 'рано'],
+      [withholdTrial(300, 300), 'commission', 'ошибка'],
+    ] as const) {
+      const specs = [marked(withholdTrial(300, 300)), marked(next)];
+      const g = pressesAfterOnsets(specs, [[], [[50, 'Space']]]);
+      g.clock.runOut();
+      expect(await outcomes(g, specs)).toEqual(['correct_reject', outcome]);
+      expect(marksOf(g)).toEqual([mark]);
+    }
+    // Under 100 ms after the onset of an answered trial's successor: «рано».
+    const answered = [marked(pressTrial(300, 300)), marked(pressTrial(300, 300))];
+    const a = pressesAfterOnsets(answered, [[[150, 'Space']], [[50, 'Space']]]);
+    a.clock.runOut();
+    expect(await outcomes(a, answered)).toEqual(['hit', 'false_start']);
+    expect(marksOf(a)).toEqual(['рано']);
+  });
+
+  it('the mark agrees with resolveBlock: marked ⇔ feedback and false_start, wrong or commission; «рано» ⇔ false_start', async () => {
+    // A 5 ms frame grid; trial times are multiples of 5 and press times are not, so every press lands between frames,
+    // at most one between two frames.
+    const FRAME_MS = 5;
+    const grid = (min: number, max: number) => fc.integer({ min, max }).map((k) => k * FRAME_MS);
+    const between = (max: number) => fc.integer({ min: 0, max }).map((k) => k * FRAME_MS + 2);
+    const key = fc.constantFrom('Space', 'KeyF');
+    const trial = fc
+      .record({ isiMs: grid(0, 80), windowMs: grid(10, 80), withhold: fc.boolean(), feedback: fc.boolean() })
+      .map(({ isiMs, windowMs, withhold, feedback }) => ({ ...(withhold ? withholdTrial(isiMs, windowMs) : pressTrial(isiMs, windowMs)), feedback }));
+    const presses = fc.array(fc.tuple(between(179), key), { maxLength: 3 });
+    const before = fc.array(fc.tuple(between(40), key), { maxLength: 2 });
+    await fc.assert(
+      fc.asyncProperty(fc.array(fc.tuple(trial, presses), { minLength: 1, maxLength: 6 }), before, async (block, early) => {
+        const specs = block.map(([t]) => t);
+        const h = pressesAfterOnsets(
+          specs,
+          block.map(([, p]) => [...p].sort((a, b) => a[0] - b[0])),
+          { frameMs: FRAME_MS, before: early },
+        );
+        // A stimulus never appears with a mark on screen.
+        let visible = false;
+        const { renderer } = h.runner as unknown as { renderer: StimulusRenderer };
+        const show = renderer.show.bind(renderer);
+        renderer.show = (s) => {
+          expect(visible, 'a mark on screen at an onset').toBe(false);
+          show(s);
+        };
+        const mark = renderer.mark?.bind(renderer);
+        const clear = renderer.clearMark?.bind(renderer);
+        renderer.mark = (text) => {
+          visible = true;
+          mark?.(text);
+        };
+        renderer.clearMark = () => {
+          visible = false;
+          clear?.();
+        };
+        h.clock.runOut();
+        const results = resolveBlock(specs, await timelineOf(h));
+        const expected = results.flatMap((r, i) => {
+          if (specs[i]?.feedback !== true) return [];
+          if (r.outcome === 'false_start') return ['рано'];
+          return r.outcome === 'wrong' || r.outcome === 'commission' ? ['ошибка'] : [];
+        });
+        expect(marksOf(h)).toEqual(expected);
+        expect(visible, 'a mark left on screen').toBe(false);
       }),
       { numRuns: 1000 },
     );

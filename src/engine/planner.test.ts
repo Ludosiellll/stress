@@ -12,6 +12,7 @@ import {
   TEST_FORMAT_MINUTES,
   TEST_FORMAT_ORDER,
   daysBetween,
+  feedbackRate,
   isDiagnosticDue,
   isRehearsalDue,
   modulePriority,
@@ -623,6 +624,28 @@ describe('planFree', () => {
       seed: 7,
       segments: [{ module: 'rdo', budgetMs: 300000, purpose: 'free' }],
     });
+  });
+
+  it('carries the mark rate of the phase of the day; without a phase, none (F15)', () => {
+    expect(planFree('szmr', 7, phaseInfo('base')).feedback).toBe('every');
+    expect(planFree('szmr', 7, DEV).feedback).toBe('half');
+    expect(planFree('szmr', 7, phaseInfo('taper'))).toEqual({ ...planFree('szmr', 7), feedback: 'none' });
+    expect(planFree('szmr', 7)).not.toHaveProperty('feedback');
+  });
+});
+
+describe('the mark after a trial by phase (F15)', () => {
+  it('every trial in «База», half in «Развитие», none in «Перегрузка» and «Подводка»', () => {
+    expect(feedbackRate('base')).toBe('every');
+    expect(feedbackRate('development')).toBe('half');
+    expect(feedbackRate('overload')).toBe('none');
+    expect(feedbackRate('taper')).toBe('none');
+  });
+
+  it('a training plan carries the rate of its phase', () => {
+    for (const phase of ['base', 'development', 'overload', 'taper'] as const) {
+      expect(planTraining(allStates(), TODAY, 42, phaseInfo(phase)).feedback, phase).toBe(feedbackRate(phase));
+    }
   });
 });
 
