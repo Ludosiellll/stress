@@ -1,5 +1,7 @@
 import type { Page } from '@playwright/test';
-import { cancelPendingPresses, openApp, pageDate, playSession, type Screen } from './bot';
+import type { BlockRow } from '../../src/data/rows';
+import type { ModuleId } from '../../src/engine/types';
+import { cancelPendingPresses, historyBundle, openApp, pageDate, playSession, restoreBundle, type Screen } from './bot';
 import { E2E_URL, expect, expectFitsWidth, lineCount, pauseWithEscape, shot, test } from './fixtures';
 
 // Whole sessions at scale 0.02 still take tens of seconds each.
@@ -87,6 +89,43 @@ test('a test date in 20 days shows the overload phase on Home', async ({ page })
   await page.getByRole('button', { name: 'Назад' }).click();
   await expect(page.getByText('Фаза: база')).toBeVisible();
   await expect(page.getByText(/До теста/)).toHaveCount(0);
+});
+
+test('on day 21 the session starts with a test-format run that shows the personal best', async ({ page }) => {
+  await openApp(page, E2E_URL);
+  // Four trainings 20, 16, 12 and 8 days ago, each with a run: ПЗМР (mean 250), СЗМР, Go/No-Go, РДО. Today is day 21
+  // and the fifth run is ПЗМР again.
+  const run = (module: ModuleId, mean: number): Partial<BlockRow> => ({
+    module,
+    flags: ['test_format'],
+    summaryJson: JSON.stringify({ testFormat: { mean, sd: 30, errors: 1, falseStarts: 0, thirds: [mean, mean, mean] } }),
+  });
+  const text = await historyBundle({
+    sessions: [
+      { daysAgo: 20, blocks: [run('pzmr', 250)] },
+      { daysAgo: 16, blocks: [run('szmr', 400)] },
+      { daysAgo: 12, blocks: [run('gonogo', 330)] },
+      { daysAgo: 8, blocks: [run('rdo', 20)] },
+    ],
+  });
+  await restoreBundle(page, text);
+  const plan = page.getByRole('list', { name: 'План на сегодня' }).getByRole('listitem');
+  await expect(plan.first()).toHaveText('Прогон в формате теста: ПЗМР, 50 сигналов (около 2 мин)');
+  await home(page).click();
+  // The session opens with the run: its instruction, then its block and its summary.
+  await playSession(page, { stopAt: 'instruction' });
+  await expect(page.locator('.instruction')).toContainText('Прогон в формате теста:');
+  const titles: string[] = [];
+  await playSession(page, { stopAt: 'summary', onScreen: checkSummaries(page, titles) });
+  const summary = page.locator('.summary');
+  await expect(summary.locator('h2')).toHaveText('Прогон в формате теста · ПЗМР');
+  const lines = summary.getByRole('list', { name: 'Показатели' }).getByRole('listitem');
+  // A unit follows its number after a no-break space (A-R22): \s matches it.
+  await expect(lines.first()).toHaveText(/^Среднее \d+\sмс \(лучшее 250\) · SD /);
+  await expect(summary.getByText('Прогон в формате теста: на сохранённый уровень не влияет')).toBeVisible();
+  await pauseWithEscape(page);
+  await page.getByRole('button', { name: 'Завершить сессию' }).click();
+  await expect(home(page)).toBeVisible();
 });
 
 test('diagnostic run writes results and home shows readiness', async ({ page }) => {

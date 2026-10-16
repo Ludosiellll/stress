@@ -169,8 +169,8 @@ function shownRatingStep(meanRating: number): { R: string; s: RatingStep; toNext
 }
 
 /**
- * Step and goal by level: lAfter, or lBefore (the played level) for an overload or warm-up block, which has no goal
- * (О4, Р29). Both come from the shown level (A-R7); the parameters come from the level the next block plays.
+ * Step and goal by level: lAfter, or lBefore (the played level) for an overload block, which has no goal (О4, Р29).
+ * Both come from the shown level (A-R7); the parameters come from the level the next block plays.
  */
 function levelLines(row: BlockRow, floors: WindowFloors | null): Pick<BlockAssessment, 'step' | 'goal'> {
   const overload = row.flags.includes('overload');
@@ -226,12 +226,18 @@ function historyLine(row: BlockRow, variant: VariantKey | null, ctx: AssessConte
   return `Раньше в этом блоке: ${last} · лучший ${f(stats.best)}${mean}${mark(row, ctx.kind, stats)}`;
 }
 
+/**
+ * A warm-up and a test-format run play a level they do not move and name no step and no goal (T-R8); a run's summary
+ * compares it with its own best, so its assessment has the norms only (no second «лучший»).
+ */
 export function assessBlock(row: BlockRow, ctx: AssessContext): BlockAssessment {
   const variant = variantOf(row);
   const norms = normTexts(row, variant, ctx.kind);
-  if (!isCountedSession(ctx.kind)) return { step: null, goal: null, norms, history: null };
+  if (!isCountedSession(ctx.kind) || row.flags.includes('test_format')) return { step: null, goal: null, norms, history: null };
+  const history = historyLine(row, variant, ctx);
+  if (row.flags.includes('warmup')) return { step: null, goal: null, norms, history };
   const { step, goal } = row.module === 'numseries' ? ratingLines(ctx.meanRating) : levelLines(row, ctx.floors);
-  return { step, goal, norms, history: historyLine(row, variant, ctx) };
+  return { step, goal, norms, history };
 }
 
 /** A row of «Оценка по модулям» in «Прогресс» (assessment spec §3.2, Справочник «Оценка по модулям»). */

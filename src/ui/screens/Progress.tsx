@@ -4,7 +4,7 @@ import LineChart, { type ChartDomain, type ChartSeries } from '../charts/LineCha
 import { logEvent } from '../errorLog';
 import { decimal, noBreakUnits } from '../format';
 import { useKeyDown } from '../keys';
-import { loadProgressModel, SESSION_LINES, type OverloadMean, type ProgressModel } from '../progressModel';
+import { loadProgressModel, SESSION_LINES, type OverloadMean, type ProgressModel, type TestFormatProgress } from '../progressModel';
 import ReadinessBlock from '../views/ReadinessBlock';
 
 export interface ProgressProps {
@@ -98,6 +98,89 @@ function FormOfDay({ model }: { model: ProgressModel }) {
           whole
         />
       </div>
+    </section>
+  );
+}
+
+/** A value of «Лучшие результаты»: whole ms, or a dash. */
+const msCell = (v: number | null): string => (v === null ? '—' : noBreakUnits(`${String(Math.round(v))} мс`));
+
+/** The two charts of a format: its mean (РДО: the deviation) and its SD by run, x «дд.мм». */
+function TestFormatCharts({ f }: { f: TestFormatProgress }) {
+  const charts = [
+    { title: f.format === 'rdo' ? `${f.name}: отклонение, мс` : `${f.name}: среднее, мс`, points: f.mean },
+    { title: `${f.name}: SD, мс`, points: f.sd },
+  ];
+  return (
+    <>
+      {charts.map((c) => (
+        <ChartCard
+          key={c.title}
+          title={c.title}
+          note="меньше — лучше"
+          yLabel="мс"
+          lowerIsBetter
+          series={[{ name: f.name, points: c.points }]}
+          domain={{ min: 0 }}
+          whole
+        />
+      ))}
+    </>
+  );
+}
+
+/** «Прогоны в формате теста» (F4): two charts per format with runs, then the best results. */
+function TestFormats({ model }: { model: ProgressModel }) {
+  return (
+    <section aria-labelledby="test-format-title">
+      <h2 id="test-format-title">Прогоны в формате теста</h2>
+      {model.testFormats.length === 0 ? (
+        <p>Прогонов пока не было. Они начнутся с 15-го дня.</p>
+      ) : (
+        <>
+          <div className="chart-grid">
+            {model.testFormats.map((f) => (
+              <TestFormatCharts key={f.format} f={f} />
+            ))}
+          </div>
+          <h3 id="test-format-best-title">Лучшие результаты</h3>
+          <table className="results" aria-labelledby="test-format-best-title">
+            <thead>
+              <tr>
+                <th scope="col">Формат</th>
+                <th scope="col" className="num">
+                  Среднее
+                </th>
+                <th scope="col" className="num">
+                  SD
+                </th>
+                <th scope="col" className="num">
+                  Ошибки
+                </th>
+                <th scope="col" className="num">
+                  Фальстарты
+                </th>
+                <th scope="col" className="num">
+                  Прогонов
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {model.testFormats.map((f) => (
+                <tr key={f.format}>
+                  <td>{f.name}</td>
+                  <td className="num nowrap">{msCell(f.best.mean)}</td>
+                  <td className="num nowrap">{msCell(f.best.sd)}</td>
+                  <td className="num">{f.best.errors}</td>
+                  <td className="num">{f.best.falseStarts}</td>
+                  <td className="num">{f.runs}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="muted">У РДО в колонке «Среднее» — среднее отклонение от отметки.</p>
+        </>
+      )}
     </section>
   );
 }
@@ -253,6 +336,7 @@ export default function Progress({ onBack }: ProgressProps) {
           <ReadinessBlock readiness={model.readiness} />
           <Assessment model={model} />
           <FormOfDay model={model} />
+          <TestFormats model={model} />
           <Diagnostics model={model} />
           <Levels model={model} />
           <History model={model} />

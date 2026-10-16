@@ -16,12 +16,12 @@ export function isCountedSession(kind: SessionKind): boolean {
 }
 
 /** Flags of blocks played at a level they never move. */
-const NOT_MOVING_FLAGS: readonly BlockFlag[] = ['overload', 'warmup'];
+const NOT_MOVING_FLAGS: readonly BlockFlag[] = ['overload', 'warmup', 'test_format'];
 
 /**
- * A block that moves the level: not an overload or a warm-up block (T-R38: the one place this rule lives). Only such
- * blocks are calibration blocks, the previous block for g = 2 or a segment's first, and only they make the module
- * look trained (lastTrainedAt).
+ * A block that moves the level: not an overload, a warm-up or a test-format block (T-R38: the one place this rule
+ * lives). Only such blocks are calibration blocks, the previous block for g = 2 or a segment's first, and only they
+ * make the module look trained (lastTrainedAt).
  */
 export function movesLevel(flags: readonly BlockFlag[]): boolean {
   return !flags.some((f) => NOT_MOVING_FLAGS.includes(f));
@@ -136,9 +136,9 @@ export function sessionEndPoints(sessions: readonly DeriveSession[], blocks: rea
  * without a band: the level was the window, Р9) counts as min(level, L_NORM): history rows never change, the caches
  * rebuilt from them do (spec §3.1.6). The plateau looks at the saved levels after load-rule sessions only, so capped
  * old levels never make a plateau on the day of the upgrade (T-R13); modules without bands look at every session.
- * Every block counts in lifetimeBlocks; lastTrainedAt is the last block that was neither an overload nor a warm-up
- * block, so a finisher or the daily ПЗМР warm-up does not make its module look trained and take away its regular
- * slot (W2-R40, F5).
+ * Every block counts in lifetimeBlocks; lastTrainedAt is the last block that moves the level (movesLevel), so a
+ * finisher, the daily ПЗМР warm-up or a test-format run does not make its module look trained and take away its
+ * regular slot (W2-R40, F5, F4).
  * Number series keep the default state except lifetimeBlocks and lastTrainedAt.
  */
 export function deriveModuleStates(

@@ -8,13 +8,18 @@ import {
   MEMORY_SLOT_POOL,
   OLD_L_NORM,
   REACTION_POOL,
+  TEST_FORMAT_FROM_DAY,
+  TEST_FORMAT_MINUTES,
+  TEST_FORMAT_ORDER,
   daysBetween,
   isDiagnosticDue,
   isRehearsalDue,
   modulePriority,
+  nextTestFormat,
   planFree,
   planTraining,
   taperBudget,
+  testFormatDue,
   warmupLevel,
   type ModuleState,
   type SessionPlan,
@@ -448,6 +453,133 @@ describe('planTraining', () => {
               finisher.budgetMs === (ph === 'overload' ? 300000 : 180000) &&
               candidates.every((m) => modulePriority(states[m], TODAY) <= modulePriority(states[finisher.module], TODAY));
         return plan.seed === seed && plan.phase === ph && slotsOk && taperOk && finisherOk;
+      }),
+      { numRuns: 1000 },
+    );
+  });
+});
+
+describe('test-format runs (F4)', () => {
+  /** Local noon `d` days before TODAY: a stored block's startedAt. */
+  const ago = (d: number): string => new Date(2026, 9, 14 - d, 12, 0).toISOString();
+  const runs = (...days: number[]): string[] => days.map(ago);
+  const day = (dayNumber: number, phase: PhaseId = 'development'): PhaseInfo => phaseInfo(phase, { dayNumber });
+  const purposes = (plan: SessionPlan): string[] => plan.segments.map((s) => s.purpose);
+
+  it('the formats, their order, the first day and the minutes of the plan line', () => {
+    expect(TEST_FORMAT_ORDER).toEqual(['pzmr', 'szmr', 'gonogo', 'rdo']);
+    expect(TEST_FORMAT_FROM_DAY).toBe(15);
+    expect(TEST_FORMAT_MINUTES).toEqual({ pzmr: 2, szmr: 3, gonogo: 3, rdo: 3 });
+  });
+
+  it('no run before day 15', () => {
+    expect(testFormatDue([], 14, TODAY)).toBe(false);
+    expect(planTraining(trained(), TODAY, 1, day(14, 'base'), { testFormatRuns: [] }).segments.some((s) => s.purpose === 'test_format')).toBe(false);
+    expect(testFormatDue([], 15, TODAY)).toBe(true);
+  });
+
+  it('day 15 without runs: a ПЗМР run comes first, no warm-up, one reaction slot without ПЗМР', () => {
+    // ПЗМР trained long ago: it would win a reaction slot without the run.
+    const states = trained({ pzmr: { lastTrainedAt: '2026-09-01' } });
+    expect(planTraining(states, TODAY, 1, day(14)).segments[1]).toMatchObject({ module: 'pzmr', purpose: 'reaction' });
+    const plan = planTraining(states, TODAY, 1, day(15), { testFormatRuns: [] });
+    expect(plan.segments[0]).toEqual({ module: 'pzmr', budgetMs: 0, purpose: 'test_format', trialCount: 50, practiceTrials: 5 });
+    expect(purposes(plan)).not.toContain('warmup');
+    const reaction = plan.segments.filter((s) => s.purpose === 'reaction');
+    expect(reaction).toHaveLength(1);
+    expect(reaction[0]?.module).not.toBe('pzmr');
+    expect(purposes(plan)).toEqual(['test_format', 'reaction', 'attention', 'attention', 'logic', 'finisher']);
+  });
+
+  it('rotation by the number of stored runs', () => {
+    const at = (n: number): SessionPlan =>
+      planTraining(trained(), TODAY, 1, day(40), { testFormatRuns: Array.from({ length: n }, (_, i) => ago(30 + i)) });
+    const run = (n: number) => at(n).segments[0];
+    expect(run(1)).toEqual({ module: 'szmr', budgetMs: 0, purpose: 'test_format', trialCount: 70, practiceTrials: 5 });
+    expect(run(2)).toEqual({ module: 'gonogo', budgetMs: 0, purpose: 'test_format', trialCount: 60, practiceTrials: 5 });
+    expect(run(3)).toEqual({ module: 'rdo', budgetMs: 0, purpose: 'test_format', trialCount: 50, practiceTrials: 5 });
+    expect(run(4)).toEqual({ module: 'pzmr', budgetMs: 0, purpose: 'test_format', trialCount: 50, practiceTrials: 5 });
+    expect([0, 1, 2, 3, 4, 5, 9].map((n) => nextTestFormat(runs(...Array.from({ length: n }, (_, i) => 30 + i))))).toEqual([
+      'pzmr',
+      'szmr',
+      'gonogo',
+      'rdo',
+      'pzmr',
+      'szmr',
+      'szmr',
+    ]);
+    // A СЗМР run: the ПЗМР warm-up follows it, and the reaction slot left is not СЗМР.
+    const szmrDay = at(1);
+    expect(szmrDay.segments[1]).toEqual({ module: 'pzmr', budgetMs: 120000, purpose: 'warmup' });
+    expect(szmrDay.segments.filter((s) => s.purpose === 'reaction').map((s) => s.module)).toEqual(['gonogo']);
+  });
+
+  it('at most 2 runs in 7 days, at least 3 days apart', () => {
+    expect(testFormatDue(runs(6, 3), 30, TODAY)).toBe(false);
+    expect(testFormatDue(runs(7, 3), 30, TODAY)).toBe(true);
+    expect(testFormatDue(runs(2), 30, TODAY)).toBe(false);
+    expect(testFormatDue(runs(3), 30, TODAY)).toBe(true);
+    // A run today, or one stored on a later date (a clock moved back), is never 3 days ago.
+    expect(testFormatDue(runs(0), 30, TODAY)).toBe(false);
+    expect(testFormatDue(runs(-2), 30, TODAY)).toBe(false);
+    // The order of the list does not matter.
+    expect(testFormatDue(runs(3, 20, 10), 30, TODAY)).toBe(true);
+    expect(testFormatDue(runs(2, 20, 10), 30, TODAY)).toBe(false);
+    const plan = (r: string[]): string[] => purposes(planTraining(trained(), TODAY, 1, day(30), { testFormatRuns: r }));
+    expect(plan(runs(6, 3))[0]).toBe('warmup');
+    expect(plan(runs(7, 3))[0]).toBe('test_format');
+    // Without extras the plan has no run (the simulations and tests that plan without the history).
+    expect(purposes(planTraining(trained(), TODAY, 1, day(30)))[0]).toBe('warmup');
+  });
+
+  it('the taper keeps the runs', () => {
+    const taper = phaseInfo('taper', { dayNumber: 40, daysToTest: 5 });
+    const plan = planTraining(trained(), TODAY, 1, taper, { testFormatRuns: runs(10) });
+    // The run keeps its volume; the other budgets are cut.
+    expect(plan.segments.map((s) => [s.module, s.purpose, s.budgetMs])).toEqual([
+      ['szmr', 'test_format', 0],
+      ['pzmr', 'warmup', 60000],
+      ['gonogo', 'reaction', 180000],
+      ['gorbov', 'attention', 180000],
+      ['memory', 'attention', 180000],
+      ['numseries', 'logic', 360000],
+    ]);
+    expect(plan.segments[0]).toMatchObject({ trialCount: 70, practiceTrials: 5 });
+  });
+
+  it('the finisher never takes the run\'s module', () => {
+    // РДО is the finisher of this plan without a run (see «development: finisher…»).
+    expect(planTraining(trained(), TODAY, 1, day(30)).segments.at(-1)).toMatchObject({ module: 'rdo', purpose: 'finisher' });
+    const plan = planTraining(trained(), TODAY, 1, day(30), { testFormatRuns: runs(30, 29, 28) });
+    expect(plan.segments[0]).toMatchObject({ module: 'rdo', purpose: 'test_format' });
+    const finisher = plan.segments.at(-1);
+    expect(finisher?.purpose).toBe('finisher');
+    expect(finisher?.module).not.toBe('rdo');
+    expect(plan.segments.filter((s) => s.module === 'rdo')).toHaveLength(1);
+  });
+
+  it('property: a run is the first segment exactly when it is due; its module is in no other slot', () => {
+    const phaseArb = fc.constantFrom<PhaseId>('base', 'development', 'overload', 'taper');
+    const agoArb = fc.array(fc.integer({ min: -3, max: 40 }), { maxLength: 12 });
+    fc.assert(
+      fc.property(phaseArb, fc.integer({ min: 1, max: 120 }), agoArb, fc.boolean(), (ph, dayNumber, days, plateau) => {
+        const states = trained({ szmr: { plateau }, rdo: { plateau } });
+        const r = runs(...days);
+        const plan = planTraining(states, TODAY, 1, phaseInfo(ph, { dayNumber }), { testFormatRuns: r });
+        const due = testFormatDue(r, dayNumber, TODAY);
+        const [first, ...rest] = plan.segments;
+        if (first === undefined) return false;
+        if (!due) return first.purpose === 'warmup' && rest.every((s) => s.purpose !== 'test_format');
+        const module = nextTestFormat(r);
+        const warmups = rest.filter((s) => s.purpose === 'warmup');
+        return (
+          first.module === module &&
+          first.purpose === 'test_format' &&
+          first.overload === undefined &&
+          rest.every((s) => s.module !== module) &&
+          warmups.length === (module === 'pzmr' ? 0 : 1) &&
+          rest.filter((s) => s.purpose === 'reaction').length === 1
+        );
       }),
       { numRuns: 1000 },
     );

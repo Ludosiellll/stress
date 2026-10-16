@@ -2,11 +2,13 @@ import type { BlockRow } from '../data/rows';
 import { localDayIso } from '../engine/dates';
 import type { FormDay } from '../engine/dayForm';
 import { isCountedSession, storedBand } from '../engine/derive';
+import type { TestFormatId } from '../engine/planner';
 import type { BlockFlag, ReactionModuleId, SessionKind } from '../engine/types';
 import { FLOOR_HITS } from '../engine/windowFloor';
 import { bandIndex } from '../modules/reaction/common';
 import { pzmr } from '../modules/reaction/pzmr';
 import { parseObject } from './blockHistory';
+import { readTestFormat, type TestFormatMetrics } from './testFormat';
 
 /**
  * The block history the controller read at start (assessment О11, with the same listBlocks + listSessions as the
@@ -77,12 +79,37 @@ export function warmupDays(past: PastBlocks): FormDay[] {
   return days;
 }
 
+/** A stored test-format run: when it started and its metrics. */
+export interface StoredRun {
+  at: string;
+  metrics: TestFormatMetrics;
+}
+
 /**
- * Blocks whose hits never feed the window floor (F3, Справочник): overload blocks play another band's load, and a
- * timing_unreliable block measured nothing. Warm-up, fatigued and calibration blocks do feed it. `test_format`
- * (Task 10) and `discarded` (Task 13) join this list with their flags.
+ * The stored runs of a format (F4), in block order (by startedAt): blocks of training and free sessions with the
+ * flag test_format and a readable summaryJson.testFormat; a damaged one is left out.
  */
-const NOT_FLOOR_FLAGS: readonly BlockFlag[] = ['overload', 'timing_unreliable'];
+export function testFormatRunsAt(past: PastBlocks, module: TestFormatId): StoredRun[] {
+  return past.blocks.flatMap((row) => {
+    const kind = past.kinds.get(row.sessionId);
+    if (row.module !== module || !row.flags.includes('test_format') || kind === undefined || !isCountedSession(kind)) return [];
+    const metrics = readTestFormat(row.summaryJson);
+    return metrics === null ? [] : [{ at: row.startedAt, metrics }];
+  });
+}
+
+/** The metrics of the stored runs of a format, the source of its personal best (testFormatRunsAt). */
+export function testFormatRuns(past: PastBlocks, module: TestFormatId): TestFormatMetrics[] {
+  return testFormatRunsAt(past, module).map((r) => r.metrics);
+}
+
+/**
+ * Blocks whose hits never feed the window floor (F3, Справочник): overload blocks play another band's load, a
+ * timing_unreliable block measured nothing, and a test-format run plays the frozen diagnostic parameters, not a
+ * training band (F4). Warm-up, fatigued and calibration blocks do feed it. `discarded` (Task 13) joins this list
+ * with its flag.
+ */
+const NOT_FLOOR_FLAGS: readonly BlockFlag[] = ['overload', 'timing_unreliable', 'test_format'];
 
 /** The load band a block played (paramsJson.band, a whole number from 0) and its clean hits; null: either is unreadable. */
 interface BandHits {

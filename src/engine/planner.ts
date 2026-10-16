@@ -1,4 +1,5 @@
 import { daysBetween, localDayNumber, signedDaysBetween } from './dates';
+import { DIAGNOSTIC_VOLUME } from './diagnostic';
 import { TAPER_DAYS, isCalibrated, type PhaseId, type PhaseInfo } from './phases';
 import type { ModuleId, SessionKind } from './types';
 
@@ -40,7 +41,7 @@ export const OLD_L_NORM: Readonly<Record<ModuleId, number>> = {
   numseries: 0,
 };
 
-export type SegmentPurpose = 'warmup' | 'reaction' | 'attention' | 'logic' | 'diagnostic' | 'free' | 'finisher';
+export type SegmentPurpose = 'warmup' | 'reaction' | 'attention' | 'logic' | 'diagnostic' | 'free' | 'finisher' | 'test_format';
 
 /**
  * An overload block of РДО, the tables or memory plays this many levels above the usual one (§6.3); a band module's
@@ -111,6 +112,55 @@ const BUDGET_STEP_MS = 30_000;
 const REHEARSALS = 2;
 const REHEARSAL_GAP_DAYS = 2;
 
+/** The formats of the test-format runs (F4), in the order they take turns. */
+export const TEST_FORMAT_ORDER = ['pzmr', 'szmr', 'gonogo', 'rdo'] as const;
+export type TestFormatId = (typeof TEST_FORMAT_ORDER)[number];
+/** The first day of the course with test-format runs. */
+export const TEST_FORMAT_FROM_DAY = 15;
+/** About how long a run takes, for the plan line on Home. */
+export const TEST_FORMAT_MINUTES: Readonly<Record<TestFormatId, number>> = Object.freeze({ pzmr: 2, szmr: 3, gonogo: 3, rdo: 3 });
+/** Fewer than this many runs in the last RUN_WINDOW_DAYS days (today included)… */
+const RUNS_PER_WEEK = 2;
+const RUN_WINDOW_DAYS = 7;
+/** …and the last one at least this many days ago. */
+const RUN_GAP_DAYS = 3;
+/** A run starts with this many practice trials, as the diagnostic. */
+const RUN_PRACTICE = 5;
+
+/** What the training plan needs from the history beyond the module states. */
+export interface TrainingExtras {
+  /** startedAt of the stored test-format blocks, chronological. */
+  testFormatRuns: readonly string[];
+}
+
+const TEST_FORMATS: ReadonlySet<ModuleId> = new Set<ModuleId>(TEST_FORMAT_ORDER);
+
+/** One of TEST_FORMAT_ORDER. */
+export function isTestFormat(m: ModuleId): m is TestFormatId {
+  return TEST_FORMATS.has(m);
+}
+
+/**
+ * A test-format run is due from day TEST_FORMAT_FROM_DAY of the course when fewer than 2 runs fall in the last 7
+ * local calendar days (today included) and the last one was 3 or more days ago (or there was none). A run stored on a
+ * later day (a clock moved back) counts as today's.
+ */
+export function testFormatDue(runs: readonly string[], dayNumber: number, todayIso: string): boolean {
+  if (dayNumber < TEST_FORMAT_FROM_DAY) return false;
+  const ago = runs.map((r) => daysBetween(r, todayIso));
+  return ago.filter((d) => d < RUN_WINDOW_DAYS).length < RUNS_PER_WEEK && ago.every((d) => d >= RUN_GAP_DAYS);
+}
+
+/** The format of the next run: the stored runs, counted mod 4, pick it from TEST_FORMAT_ORDER. */
+export function nextTestFormat(runs: readonly string[]): TestFormatId {
+  return TEST_FORMAT_ORDER[runs.length % TEST_FORMAT_ORDER.length] as TestFormatId;
+}
+
+/** The run's segment: one block of the diagnostic volume, fixed (budget 0, R16). */
+function testFormatSegment(module: TestFormatId): Segment {
+  return { module, budgetMs: 0, purpose: 'test_format', trialCount: DIAGNOSTIC_VOLUME[module].trialCount, practiceTrials: RUN_PRACTICE };
+}
+
 /**
  * The level of every warm-up block: one below L_saved, at least 0 (F5). The warm-up never moves a level, so it is
  * the same all session.
@@ -167,12 +217,16 @@ function pick(
  * taper). The taper scales every budget by 0.6 (to 30 s) and skips never-trained modules. A reaction, attention or
  * memory segment whose module is on a plateau mixes in overload blocks; the warm-up and the finisher never do, and
  * nothing does in the taper (it cuts the load).
+ * When a test-format run is due (testFormatDue over `extras`; none without them), it comes first, before the warm-up
+ * (a cold start), in the taper too (F4): it takes one reaction slot, its module plays in no other slot, and a ПЗМР run
+ * replaces the warm-up.
  */
 export function planTraining(
   states: Record<ModuleId, ModuleState>,
   todayIso: string,
   seed: number,
   phase: PhaseInfo,
+  extras?: TrainingExtras,
 ): SessionPlan {
   const taper = phase.phase === 'taper';
   const ctx = { states, todayIso, taper };
@@ -183,13 +237,15 @@ export function planTraining(
       : { module, budgetMs: budget(minutes), purpose };
 
   const reactionMinutes = phase.phase === 'overload' ? OVERLOAD_REACTION_MINUTES : REACTION_MINUTES;
-  const [first, second] = pick(REACTION_POOL, 2, ctx) as [ModuleId, ModuleId];
+  const runs = extras?.testFormatRuns;
+  const run = runs !== undefined && testFormatDue(runs, phase.dayNumber, todayIso) ? nextTestFormat(runs) : null;
+  const reaction = pick(REACTION_POOL, run === null ? 2 : 1, ctx, run);
   const [attention] = pick(ATTENTION_POOL, 1, ctx) as [ModuleId];
   const [memorySlot] = pick(MEMORY_SLOT_POOL, 1, ctx, attention) as [ModuleId];
   const segments: Segment[] = [
-    { module: 'pzmr', budgetMs: budget(2), purpose: 'warmup' },
-    slot(first, reactionMinutes, 'reaction'),
-    slot(second, reactionMinutes, 'reaction'),
+    ...(run === null ? [] : [testFormatSegment(run)]),
+    ...(run === 'pzmr' ? [] : [{ module: 'pzmr', budgetMs: budget(2), purpose: 'warmup' } satisfies Segment]),
+    ...reaction.map((m) => slot(m, reactionMinutes, 'reaction')),
     slot(attention, 5, 'attention'),
     slot(memorySlot, 5, 'attention'),
     { module: 'numseries', budgetMs: budget(10), purpose: 'logic' },

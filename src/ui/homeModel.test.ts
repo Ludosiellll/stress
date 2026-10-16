@@ -104,6 +104,22 @@ describe('loadHomeModel', () => {
     expect((await loadHomeModel(repo, TODAY)).streak).toBe(2);
   });
 
+  it('loadHomeModel plans a test-format run from the dates of the stored runs (F4)', async () => {
+    const repo = new MemoryRepository();
+    // Day 1 was 2026-09-24: today is day 21. One ПЗМР run 10 days ago: the next format is СЗМР, and it is due.
+    await repo.createSession(session('s1', '2026-09-24T10:00:00'));
+    await repo.createSession(session('s2', '2026-10-04T10:00:00'));
+    await repo.addBlock(block('b1', 's1', '2026-09-24T10:01:00', { module: 'szmr' }), [], []);
+    await repo.addBlock(block('r1', 's2', '2026-10-04T10:01:00', { module: 'pzmr', flags: ['test_format'] }), [], []);
+    const plan = (await loadHomeModel(repo, TODAY)).plan;
+    expect(plan.segments[0]).toEqual({ module: 'szmr', budgetMs: 0, purpose: 'test_format', trialCount: 70, practiceTrials: 5 });
+    expect(planLine(plan.segments[0] as Segment)).toBe('Прогон в формате теста: СЗМР, 70 сигналов (около 3 мин)');
+    // A run two days ago: none today.
+    await repo.createSession(session('s3', '2026-10-12T10:00:00'));
+    await repo.addBlock(block('r2', 's3', '2026-10-12T10:01:00', { module: 'szmr', flags: ['test_format'] }), [], []);
+    expect((await loadHomeModel(repo, TODAY)).plan.segments.map((s) => s.purpose)).not.toContain('test_format');
+  });
+
   it('loadHomeModel computes the phase from the first session and the test date', async () => {
     const repo = new MemoryRepository();
     await repo.createSession(session('t', '2026-10-11T10:00:00'));
@@ -121,7 +137,9 @@ describe('loadHomeModel', () => {
     m = await loadHomeModel(repo, TODAY);
     expect(m.phase).toMatchObject({ phase: 'overload', reason: 'test_soon', daysToTest: 20 });
     expect(m.plan.phase).toBe('overload');
-    expect(m.plan.segments.filter((s) => s.purpose === 'reaction').map((s) => s.budgetMs)).toEqual([360000, 360000]);
+    // Day 21 without runs: the plan opens with a ПЗМР run (F4); the one reaction slot left is 6 minutes long.
+    expect(m.plan.segments[0]).toMatchObject({ module: 'pzmr', purpose: 'test_format' });
+    expect(m.plan.segments.filter((s) => s.purpose === 'reaction').map((s) => s.budgetMs)).toEqual([360000]);
     // No module has 3 blocks yet: the plan has no finisher, and the reason does not promise one.
     expect(m.plan.segments.some((s) => s.purpose === 'finisher')).toBe(false);
     expect(m.phaseWhy).toBe('До теста 20 дн.: модули реакции по 6 мин.');
@@ -251,6 +269,18 @@ describe('phaseTexts', () => {
 });
 
 describe('planLine', () => {
+  it('a test-format run: its format, its size and about how long it takes (F4)', () => {
+    expect(planLine({ module: 'szmr', budgetMs: 0, purpose: 'test_format', trialCount: 70, practiceTrials: 5 })).toBe(
+      'Прогон в формате теста: СЗМР, 70 сигналов (около 3 мин)',
+    );
+    expect(planLine({ module: 'pzmr', budgetMs: 0, purpose: 'test_format', trialCount: 50, practiceTrials: 5 })).toBe(
+      'Прогон в формате теста: ПЗМР, 50 сигналов (около 2 мин)',
+    );
+    expect(planLine({ module: 'rdo', budgetMs: 0, purpose: 'test_format', trialCount: 50, practiceTrials: 5 })).toBe(
+      'Прогон в формате теста: РДО, 50 сигналов (около 3 мин)',
+    );
+  });
+
   it('module, minutes and what the overload blocks are', () => {
     expect(planLine({ module: 'rdo', budgetMs: 180000, purpose: 'finisher', overload: 'finisher' })).toBe(
       'Реакция на движущийся объект — 3 мин — финишер с перегрузкой',

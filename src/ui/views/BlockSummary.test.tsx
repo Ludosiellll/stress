@@ -48,6 +48,12 @@ describe('BlockSummary', () => {
     expect(screen.getByText('Замер ненадёжен: пропуски кадров — уровень не менялся')).toBeTruthy();
   });
 
+  it('a test-format run says it does not touch the saved level (F4)', () => {
+    render(<BlockSummary view={{ ...VIEW, changes: [], showLevel: false, flags: ['test_format'] }} busy={false} onContinue={vi.fn()} />);
+    expect(screen.getByText('Прогон в формате теста: на сохранённый уровень не влияет').className).toBe('muted');
+    expect(screen.queryByText(/Уровень:/)).toBeNull();
+  });
+
   it('the warm-up flag has its note when there is no level note', () => {
     render(<BlockSummary view={{ ...VIEW, flags: ['warmup'] }} busy={false} onContinue={vi.fn()} />);
     expect(screen.getByText('Разминка: на сохранённый уровень не влияет').className).toBe('muted');

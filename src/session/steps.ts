@@ -105,6 +105,7 @@ export type StepOf<K extends Step['kind']> = Extract<Step, { kind: K }>;
 
 export interface BlockSummaryView {
   module: ModuleId;
+  /** The module's title; a test-format run's says so: «Прогон в формате теста · СЗМР» (F4). */
   title: string;
   lBefore: number;
   lAfter: number;
@@ -117,7 +118,10 @@ export interface BlockSummaryView {
   score: number;
   lines: string[];
   flags: BlockFlag[];
-  /** Training and free blocks of modules with a level; diagnostics play at a fixed level and hide it (M5). */
+  /**
+   * Training and free blocks of modules with a level; diagnostics play at a fixed level and hide it (M5), and so do a
+   * warm-up (its levelNote instead) and a test-format run (its flag's note, F4).
+   */
   showLevel: boolean;
   /** Said instead of the level line (a warm-up: WARMUP_LEVEL_NOTE); null: none. */
   levelNote: string | null;

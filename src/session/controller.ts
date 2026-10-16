@@ -8,9 +8,9 @@ import { deriveModuleStates, isCleanBlock, isCountedSession, movesLevel } from '
 import { parseResults, type DiagnosticResults } from '../engine/diagnostic';
 import type { Rating } from '../engine/elo';
 import { CALIBRATION_BLOCKS } from '../engine/phases';
-import { OVERLOAD_LEVEL_STEP, warmupLevel, type ModuleState, type Segment, type SessionPlan } from '../engine/planner';
+import { OVERLOAD_LEVEL_STEP, isTestFormat, warmupLevel, type ModuleState, type Segment, type SessionPlan } from '../engine/planner';
 import { stabilityOf } from '../engine/reaction/stability';
-import type { BlockTimeline } from '../engine/reaction/types';
+import type { BlockTimeline, TrialResult } from '../engine/reaction/types';
 import { readinessOfLatest } from '../engine/readiness';
 import { isBandModule, isReactionModule, type BlockFlag, type FamilyId, type LayoutId, type ModuleId } from '../engine/types';
 import type { MemoryTrial } from '../modules/memory/generate';
@@ -39,9 +39,10 @@ import {
   type PlanContext,
   type WindowFloors,
 } from './blocks';
-import { appendPast, pastBlocks, warmupDays, withBlock, type PastBlocks } from './pastBlocks';
+import { appendPast, pastBlocks, testFormatRuns, warmupDays, withBlock, type PastBlocks } from './pastBlocks';
 import { blockRow, errorLogRow, logicItemRows, sessionRow, trialRows, wellbeingRow } from './rowsBuild';
 import { SaveQueue, type SaveOutcome, type Write } from './saveQueue';
+import { TEST_FORMAT_NAMES, testFormatBest, testFormatLines, testFormatMetrics, type TestFormatMetrics } from './testFormat';
 import {
   AUDIO_NOT_PLAYED,
   conditionLines,
@@ -163,6 +164,8 @@ interface FinishedBlock {
   /** Stored as summaryJson. */
   summary: object;
   lines: string[];
+  /** The summary's heading; default: the module's title. */
+  title?: string;
   task?: TableTaskId;
   /** Number series in training and free sessions: meanFamilyRating after the block (the step by rating). */
   meanRating?: number;
@@ -184,6 +187,13 @@ interface SaveContext {
 }
 
 const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/** A test-format run's metrics, heading and summary lines (F4). */
+interface RunSummary {
+  metrics: TestFormatMetrics;
+  title: string;
+  lines: string[];
+}
 
 /** The floor line of a reaction block whose window rested on the personal floor (F3); none otherwise. */
 function floorLines(plan: BlockPlan): string[] {
@@ -220,6 +230,10 @@ function compareWithPrevious(earlier: readonly PastDiagnostic[], readiness: numb
  * - The warm-up (F5) plays every block at warmupLevel(L_saved) and moves no level; its flag keeps it out of L_saved,
  *   lastTrainedAt, fatigue, calibration and g = 2. Its summary says so and shows «Форма дня» from the warm-ups of the
  *   history read at start, those of this session and the block itself.
+ * - A test-format run (F4) is one block of DIAGNOSTIC_PARAMS at L_saved, whatever its budget, without a window floor;
+ *   lAfter = lBefore and its flag keeps it out of everything the warm-up stays out of, and out of the window floor.
+ *   Its summary is the run's metrics against the best of the earlier runs of its format (none shown when the history
+ *   could not be read, Р18), stored as summaryJson.testFormat.
  * - After each block: addBlock (with its trials / logic items); then the block's in-memory effects; then for
  *   training and free sessions the module state derived from the module's history (listBlockLevels) and, for
  *   number series, the ratings. Writes are tried 3 times (pauses 100 and 500 ms), then `save_error` keeps
@@ -413,6 +427,7 @@ export class SessionController {
         return;
       }
       const stability = stabilityOf(step.specs, results);
+      const run = this.runSummary(module, results);
       await this.completeBlock({
         module,
         L,
@@ -432,13 +447,15 @@ export class SessionController {
           frameMs: tl.frameMs ?? null,
           conditions,
           ...(tl.audioPlayed === undefined ? {} : { audioPlayed: tl.audioPlayed }),
+          ...(run === null ? {} : { testFormat: run.metrics }),
         },
-        lines: [
+        lines: run?.lines ?? [
           ...reactionLines(module, summary, stability),
           ...floorLines(plan),
           ...conditionLines(module, conditions, plan.kind === 'reaction' && plan.overload),
           ...(tl.audioPlayed === false ? [AUDIO_NOT_PLAYED] : []),
         ],
+        ...(run === null ? {} : { title: run.title }),
         rows: (blockId) => ({ trials: trialRows(blockId, step.specs, tl, results), items: [] }),
         onCommit: () => {
           if (!this.counted) this.diagParts.push({ module, summary, conditions });
@@ -675,8 +692,10 @@ export class SessionController {
       const { lSaved } = this.states[module];
       return at(isBandModule(module) ? lSaved : lSaved + OVERLOAD_LEVEL_STEP);
     }
-    // The warm-up plays one fixed level and leaves the module's level in the session alone (F5).
+    // The warm-up plays one fixed level and leaves the module's level in the session alone (F5); a test-format run
+    // plays L_saved, which it stores as both levels of its block (F4).
     if (segment.purpose === 'warmup') return at(warmupLevel(this.states[module].lSaved));
+    if (segment.purpose === 'test_format') return at(this.states[module].lSaved);
     const current = this.levels.get(module);
     if (current !== undefined) return at(current);
     const st = this.states[module];
@@ -702,16 +721,18 @@ export class SessionController {
 
   /**
    * What planBlock needs to know about the session and the segment. The window floors come from the history read at
-   * start and the blocks stored since (F3); a diagnostic has none, nor a session whose history could not be read (Р18).
+   * start and the blocks stored since (F3); a diagnostic has none, nor a test-format run (F4), nor a session whose
+   * history could not be read (Р18).
    */
   private planContext(seg: SegmentRun): PlanContext {
+    const floored = this.counted && seg.segment.purpose !== 'test_format';
     return {
       layout: this.layout,
       scale: this.scale,
       diagnostic: !this.counted,
       planSeed: this.plan.seed,
       segmentIndex: seg.index,
-      floors: this.counted && this.past !== null ? floorsFrom(this.past) : null,
+      floors: floored && this.past !== null ? floorsFrom(this.past) : null,
     };
   }
 
@@ -728,10 +749,14 @@ export class SessionController {
     }
   }
 
-  /** Training/free: a block may start while the budget lasts. Diagnostics: a fixed number of blocks (runs, default 1). */
+  /**
+   * Training/free: a block may start while the budget lasts. Diagnostics: a fixed number of blocks (runs, default 1);
+   * a test-format run is one block (F4).
+   */
   private anotherBlock(seg: SegmentRun): boolean {
     const { segment } = seg;
     if (!this.counted) return seg.blocksDone < (segment.runs ?? 1);
+    if (segment.purpose === 'test_format') return seg.blocksDone < 1;
     const nowMs = this.now().getTime();
     return nowMs - (seg.clockStart ?? nowMs) < segment.budgetMs * this.scale;
   }
@@ -811,12 +836,14 @@ export class SessionController {
     const seg = this.segment();
     const active = this.block();
     const overload = active.plan.kind !== 'numseries' && active.plan.overload;
-    // A training warm-up block (F5): lAfter = lBefore, no stability rule, no calibration and no g = 2 (T-R11).
+    // A training warm-up block (F5) and a test-format run (F4): lAfter = lBefore, no stability rule, no calibration and
+    // no g = 2 (T-R11).
     const warmup = this.counted && seg.segment.purpose === 'warmup';
+    const testFormat = this.counted && seg.segment.purpose === 'test_format';
     // An overload block of a band module plays the next band's load at its own level and keeps it (F3).
-    const fixedLevel = warmup || (overload && isBandModule(b.module));
+    const fixedLevel = warmup || testFormat || (overload && isBandModule(b.module));
     const calibration = b.level !== null && !fixedLevel && this.isCalibration(b.module);
-    const firstOfSegment = !overload && !warmup && seg.startDrop && !seg.levelBlockStored;
+    const firstOfSegment = !overload && !fixedLevel && seg.startDrop && !seg.levelBlockStored;
     const input: DeltaInput | null =
       this.counted && b.level !== null && !fixedLevel
         ? { score: b.score, calibration, prevScoreSameSession: this.prevScore(b.module), firstOfSegment, ...b.level }
@@ -843,6 +870,7 @@ export class SessionController {
     if (this.fatigueContinued.has(b.module)) flags.push('fatigued');
     if (overload) flags.push('overload');
     if (warmup) flags.push('warmup');
+    if (testFormat) flags.push('test_format');
 
     const id = uuidv4();
     const row = blockRow(id, this.sessionId, { module: b.module, lBefore: b.L, lAfter, score: b.score, flags }, active, JSON.stringify(summary));
@@ -854,14 +882,14 @@ export class SessionController {
     const assessment = this.assessOrLog(row, b.meanRating ?? null, floorsAfter);
     const view: BlockSummaryView = {
       module: b.module,
-      title: moduleTitles[b.module],
+      title: b.title ?? moduleTitles[b.module],
       lBefore: b.L,
       lAfter,
       changes: levelChanges(b.module, b.L, lAfter, b.task, context, floorsAfter),
       score: b.viewScore ?? b.score,
       lines,
       flags,
-      showLevel: this.counted && b.level !== null && !warmup,
+      showLevel: this.counted && b.level !== null && !warmup && !testFormat,
       levelNote: warmup ? WARMUP_LEVEL_NOTE : null,
     };
     if (assessment !== undefined) view.assessment = assessment;
@@ -926,6 +954,21 @@ export class SessionController {
       },
       writes,
     );
+  }
+
+  /**
+   * The metrics and summary of a test-format run (F4); null for any other block. The best is that of the runs of the
+   * format in the history read at start and in this session; without that history (Р18) the line has no best and the
+   * run does not call itself the first.
+   */
+  private runSummary(module: ModuleId, results: readonly TrialResult[]): RunSummary | null {
+    if (!this.counted || this.segment().segment.purpose !== 'test_format' || !isTestFormat(module)) return null;
+    const metrics = testFormatMetrics(module, results);
+    const lines =
+      this.past === null
+        ? testFormatLines(module, metrics, null).slice(0, 1)
+        : testFormatLines(module, metrics, testFormatBest(testFormatRuns(this.past, module)));
+    return { metrics, title: `Прогон в формате теста · ${TEST_FORMAT_NAMES[module]}`, lines };
   }
 
   /**

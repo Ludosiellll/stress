@@ -5,6 +5,7 @@ import { defaultModuleState } from '../engine/derive';
 import { NORM_HINTS } from '../engine/norms';
 import type { ModuleState } from '../engine/planner';
 import { MODULE_IDS, type ModuleId } from '../engine/types';
+import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
 import { szmr } from '../modules/reaction/szmr';
 import { gorbovParams } from '../modules/tables/gorbov';
 import { assessBlock, assessModules, formatMetric, meanFamilyRating, normLine, type AssessContext, type ModuleAssessment } from './assessment';
@@ -103,16 +104,25 @@ describe('assessBlock', () => {
     });
   });
 
-  it('a warm-up: the step by the played level, no goal; its history is the warm-up variant (F5, Р29)', () => {
+  it('a warm-up: no step and no goal (T-R8); its history is the warm-up variant (F5, Р29)', () => {
     const summaryJson = '{"meanRt":250,"sdRt":40}';
     const warmup = row({ module: 'pzmr', lBefore: 5, lAfter: 5, flags: ['warmup'], summaryJson });
-    // The step reads lBefore: a probe whose lAfter differs shows it is not lAfter.
-    const probe = assessBlock({ ...warmup, lAfter: 9 }, ctx);
-    expect(probe.step).toBe(assessBlock(row({ module: 'pzmr', lBefore: 3, lAfter: 5, summaryJson }), ctx).step);
-    expect(probe.goal).toBeNull();
+    expect(assessBlock(warmup, ctx)).toMatchObject({ step: null, goal: null });
     const a = assessBlock(warmup, { ...ctx, history: new Map([['pzmr', [e(1, 200, 6)]], ['pzmr:warmup', [e(1, 300, 5)]]]) });
     expect(a.history).toBe('Раньше в этом блоке: прошлый раз 300 мс (ур. 5) · лучший 300 мс · в среднем за 7 дней 300 мс — новый лучший результат');
     expect(assessBlock(warmup, withHistory('pzmr', [e(1, 200, 6)])).history).toBe('Первый такой блок — будет с чем сравнивать');
+  });
+
+  it('a test-format run: the norms only, no step, goal or history line (T-R8): its summary names its own best', () => {
+    const summaryJson = '{"meanRt":262.4,"sdRt":40,"counts":{"miss":0,"late":0}}';
+    const paramsJson = JSON.stringify({ ...DIAGNOSTIC_PARAMS.pzmr, trials: 50 });
+    const run = row({ module: 'pzmr', lBefore: 6, lAfter: 6, flags: ['test_format'], paramsJson, summaryJson });
+    const a = assessBlock(run, { ...ctx, history: new Map([['pzmr:test', [e(1, 300, 6)]]]) });
+    expect(a).toEqual({ step: null, goal: null, norms: assessBlock({ ...run, flags: [] }, ctx).norms, history: null });
+    expect(a.norms).toHaveLength(2);
+    // A run of a module with a hint and without a norm gets the hint, as any block.
+    const gonogo = row({ module: 'gonogo', lBefore: 6, lAfter: 6, flags: ['test_format'], summaryJson: '{"meanRt":300}' });
+    expect(assessBlock(gonogo, ctx)).toEqual({ step: null, goal: null, norms: [NORM_HINTS.gonogo], history: null });
   });
 
   it('timing_unreliable gets no mark', () => {

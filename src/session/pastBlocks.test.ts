@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { MemoryRepository } from '../data/memoryRepository';
 import { block, session } from '../data/repository.contract';
 import type { BlockRow } from '../data/rows';
-import { appendPast, cleanHitsByBand, pastBlocks, readCleanHits, warmupDays, withBlock } from './pastBlocks';
+import { appendPast, cleanHitsByBand, pastBlocks, readCleanHits, testFormatRuns, testFormatRunsAt, warmupDays, withBlock } from './pastBlocks';
+import type { TestFormatMetrics } from './testFormat';
 
 const hits = (rts: unknown): string => JSON.stringify({ meanRt: 300, cleanHitRts: rts });
 
@@ -125,9 +126,11 @@ describe('cleanHitsByBand', () => {
       played('a', 't', '2026-10-10T09:01:00', 0, [301], { flags: ['calibration'] }),
       played('e', 'f', '2026-10-11T09:04:00', 1, [312], { flags: ['fatigued'] }),
       played('c', 't', '2026-10-10T09:03:00', 1, [311], { flags: ['warmup'] }),
-      // Left out: overload and timing_unreliable blocks, a diagnostic, a block without a band, another module.
+      // Left out: overload, timing_unreliable and test-format blocks, a diagnostic, a block without a band, another
+      // module. A test-format run plays the frozen diagnostic parameters (F4): its band field is the format's band 0.
       played('g', 't', '2026-10-10T09:05:00', 1, [901], { flags: ['overload'] }),
       played('h', 't', '2026-10-10T09:06:00', 0, [902], { flags: ['timing_unreliable', 'fatigued'] }),
+      played('m', 'f', '2026-10-11T09:05:00', 0, [906], { flags: ['test_format'] }),
       played('i', 'd', '2026-10-12T09:01:00', 0, [903]),
       block('j', 't', '2026-10-10T09:07:00', { summaryJson: hits([904]) }),
       played('k', 't', '2026-10-10T09:08:00', 0, [905], { module: 'szmr' }),
@@ -179,5 +182,36 @@ describe('cleanHitsByBand', () => {
       sessions,
     );
     expect(cleanHitsByBand(past, 'pzmr')).toEqual(new Map([[0, [300, 306]]]));
+  });
+});
+
+describe('testFormatRuns', () => {
+  const sessions = [
+    session('t', '2026-10-10T09:00:00'),
+    session('f', '2026-10-11T09:00:00', { kind: 'free' }),
+    session('d', '2026-10-12T09:00:00', { kind: 'diagnostic' }),
+  ];
+  const metrics = (mean: number): TestFormatMetrics => ({ mean, sd: 30, errors: 1, falseStarts: 0, thirds: [mean, mean, mean] });
+  const run = (id: string, sessionId: string, startedAt: string, summary: unknown, over: Partial<BlockRow> = {}): BlockRow =>
+    block(id, sessionId, startedAt, { flags: ['test_format'], summaryJson: JSON.stringify(summary), ...over });
+
+  it('the stored runs of a format in block order: training and free blocks with the flag and a readable summary', () => {
+    const past = pastBlocks(
+      [
+        run('a', 't', '2026-10-10T09:01:00', { meanRt: 250, testFormat: metrics(250) }),
+        run('b', 'f', '2026-10-11T09:01:00', { testFormat: metrics(240) }, { flags: ['test_format', 'timing_unreliable'] }),
+        // Left out: another format, a diagnostic, a block without the flag, a damaged summary.
+        run('c', 't', '2026-10-10T09:02:00', { testFormat: metrics(300) }, { module: 'szmr' }),
+        run('e', 'd', '2026-10-12T09:01:00', { testFormat: metrics(200) }),
+        run('g', 't', '2026-10-10T09:03:00', { testFormat: metrics(210) }, { flags: [] }),
+        run('h', 't', '2026-10-10T09:04:00', { testFormat: { mean: 'x' } }),
+        block('i', 't', '2026-10-10T09:05:00', { flags: ['test_format'], summaryJson: 'not json' }),
+      ],
+      sessions,
+    );
+    expect(testFormatRuns(past, 'pzmr')).toEqual([metrics(250), metrics(240)]);
+    expect(testFormatRunsAt(past, 'pzmr').map((r) => r.at)).toEqual(['2026-10-10T09:01:00', '2026-10-11T09:01:00']);
+    expect(testFormatRuns(past, 'szmr')).toEqual([metrics(300)]);
+    expect(testFormatRuns(past, 'rdo')).toEqual([]);
   });
 });

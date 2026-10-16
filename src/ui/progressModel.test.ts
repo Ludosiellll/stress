@@ -3,7 +3,7 @@ import type { DiagnosticRow } from '../data/rows';
 import { block, session } from '../data/repository.contract';
 import { MemoryRepository } from '../data/memoryRepository';
 import { rebuildCaches } from '../data/export';
-import { MODULE_IDS } from '../engine/types';
+import { MODULE_IDS, type BlockFlag } from '../engine/types';
 import { diagnosticCharts, durationText, formOfDayPoints, loadProgressModel, overload28d, ruDate, sessionLines, SESSION_LINES } from './progressModel';
 
 function row(number: number, results: unknown): DiagnosticRow {
@@ -306,6 +306,42 @@ describe('the form of the day', () => {
     await repo.addBlock(block('r', 't', at(14), { summaryJson: summaryJson([200]) }), [], []);
     await repo.addBlock(block('x', 'd', at(13), { flags: ['warmup'], summaryJson: summaryJson([200]) }), [], []);
     expect((await loadProgressModel(repo, now)).formOfDay).toEqual([{ x: '14.10', y: 282 }]);
+  });
+});
+
+describe('the test-format runs (F4)', () => {
+  const at = (day: number): string => new Date(2026, 9, day, 10).toISOString();
+  const run = (mean: number | null, sd: number | null, errors: number, falseStarts = 0): string =>
+    JSON.stringify({ testFormat: { mean, sd, errors, falseStarts, thirds: [mean, mean, mean] } });
+
+  it('per format with runs, in format order: the mean and the SD of each run by its date, the best and the number of runs', async () => {
+    const repo = new MemoryRepository();
+    for (const [id, day, kind] of [['t1', 1, 'training'], ['t2', 8, 'training'], ['t3', 15, 'training'], ['d', 9, 'diagnostic']] as const) {
+      await repo.createSession(session(id, at(day), { kind, endedAt: at(day) }));
+    }
+    const flags: BlockFlag[] = ['test_format'];
+    await repo.addBlock(block('r1', 't1', at(1), { module: 'pzmr', flags, summaryJson: run(260.4, 30, 2) }), [], []);
+    await repo.addBlock(block('r2', 't2', at(8), { module: 'rdo', flags, summaryJson: run(18, 25, 3, 1) }), [], []);
+    await repo.addBlock(block('r3', 't3', at(15), { module: 'pzmr', flags, summaryJson: run(250, null, 3) }), [], []);
+    // Left out: a damaged run, a diagnostic block with the flag, a block without it.
+    await repo.addBlock(block('x1', 't3', at(15), { module: 'szmr', flags, summaryJson: '{"testFormat":{}}' }), [], []);
+    await repo.addBlock(block('x2', 'd', at(9), { module: 'pzmr', flags, summaryJson: run(100, 1, 0) }), [], []);
+    await repo.addBlock(block('x3', 't1', at(1), { module: 'pzmr', summaryJson: run(100, 1, 0) }), [], []);
+    expect((await loadProgressModel(repo, new Date(2026, 9, 16))).testFormats).toEqual([
+      {
+        format: 'pzmr',
+        name: 'ПЗМР',
+        mean: [{ x: '01.10', y: 260.4 }, { x: '15.10', y: 250 }],
+        sd: [{ x: '01.10', y: 30 }, { x: '15.10', y: null }],
+        best: { mean: 250, sd: 30, errors: 2, falseStarts: 0 },
+        runs: 2,
+      },
+      { format: 'rdo', name: 'РДО', mean: [{ x: '08.10', y: 18 }], sd: [{ x: '08.10', y: 25 }], best: { mean: 18, sd: 25, errors: 3, falseStarts: 1 }, runs: 1 },
+    ]);
+  });
+
+  it('no runs: no format', async () => {
+    expect((await loadProgressModel(new MemoryRepository())).testFormats).toEqual([]);
   });
 });
 

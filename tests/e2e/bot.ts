@@ -1,5 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { expect, type Page } from '@playwright/test';
+import { exportBundle } from '../../src/data/export';
+import { MemoryRepository } from '../../src/data/memoryRepository';
+import type { BlockRow } from '../../src/data/rows';
 import type { StimulusEvent } from '../../src/testing/e2eHooks';
 
 /**
@@ -315,6 +318,51 @@ export async function chooseExportFile(page: Page, text: string): Promise<void> 
   const chooser = page.waitForEvent('filechooser');
   await page.getByRole('button', { name: 'Восстановить из файла экспорта' }).click();
   await (await chooser).setFiles({ name: 'trainer-export.json', mimeType: 'application/json', buffer: Buffer.from(text, 'utf8') });
+}
+
+/**
+ * An export file with a training history: each session at local noon `daysAgo` local calendar days before today
+ * (Playwright's Chromium runs in this process's time zone, so these are the page's local days), ended 10 minutes
+ * later, with its blocks a minute apart. A block takes the given fields over a ПЗМР block at level 0. Written by the
+ * app's own exportBundle, so a restore reads it as a real file.
+ */
+export async function historyBundle(o: { sessions: { daysAgo: number; blocks?: Partial<BlockRow>[] }[] }): Promise<string> {
+  const repo = new MemoryRepository();
+  for (const [i, s] of o.sessions.entries()) {
+    const start = new Date();
+    start.setDate(start.getDate() - s.daysAgo);
+    start.setHours(12, 0, 0, 0);
+    const at = (minutes: number): string => new Date(start.getTime() + minutes * 60_000).toISOString();
+    const sessionId = `e2e-session-${String(i)}`;
+    await repo.createSession({ id: sessionId, startedAt: at(0), endedAt: at(10), kind: 'training', phase: 'base', appVersion: '0.2.0' });
+    for (const [k, over] of (s.blocks ?? []).entries()) {
+      const row: BlockRow = {
+        id: `${sessionId}-block-${String(k)}`,
+        sessionId,
+        module: 'pzmr',
+        lBefore: 0,
+        lAfter: 0,
+        paramsJson: '{}',
+        score: 1,
+        flags: [],
+        startedAt: at(k + 1),
+        summaryJson: '{}',
+        ...over,
+      };
+      await repo.addBlock(row, [], []);
+    }
+  }
+  return exportBundle(repo, '0.2.0');
+}
+
+/** Settings → the file → «Восстановить» → «Готово.» → «Назад»: back on Home with the history of `text`. */
+export async function restoreBundle(page: Page, text: string): Promise<void> {
+  await page.getByRole('button', { name: 'Настройки' }).click();
+  await chooseExportFile(page, text);
+  await page.getByRole('button', { name: 'Восстановить', exact: true }).click();
+  await expect(page.getByText(/^Готово\./)).toBeVisible();
+  await page.getByRole('button', { name: 'Назад' }).click();
+  await expect(page.getByRole('button', { name: 'Начать тренировку' })).toBeVisible();
 }
 
 /** The page's local date `days` from today, YYYY-MM-DD (the app counts days in the page's time zone). */

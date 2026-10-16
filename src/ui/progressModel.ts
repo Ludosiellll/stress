@@ -4,7 +4,7 @@ import { localDayIso, localDayNumber } from '../engine/dates';
 import type { FormDay } from '../engine/dayForm';
 import { sessionEndPoints, type LevelPoint } from '../engine/derive';
 import { parseResults, type DiagnosticMetrics, type DiagnosticResults } from '../engine/diagnostic';
-import { L_NORM, OLD_L_NORM } from '../engine/planner';
+import { L_NORM, OLD_L_NORM, TEST_FORMAT_ORDER, type TestFormatId } from '../engine/planner';
 import { penalizedScore } from '../engine/reaction/summary';
 import type { Outcome } from '../engine/reaction/types';
 import { mean, median } from '../engine/stats';
@@ -12,8 +12,9 @@ import { isBandModule, MODULE_IDS, type ModuleId, type ReactionModuleId, type Se
 import { moduleTitles } from '../modules/registry';
 import { assessModules, meanFamilyRating, type ModuleAssessment } from '../session/assessment';
 import { buildBlockHistory, parseObject } from '../session/blockHistory';
-import { pastBlocks, warmupDays } from '../session/pastBlocks';
+import { pastBlocks, testFormatRunsAt, warmupDays, type PastBlocks } from '../session/pastBlocks';
 import { shownCost } from '../session/steps';
+import { TEST_FORMAT_NAMES, testFormatBest, type TestFormatBest } from '../session/testFormat';
 import type { ChartDomain, ChartPoint, ChartSeries } from './charts/LineChart';
 import { readinessOf, type HomeModel } from './homeModel';
 
@@ -56,6 +57,17 @@ export interface OverloadMean {
   blocks: number;
 }
 
+/** The runs of one test format (F4): a point per run (x «дд.мм»), its best and how many runs there were. */
+export interface TestFormatProgress {
+  format: TestFormatId;
+  name: string;
+  /** The mean (РДО: the deviation) of each run; null: the run has none. */
+  mean: ChartPoint[];
+  sd: ChartPoint[];
+  best: TestFormatBest;
+  runs: number;
+}
+
 export interface SessionLine {
   id: string;
   date: string;
@@ -71,6 +83,8 @@ export interface ProgressModel {
   diagnostics: ChartSpec[];
   /** «Форма дня»: the daily median of the ПЗМР warm-up over FORM_CHART_DAYS days (F5). */
   formOfDay: ChartPoint[];
+  /** «Прогоны в формате теста»: the formats with at least one stored run, in TEST_FORMAT_ORDER (F4). */
+  testFormats: TestFormatProgress[];
   levels: LevelChartSpec[];
   /** «Средний балл блоков перегрузки за 28 дней» (F3); null without such blocks. */
   overload28d: OverloadMean | null;
@@ -245,6 +259,31 @@ export function formOfDayPoints(days: readonly FormDay[], today: string): ChartP
     .map(([day, rts]) => ({ x: `${day.slice(8, 10)}.${day.slice(5, 7)}`, y: median(rts) }));
 }
 
+/** Local date, dd.mm. */
+function dayMonth(iso: string): string {
+  const d = new Date(iso);
+  return `${two(d.getDate())}.${two(d.getMonth() + 1)}`;
+}
+
+/** Each format with stored runs (testFormatRunsAt): the points of its two charts, its best and its runs. */
+export function testFormatProgress(past: PastBlocks): TestFormatProgress[] {
+  return TEST_FORMAT_ORDER.flatMap((format) => {
+    const runs = testFormatRunsAt(past, format);
+    const best = testFormatBest(runs.map((r) => r.metrics));
+    if (best === null) return [];
+    return [
+      {
+        format,
+        name: TEST_FORMAT_NAMES[format],
+        mean: runs.map((r) => ({ x: dayMonth(r.at), y: r.metrics.mean })),
+        sd: runs.map((r) => ({ x: dayMonth(r.at), y: r.metrics.sd })),
+        best,
+        runs: runs.length,
+      },
+    ];
+  });
+}
+
 /**
  * A level chart: the session end levels as recorded (not the capped cache) and, in a band module, the marker at the
  * first load-rule session when an older session comes before it.
@@ -317,11 +356,13 @@ export async function loadProgressModel(repo: Repository, now: Date = new Date()
   ]);
   const blocksBySession = count(blocks.map((b) => b.sessionId));
   const points = sessionEndPoints(sessions, blocks);
+  const past = pastBlocks(blocks, sessions);
   return {
     readiness: readinessOf(diagnostics),
     assessment: assessModules({ states, meanRating: meanFamilyRating(ratings), history: buildBlockHistory(blocks, sessions), now }),
     diagnostics: diagnosticCharts(diagnostics),
-    formOfDay: formOfDayPoints(warmupDays(pastBlocks(blocks, sessions)), localDayIso(now.toISOString())),
+    formOfDay: formOfDayPoints(warmupDays(past), localDayIso(now.toISOString())),
+    testFormats: testFormatProgress(past),
     levels: LEVEL_MODULES.map((module) => levelChart(module, points[module])),
     overload28d: overload28d(blocks, now),
     sessions: sessionLines(sessions, blocksBySession),

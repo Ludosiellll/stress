@@ -7,8 +7,10 @@ import { BASE_DAYS, CALIBRATION_BLOCKS, currentPhase, firstSessionAt, type Phase
 import {
   OVERLOAD_REACTION_MINUTES,
   TAPER_VOLUME,
+  TEST_FORMAT_MINUTES,
   isDiagnosticDue,
   isRehearsalDue,
+  isTestFormat,
   planTraining,
   type Segment,
   type SessionPlan,
@@ -18,6 +20,7 @@ import { hashString } from '../engine/rng';
 import { computeStreak } from '../engine/streak';
 import type { ModuleId, ReactionModuleId } from '../engine/types';
 import { moduleTitles } from '../modules/registry';
+import { signalsText, TEST_FORMAT_NAMES } from '../session/testFormat';
 import { budgetMinutes } from './format';
 
 export interface HomeModel {
@@ -138,8 +141,15 @@ const OVERLOAD_SUFFIX: Record<NonNullable<Segment['overload']>, string> = {
   mix: ' — с блоками перегрузки (плато)',
 };
 
-/** A line of the plan on Home: «Струп — 3 мин — финишер с перегрузкой». */
+/**
+ * A line of the plan on Home: «Струп — 3 мин — финишер с перегрузкой»; a test-format run (F4): «Прогон в формате теста:
+ * СЗМР, 70 сигналов (около 3 мин)».
+ */
 export function planLine(s: Segment): string {
+  if (s.purpose === 'test_format' && isTestFormat(s.module)) {
+    const minutes = String(TEST_FORMAT_MINUTES[s.module]);
+    return `Прогон в формате теста: ${TEST_FORMAT_NAMES[s.module]}, ${signalsText(s.trialCount ?? 0)} (около ${minutes} мин)`;
+  }
   const suffix = s.overload === undefined ? '' : OVERLOAD_SUFFIX[s.overload];
   return `${moduleTitles[s.module]} — ${budgetMinutes(s.budgetMs)} мин${suffix}`;
 }
@@ -162,7 +172,13 @@ export async function loadHomeModel(repo: Repository, today: string): Promise<Ho
   // Seeds count every diagnostic ever started, so an abandoned one is not replayed with the same tables (I5).
   const diagnosticsStarted = sessions.filter((s) => s.kind === 'diagnostic').length;
   const phase = currentPhase({ firstSessionAt: firstSessionAt(sessions), today, testDate: settings.testDate, states });
-  const plan = planTraining(states, today, hashString(`${today}:${String(sessions.length)}`), phase);
+  // The test-format runs (F4) by their flag, whatever the session; the planner needs their dates and their number.
+  const testFormatRuns = blockLevels
+    .flat()
+    .filter((b) => b.flags.includes('test_format'))
+    .map((b) => b.startedAt)
+    .sort((a, b) => Date.parse(a) - Date.parse(b));
+  const plan = planTraining(states, today, hashString(`${today}:${String(sessions.length)}`), phase, { testFormatRuns });
   const untried = new Set(MODULE_IDS.filter((m) => states[m].lifetimeBlocks === 0));
   const texts = phaseTexts(phase, plan, untried);
   return {

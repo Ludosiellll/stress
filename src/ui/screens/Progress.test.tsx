@@ -270,6 +270,50 @@ describe('Progress edge cases', () => {
     expect(card.querySelectorAll('circle')).toHaveLength(2);
   });
 
+  it('«Прогоны в формате теста» follows «Форма дня»: the mean and the SD of each format by run, the best results (F4)', async () => {
+    const repo = new MemoryRepository();
+    const day = (d: number): string => new Date(Date.now() - d * 86_400_000).toISOString();
+    const run = (mean: number, sd: number | null, errors: number): string =>
+      JSON.stringify({ testFormat: { mean, sd, errors, falseStarts: 0, thirds: [mean, mean, mean] } });
+    for (const [id, d, module, summaryJson] of [
+      ['a', 9, 'pzmr', run(262.4, 31, 1)],
+      ['b', 6, 'szmr', run(401, 55, 2)],
+      ['c', 3, 'rdo', run(18, 22, 4)],
+      ['e', 1, 'pzmr', run(250, null, 0)],
+    ] as const) {
+      await repo.createSession(session(id, day(d), { endedAt: day(d) }));
+      await repo.addBlock(block(id, id, day(d), { module, flags: ['test_format'], summaryJson }), [], []);
+    }
+    await renderProgress(repo);
+    const headings = screen.getAllByRole('heading').map((h) => h.textContent);
+    const at = headings.indexOf('Прогоны в формате теста');
+    expect(at).toBeGreaterThan(headings.indexOf('Форма дня'));
+    expect(at).toBeLessThan(headings.indexOf('Контрольные диагностики'));
+    expect(headings.slice(at + 1, at + 7)).toEqual(['ПЗМР: среднее, мс', 'ПЗМР: SD, мс', 'СЗМР: среднее, мс', 'СЗМР: SD, мс', 'РДО: отклонение, мс', 'РДО: SD, мс']);
+    const mean = chartOf('ПЗМР: среднее, мс');
+    expect(within(mean).getByText('меньше — лучше')).toBeTruthy();
+    expect([...mean.querySelectorAll('circle > title')].map((t) => t.textContent)).toEqual([expect.stringMatching(/: 262$/), expect.stringMatching(/: 250$/)]);
+    // A run without an SD is a gap.
+    expect(chartOf('ПЗМР: SD, мс').querySelectorAll('circle')).toHaveLength(1);
+
+    const table = screen.getByRole('table', { name: 'Лучшие результаты' });
+    expect(within(table).getAllByRole('columnheader').map((c) => c.textContent)).toEqual(['Формат', 'Среднее', 'SD', 'Ошибки', 'Фальстарты', 'Прогонов']);
+    const rows = within(table).getAllByRole('row').slice(1).map((r) => within(r).getAllByRole('cell').map((c) => c.textContent));
+    expect(rows).toEqual([
+      ['ПЗМР', '250\u00a0мс', '31\u00a0мс', '0', '0', '2'],
+      ['СЗМР', '401\u00a0мс', '55\u00a0мс', '2', '0', '1'],
+      ['РДО', '18\u00a0мс', '22\u00a0мс', '4', '0', '1'],
+    ]);
+    expect(table.nextElementSibling?.textContent).toBe('У РДО в колонке «Среднее» — среднее отклонение от отметки.');
+  });
+
+  it('«Прогоны в формате теста» without runs says when they start', async () => {
+    await renderProgress();
+    const note = screen.getByText('Прогонов пока не было. Они начнутся с 15-го дня.');
+    expect(note.closest('section')?.getAttribute('aria-labelledby')).toBe('test-format-title');
+    expect(screen.queryByRole('table', { name: 'Лучшие результаты' })).toBeNull();
+  });
+
   it('«Оценка по модулям» shows a band module by the band of its latest block (Р29, T-R7)', async () => {
     const repo = new MemoryRepository();
     const t = (h: number): string => new Date(Date.now() - h * 60 * 60 * 1000).toISOString();

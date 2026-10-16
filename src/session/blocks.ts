@@ -61,6 +61,7 @@ import {
   type StepOf,
 } from './steps';
 import { cleanHitsByBand, type PastBlocks } from './pastBlocks';
+import { testFormatInstruction } from './testFormat';
 
 /** Pure parts of a session block: what to play, its seed, its step, and scoring. No state, no I/O. */
 
@@ -161,8 +162,10 @@ export type BlockPlan =
       size: number;
       practice: number;
       overload: boolean;
-      /** A band module's training or free block; null for РДО and diagnostics (F3). */
+      /** A band module's training or free block; null for РДО, diagnostics and test-format runs (F3). */
       load: BlockLoad | null;
+      /** A test-format run (F4): the frozen diagnostic parameters, its own instruction. */
+      testFormat: boolean;
     }
   | { kind: 'table'; module: TableModuleId; L: number; task: TableTaskId; params: TableParams; overload: boolean }
   /**
@@ -205,7 +208,8 @@ export function planBlock(segment: Segment, segmentL: number, blockIndex: number
   const L = overload && segment.overload === 'mix' && !isBandModule(module) ? segmentL + OVERLOAD_LEVEL_STEP : segmentL;
   if (isReactionModule(module)) {
     const mod = reactionModules[module];
-    const { params, load } = reactionBlock(module, L, overload, ctx);
+    const testFormat = segment.purpose === 'test_format';
+    const { params, load } = reactionBlock(module, L, overload, ctx.diagnostic || testFormat, ctx);
     const { keys, effectiveLayout } = layoutKeys(ctx.layout, mod.keyCount(params));
     return {
       kind: 'reaction',
@@ -218,6 +222,7 @@ export function planBlock(segment: Segment, segmentL: number, blockIndex: number
       practice: scaledPractice(segment.practiceTrials ?? 0, ctx.scale),
       overload,
       load,
+      testFormat,
     };
   }
   if (module === 'gorbov') {
@@ -249,11 +254,18 @@ export function planBlock(segment: Segment, segmentL: number, blockIndex: number
 }
 
 /**
- * The parameters and the load of a reaction block at L. A diagnostic plays the frozen 0.2.0 parameters, whatever
- * params(L) becomes (training-fixes spec §2.0), and never gets a floor.
+ * The parameters and the load of a reaction block at L. A diagnostic and a test-format run (`frozen`) play the frozen
+ * 0.2.0 parameters, whatever params(L) becomes (training-fixes spec §2.0, F4): no floor, no Go/No-Go colour swap
+ * (T-R42) and none of the training rules that come with the bands.
  */
-function reactionBlock(module: ReactionModuleId, L: number, overload: boolean, ctx: PlanContext): { params: unknown; load: BlockLoad | null } {
-  if (ctx.diagnostic) return { params: DIAGNOSTIC_PARAMS[module], load: null };
+function reactionBlock(
+  module: ReactionModuleId,
+  L: number,
+  overload: boolean,
+  frozen: boolean,
+  ctx: PlanContext,
+): { params: unknown; load: BlockLoad | null } {
+  if (frozen) return { params: DIAGNOSTIC_PARAMS[module], load: null };
   return isBandModule(module) ? bandBlock(module, L, overload, ctx) : { params: reactionModules[module].params(L), load: null };
 }
 
@@ -311,10 +323,12 @@ function bandParams(module: BandModuleId, L: number, loadBand: number, ctx: Plan
 /**
  * The instruction before a block. A band module's block ends with its load line (F3). An overload block's text starts
  * with OVERLOAD_PREFIX, or in a reaction block, which plays the finisher sound (overloadStressors), with
- * OVERLOAD_SOUND_PREFIX; a band module's with overloadBandPrefix, naming the next band's load (Р16).
+ * OVERLOAD_SOUND_PREFIX; a band module's with overloadBandPrefix, naming the next band's load (Р16). A test-format run
+ * opens with testFormatInstruction for its size (F4).
  */
 export function blockInstruction(plan: BlockPlan, layout: LayoutId): { text: string; keysHint: string } {
   const { text, keysHint } = plainInstruction(plan, layout);
+  if (plan.kind === 'reaction' && plan.testFormat) return { text: testFormatInstruction(plan.size) + text, keysHint };
   if (plan.kind === 'reaction' && plan.load !== null) {
     const { loadBandLabel, bandLabel } = plan.load;
     const played = loadBandLabel ?? bandLabel;
@@ -432,16 +446,19 @@ export function buildBlock(
 }
 
 /**
- * What a reaction block stores as paramsJson: its parameters, and for a band module the nominal window and the floor
- * (F3); an overload block names its own band b and the band whose load it played (T-R25).
+ * What a reaction block stores as paramsJson: its parameters with `trials` the size it played (practice left out:
+ * a diagnostic ПЗМР plays 50 on parameters that say 15, the e2e scale shrinks every block, T-R48), and for a band
+ * module the nominal window and the floor (F3); an overload block names its own band b and the band whose load it
+ * played (T-R25).
  */
 function reactionParamsJson(plan: Extract<BlockPlan, { kind: 'reaction' }>): unknown {
   const { load } = plan;
-  if (load === null) return plan.params;
+  const params = { ...(plan.params as object), trials: plan.size };
+  if (load === null) return params;
   const floor = { nominalWindowMs: load.nominalWindowMs, floorMs: load.floorMs };
-  if (load.loadBand === null) return { ...(plan.params as object), ...floor };
+  if (load.loadBand === null) return { ...params, ...floor };
   const { band, bandLabel, loadBand, loadBandLabel } = load;
-  return { ...(plan.params as object), band, bandLabel, loadBand, loadBandLabel, ...floor };
+  return { ...params, band, bandLabel, loadBand, loadBandLabel, ...floor };
 }
 
 /** An overload block adds the finisher sound to the module's own on every trial; the noise keeps its trials (W2-R10). */

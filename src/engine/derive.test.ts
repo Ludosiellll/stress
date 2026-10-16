@@ -148,6 +148,22 @@ describe('deriveModuleStates', () => {
     expect(isCleanBlock(['warmup'])).toBe(false);
   });
 
+  it('test-format runs are like warm-ups: out of L_saved and lastTrainedAt, in lifetimeBlocks (F4)', () => {
+    const states = deriveModuleStates(
+      [ses('s1', day(1)), ses('s2', day(2))],
+      [
+        blk('s1', 'szmr', 4, day(1, 8, 1)),
+        // A run keeps the level it was played at (L_saved), whatever its lAfter says; s2 has nothing else of СЗМР.
+        blk('s2', 'szmr', 9, day(2, 8, 1), ['test_format']),
+      ],
+    );
+    expect(states.szmr.sessionEndLevels).toEqual([4]);
+    expect(states.szmr.lSaved).toBe(4);
+    expect(states.szmr.lifetimeBlocks).toBe(2);
+    expect(states.szmr.lastTrainedAt).toBe(day(1, 8, 1));
+    expect(isCleanBlock(['test_format'])).toBe(false);
+  });
+
   it('a module played only in overload blocks counts its blocks but has no training date (W2-R40)', () => {
     const states = deriveModuleStates([ses('s1', day(1))], [blk('s1', 'taskswitch', 13, day(1, 8, 1), ['overload'])]);
     expect(states.taskswitch.lifetimeBlocks).toBe(1);
@@ -160,10 +176,10 @@ describe('deriveModuleStates', () => {
     for (const f of ['fatigued', 'timing_unreliable', 'overload', 'warmup'] as const) expect(isCleanBlock(['calibration', f])).toBe(false);
   });
 
-  it('movesLevel: overload and warm-up blocks never move the level; the other flags do not matter (T-R38)', () => {
+  it('movesLevel: overload, warm-up and test-format blocks never move the level; the other flags do not matter (T-R38)', () => {
     expect(movesLevel([])).toBe(true);
     for (const f of ['calibration', 'fatigued', 'timing_unreliable'] as const) expect(movesLevel([f])).toBe(true);
-    for (const f of ['overload', 'warmup'] as const) expect(movesLevel(['calibration', f])).toBe(false);
+    for (const f of ['overload', 'warmup', 'test_format'] as const) expect(movesLevel(['calibration', f])).toBe(false);
   });
 
   it('ignores diagnostic sessions and blocks of unknown sessions; free sessions count', () => {

@@ -1,13 +1,13 @@
 import fc from 'fast-check';
 import { describe, expect, it, vi } from 'vitest';
 import { deriveRatings } from '../engine/derive';
-import { EMPTY_METRICS, diagnosticSegmentSeed, diagnosticSeriesSchedule, planDiagnostic } from '../engine/diagnostic';
+import { DIAGNOSTIC_VOLUME, EMPTY_METRICS, diagnosticSegmentSeed, diagnosticSeriesSchedule, planDiagnostic } from '../engine/diagnostic';
 import { R0, updateRating, type Rating } from '../engine/elo';
 import { block, session } from '../data/repository.contract';
 import { effectiveDifficulty } from '../engine/itemLimit';
 import { FINISHER_AUDIO } from '../engine/audio/stressors';
 import { noiseFrame } from '../engine/noise';
-import { OVERLOAD_LEVEL_STEP, type Segment } from '../engine/planner';
+import { OVERLOAD_LEVEL_STEP, TEST_FORMAT_ORDER, type Segment, type TestFormatId } from '../engine/planner';
 import { MIN_COND_RTS, condPairOf, type CondPair } from '../engine/reaction/conditions';
 import type { Outcome, ReactionSummary, Stimulus, TrialSpec } from '../engine/reaction/types';
 import { BAND_MODULES, REACTION_MODULE_IDS, isReactionModule, type FamilyId, type ModuleId, type ReactionModuleId } from '../engine/types';
@@ -49,6 +49,7 @@ import {
 import { appendPast, pastBlocks } from './pastBlocks';
 import { logicItemRows } from './rowsBuild';
 import { MEMORY_SPAN_INSTRUCTION, OVERLOAD_PREFIX, OVERLOAD_SOUND_PREFIX, overloadBandPrefix, type StepOf } from './steps';
+import { testFormatInstruction } from './testFormat';
 
 const counts = {} as Record<Outcome, number>;
 /** penalizedScore differs from score: the diagnostic reads the share of successes, never the penalised s (F1). */
@@ -81,6 +82,14 @@ const PLAIN = segmentWhere(false);
 const CONDITION_MODULES: readonly ReactionModuleId[] = ['stroop', 'pomeh', 'taskswitch'];
 
 const freeSegment = (module: ReactionModuleId): Segment => ({ module, budgetMs: 300_000, purpose: 'free' });
+/** The segment of a test-format run of `module` (F4), as planTraining makes it. */
+const runSegment = (module: TestFormatId): Segment => ({
+  module,
+  budgetMs: 0,
+  purpose: 'test_format',
+  trialCount: DIAGNOSTIC_VOLUME[module].trialCount,
+  practiceTrials: 5,
+});
 
 /** The first block of `seg` at level L, which must be a reaction block. */
 function reactionPlan(seg: Segment, L: number, ctx: PlanContext): Extract<BlockPlan, { kind: 'reaction' }> {
@@ -696,8 +705,72 @@ describe('the personal window floor and the overload band (F3)', () => {
       expect(plan.params, seg.module).toBe(DIAGNOSTIC_PARAMS[seg.module]);
       expect(plan.load, seg.module).toBeNull();
     }
+    // A test-format run of a training plan plays the frozen parameters too, whatever the floors say (F4).
+    for (const module of TEST_FORMAT_ORDER) {
+      const plan = reactionPlan(runSegment(module), 6, { ...ctx, floors });
+      expect(plan.params, module).toBe(DIAGNOSTIC_PARAMS[module]);
+      expect(plan.load, module).toBeNull();
+    }
     expect(asked).toEqual([]);
     // The snapshots of the diagnostic blocks above pin the trials themselves.
+  });
+});
+
+describe('test-format runs (F4)', () => {
+  const ctx: PlanContext = { layout: 'keyboard', scale: 1, diagnostic: false, ...PLAIN };
+
+  it('a run plays DIAGNOSTIC_PARAMS at the diagnostic volume at its level; the instruction opens with the run\'s text', () => {
+    const plan = reactionPlan(runSegment('szmr'), 9, ctx);
+    expect(plan).toMatchObject({ kind: 'reaction', L: 9, size: 70, practice: 5, overload: false, load: null, testFormat: true, keys: ['KeyF', 'KeyJ'] });
+    expect(plan.params).toBe(DIAGNOSTIC_PARAMS.szmr);
+    expect(blockInstruction(plan, 'keyboard')).toEqual({
+      text: testFormatInstruction(70) + reactionModules.szmr.instruction('keyboard', DIAGNOSTIC_PARAMS.szmr),
+      keysHint: 'F, J',
+    });
+    const { step } = buildBlock(plan, 3, 'keyboard', new Map());
+    if (step.kind !== 'reaction_block') throw new Error('expected a reaction block');
+    expect([step.specs.length, step.specs.filter((t) => t.practice === true).length]).toEqual([75, 5]);
+    // РДО: its 3000 ms period and its block of 50.
+    const rdoRun = reactionPlan(runSegment('rdo'), 14, ctx);
+    expect(rdoRun).toMatchObject({ params: DIAGNOSTIC_PARAMS.rdo, size: 50, testFormat: true });
+    expect(blockInstruction(rdoRun, 'keyboard').text).toBe(testFormatInstruction(50) + rdo.instruction('keyboard', DIAGNOSTIC_PARAMS.rdo));
+    // Other blocks are no runs.
+    expect(reactionPlan(freeSegment('szmr'), 9, ctx).testFormat).toBe(false);
+    expect(reactionPlan(planDiagnostic(1).segments[1] as Segment, 0, { ...ctx, diagnostic: true }).testFormat).toBe(false);
+  });
+
+  it('a run never swaps the Go/No-Go colours, not even in a segment the plan seed swaps in training (T-R42)', () => {
+    const swapping: PlanContext = { ...ctx, ...SWAPPING };
+    expect(isSwappedSegment(swapping.planSeed, swapping.segmentIndex)).toBe(true);
+    expect(reactionPlan(freeSegment('gonogo'), 12, swapping).params).toMatchObject({ swapped: true });
+    const plan = reactionPlan(runSegment('gonogo'), 12, swapping);
+    expect(plan.params).toBe(DIAGNOSTIC_PARAMS.gonogo);
+    const { step } = buildBlock(plan, 9, 'keyboard', new Map());
+    if (step.kind !== 'reaction_block') throw new Error('expected a reaction block');
+    const go = new Set(step.specs.flatMap((t) => (t.expected.kind === 'press' ? [JSON.stringify(t.stimulus)] : [])));
+    expect([...go]).toEqual([JSON.stringify({ kind: 'shape', shape: 'circle', color: 'red' })]);
+  });
+});
+
+describe('the stored block size (T-R48)', () => {
+  const ctx: PlanContext = { layout: 'keyboard', scale: 1, diagnostic: false, ...PLAIN };
+  const storedTrials = (plan: BlockPlan): unknown => (JSON.parse(buildBlock(plan, 5, 'keyboard', new Map()).paramsJson) as { trials?: unknown }).trials;
+  const diagnostic = (module: ReactionModuleId): Segment => planDiagnostic(1).segments.find((s) => s.module === module) as Segment;
+
+  it('paramsJson.trials is the size the block played, practice left out', () => {
+    // The diagnostic ПЗМР plays 50 (+5 practice) on params that say 15.
+    expect(DIAGNOSTIC_PARAMS.pzmr.trials).toBe(15);
+    expect(storedTrials(reactionPlan(diagnostic('pzmr'), 0, { ...ctx, diagnostic: true }))).toBe(50);
+    expect(storedTrials(reactionPlan(runSegment('gonogo'), 3, ctx))).toBe(60);
+    // The e2e scale shrinks the block, and the row says so.
+    expect(storedTrials(reactionPlan(diagnostic('pzmr'), 0, { ...ctx, diagnostic: true, scale: 0.02 }))).toBe(3);
+    expect(storedTrials(reactionPlan(freeSegment('szmr'), 0, { ...ctx, scale: 0.02 }))).toBe(3);
+    // РДО has no block size of its own in its params: the row gets one.
+    expect(DIAGNOSTIC_PARAMS.rdo).not.toHaveProperty('trials');
+    expect(storedTrials(reactionPlan(freeSegment('rdo'), 0, ctx))).toBe(rdo.trials(rdo.params(0)));
+    // A training block at full scale keeps its params' size.
+    expect(storedTrials(reactionPlan(freeSegment('pzmr'), 28, ctx))).toBe(pzmr.params(28).trials);
+    expect(pzmr.params(28).trials).toBe(45);
   });
 });
 

@@ -8,6 +8,7 @@ import { nextLevel } from '../engine/adaptive';
 import { FINISHER_AUDIO } from '../engine/audio/stressors';
 import { deriveModuleStates, deriveRatings, defaultModuleState } from '../engine/derive';
 import {
+  DIAGNOSTIC_VOLUME,
   EMPTY_METRICS,
   diagnosticSegmentSeed,
   diagnosticSeriesSchedule,
@@ -16,7 +17,7 @@ import {
   type DiagnosticResults,
 } from '../engine/diagnostic';
 import { currentPhase, type PhaseInfo } from '../engine/phases';
-import { planFree, planTraining, type ModuleState, type Segment, type SessionPlan } from '../engine/planner';
+import { planFree, planTraining, type ModuleState, type Segment, type SessionPlan, type TestFormatId } from '../engine/planner';
 import { readinessOfLatest } from '../engine/readiness';
 import { createRng, deriveSeed } from '../engine/rng';
 import { MODULE_IDS, type InputKey, type LayoutId, type ModuleId } from '../engine/types';
@@ -30,6 +31,7 @@ import { pomeh } from '../modules/reaction/pomeh';
 import { isSwappedSegment } from '../modules/reaction/gonogo';
 import { pzmr } from '../modules/reaction/pzmr';
 import { szmr } from '../modules/reaction/szmr';
+import { reactionModules } from '../modules/registry';
 import { gorbovMetrics } from '../modules/tables/gorbov';
 import {
   perfectMemoryAnswers,
@@ -42,6 +44,7 @@ import {
 import { assessBlock } from './assessment';
 import { appendBlock } from './blockHistory';
 import { SessionController, type SessionStartOptions } from './controller';
+import { testFormatInstruction } from './testFormat';
 import {
   AUDIO_NOT_PLAYED,
   MEMORY_SPAN_INSTRUCTION,
@@ -1247,6 +1250,123 @@ describe('SessionController — warm-up and the form of the day (F5)', () => {
       [0, 0],
     ]);
     expect((await h.repo.getModuleStates()).pzmr).toMatchObject({ lSaved: 0, lastTrainedAt: null, lifetimeBlocks: 2 });
+  });
+});
+
+describe('SessionController — test-format runs (F4)', () => {
+  const daysAgo = (d: number): string => new Date(new Date(T0).getTime() - d * DAY).toISOString();
+  const training = (...segments: Segment[]): SessionPlan => ({ kind: 'training', seed: 1, phase: 'development', segments });
+  /** The run of `module` as planTraining makes it. */
+  const run = (module: TestFormatId): Segment => ({
+    module,
+    budgetMs: 0,
+    purpose: 'test_format',
+    trialCount: DIAGNOSTIC_VOLUME[module].trialCount,
+    practiceTrials: 5,
+  });
+  /** A finished training session `d` days ago with these blocks; then the caches are rebuilt, as at app start. */
+  async function pastTraining(repo: MemoryRepository, id: string, d: number, blocks: Partial<BlockRow>[]): Promise<void> {
+    await repo.createSession(session(id, daysAgo(d), { endedAt: daysAgo(d) }));
+    for (const [i, over] of blocks.entries()) await repo.addBlock(block(`${id}b${String(i)}`, id, daysAgo(d), over), [], []);
+    await rebuildCaches(repo);
+  }
+  const stored = { mean: 250, sd: 30, errors: 1, falseStarts: 0, thirds: [250, 250, 250] };
+
+  it('a test-format run: frozen parameters, one block, the level unchanged', async () => {
+    const repo = new MemoryRepository();
+    await pastTraining(repo, 's0', 1, [{ module: 'pzmr', lBefore: 6, lAfter: 6, paramsJson: bandParams(6) }]);
+    expect((await repo.getModuleStates()).pzmr).toMatchObject({ lSaved: 6, lastTrainedAt: daysAgo(1), lifetimeBlocks: 1 });
+    // A budget the run never looks at: one block, then the next segment.
+    const h = await begin(training({ ...run('pzmr'), budgetMs: 10 * MIN }, { module: 'szmr', budgetMs: 10 * MIN, purpose: 'reaction' }), { repo });
+    expect(expectStep(h.c, 'instruction').text).toBe(testFormatInstruction(50) + reactionModules.pzmr.instruction('keyboard', DIAGNOSTIC_PARAMS.pzmr));
+    h.c.ackInstruction();
+    const step = expectStep(h.c, 'reaction_block');
+    expect(step.L).toBe(6);
+    expect([step.specs.length, step.specs.filter((t) => t.practice === true).length]).toEqual([55, 5]);
+    expect(new Set(step.specs.map((t) => t.windowMs))).toEqual(new Set([1000]));
+    h.clock.advance(MIN);
+    await h.c.submitReaction(playTimeline(step.specs, perfectPlayer));
+    const { view } = expectStep(h.c, 'summary');
+    expect(view).toMatchObject({
+      module: 'pzmr',
+      title: 'Прогон в формате теста · ПЗМР',
+      lBefore: 6,
+      lAfter: 6,
+      changes: [],
+      flags: ['test_format'],
+      showLevel: false,
+      levelNote: null,
+    });
+    expect(view.lines).toEqual(['Среднее 300 мс · SD 0 мс · ошибки 0 · фальстарты 0', 'Первый прогон в этом формате: сравнивать пока не с чем.']);
+    expect(view.assessment).toMatchObject({ step: null, goal: null, history: null });
+    const row = (await repo.listBlocks()).find((b) => b.sessionId === h.c.sessionId);
+    expect(row).toMatchObject({ module: 'pzmr', lBefore: 6, lAfter: 6, flags: ['test_format'] });
+    expect((JSON.parse(row?.summaryJson ?? '{}') as { testFormat: unknown }).testFormat).toEqual({
+      mean: 300,
+      sd: 0,
+      errors: 0,
+      falseStarts: 0,
+      thirds: [300, 300, 300],
+    });
+    expect(JSON.parse(row?.paramsJson ?? '{}')).toEqual({ ...DIAGNOSTIC_PARAMS.pzmr, trials: 50 });
+    await h.c.continueAfterSummary();
+    expect(expectStep(h.c, 'instruction').module).toBe('szmr');
+    // L_saved and the training date stay; the block counts in lifetimeBlocks.
+    expect((await repo.getModuleStates()).pzmr).toMatchObject({ lSaved: 6, lastTrainedAt: daysAgo(1), lifetimeBlocks: 2 });
+  });
+
+  it('the personal best comes from earlier runs of the same format', async () => {
+    const repo = new MemoryRepository();
+    await pastTraining(repo, 's1', 8, [{ module: 'pzmr', lBefore: 6, lAfter: 6, flags: ['test_format'], summaryJson: JSON.stringify({ meanRt: 250, testFormat: stored }) }]);
+    // Neither another format's run nor a block that is no run counts.
+    await pastTraining(repo, 's2', 4, [
+      { module: 'szmr', flags: ['test_format'], summaryJson: JSON.stringify({ testFormat: { ...stored, mean: 200, sd: 5 } }) },
+      { module: 'pzmr', lBefore: 6, lAfter: 6, summaryJson: JSON.stringify({ meanRt: 200, testFormat: { ...stored, mean: 100, errors: 0 } }) },
+    ]);
+    const h = await begin(training(run('pzmr')), { repo });
+    const { view } = await playReaction(h);
+    expect(view.lines).toEqual([
+      'Среднее 300 мс (лучшее 250) · SD 0 мс (лучшее 30) · ошибки 0 (лучшее 1) · фальстарты 0 (лучшее 0)',
+      'Новый лучший результат: SD, ошибки',
+    ]);
+    // One block, then the session goes on (here: to its end).
+    await h.c.continueAfterSummary();
+    expect(h.c.step.kind).toBe('wellbeing');
+  });
+
+  it('without the history read at start a run shows no best and does not call itself the first (Р18)', async () => {
+    const repo = new MemoryRepository();
+    await pastTraining(repo, 's1', 8, [{ module: 'rdo', flags: ['test_format'], summaryJson: JSON.stringify({ testFormat: stored }) }]);
+    vi.spyOn(repo, 'listBlocks').mockRejectedValueOnce(new Error('disk I/O error'));
+    const h = await begin(training(run('rdo')), { repo });
+    const { view } = await playReaction(h);
+    expect(view.title).toBe('Прогон в формате теста · РДО');
+    expect(view.lines).toEqual(['Отклонение 0 мс · SD 0 мс · ошибки 0 · фальстарты 0']);
+  });
+
+  it('a Go/No-Go run keeps its colours in a segment the plan seed swaps in training (T-R42)', async () => {
+    let seed = 1;
+    while (!isSwappedSegment(seed, 0)) seed++;
+    const h = await begin({ kind: 'training', seed, phase: 'development', segments: [run('gonogo')] });
+    expect(expectStep(h.c, 'instruction').text).toBe(testFormatInstruction(60) + reactionModules.gonogo.instruction('keyboard', DIAGNOSTIC_PARAMS.gonogo));
+    h.c.ackInstruction();
+    const block = expectStep(h.c, 'reaction_block');
+    const go = new Set(block.specs.flatMap((t) => (t.expected.kind === 'press' && t.stimulus.kind === 'shape' ? [t.stimulus.color] : [])));
+    expect([...go]).toEqual(['red']);
+  });
+
+  it('a run is neither the first block of the module nor its level in the session: a later segment starts at startLevel', async () => {
+    const repo = new MemoryRepository();
+    await pastTraining(repo, 's0', 1, [0, 1, 2].map(() => ({ module: 'szmr', lBefore: 6, lAfter: 6, paramsJson: bandParams(6) })));
+    const h = await begin(training(run('szmr'), { module: 'szmr', budgetMs: 1, purpose: 'reaction' }), { repo });
+    const first = await playReaction(h);
+    expect([first.view.lBefore, first.view.lAfter]).toEqual([6, 6]);
+    await h.c.continueAfterSummary();
+    const next = await playReaction(h);
+    // startLevel(6, 1 day) = 5; a perfect first block of the segment takes g = 2 (F6): the run did not use it up.
+    expect(next.view.lBefore).toBe(5);
+    expect(next.view.lAfter).toBe(nextLevel(5, { score: 1, calibration: false, prevScoreSameSession: null, firstOfSegment: true, cvAll: 0, lapses: 0, lapseLimit: 2, cvMax: 0.22, timingUnreliable: false }));
+    expect(next.view.flags).toEqual([]);
   });
 });
 

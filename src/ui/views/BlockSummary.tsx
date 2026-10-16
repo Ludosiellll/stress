@@ -19,10 +19,11 @@ const FLAG_TEXT: Record<BlockFlag, string> = {
   timing_unreliable: 'Замер ненадёжен: пропуски кадров — уровень не менялся',
   overload: 'Блок с перегрузкой: на сохранённый уровень не влияет',
   warmup: 'Разминка: на сохранённый уровень не влияет',
+  test_format: 'Прогон в формате теста: на сохранённый уровень не влияет',
 };
 
 /** Notes, not warnings. */
-const NOTE_FLAGS: ReadonlySet<BlockFlag> = new Set<BlockFlag>(['calibration', 'overload', 'warmup']);
+const NOTE_FLAGS: ReadonlySet<BlockFlag> = new Set<BlockFlag>(['calibration', 'overload', 'warmup', 'test_format']);
 
 /** The «Оценка» lines in order: step, goal, norms, history; empty ones are left out. */
 function assessmentLines(a: BlockAssessment | undefined): string[] {

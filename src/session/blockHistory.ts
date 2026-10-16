@@ -14,7 +14,7 @@ import { displayedCost, round1, whole } from './steps';
  * left out, never thrown on.
  */
 
-/** 'pzmr', 'pzmr:b2', 'pzmr:warmup', 'gorbov:alternate', 'schulte:6', 'memory:digits'. */
+/** 'pzmr', 'pzmr:b2', 'pzmr:warmup', 'szmr:test', 'gorbov:alternate', 'schulte:6', 'memory:digits'. */
 export type VariantKey = string;
 
 export interface KeyMetric {
@@ -152,7 +152,11 @@ function bandVariant(module: ModuleId, flags: readonly BlockFlag[], paramsJson: 
   return band === null ? module : `${module}${BAND_PREFIX}${String(band)}`;
 }
 
+/** A test-format run is a variant of its own (F4, Р29): the frozen diagnostic parameters, not a training band. */
+const TEST_SUFFIX = ':test';
+
 function variantFrom(module: ModuleId, flags: readonly BlockFlag[], summary: Json | null, paramsJson: string): VariantKey | null {
+  if (flags.includes('test_format')) return `${module}${TEST_SUFFIX}`;
   if (isBandModule(module)) return bandVariant(module, flags, paramsJson);
   switch (module) {
     case 'gorbov': {
@@ -409,7 +413,8 @@ function storedAt(entry: HistoryEntry | undefined): number {
 
 /**
  * A band module's main variant (Р29, T-R7): of the bare key (blocks from before the bands) and its band variants, the
- * one whose last entry is the latest; the bare key without any. The warm-up's variant never is.
+ * one whose last entry is the latest; the bare key without any. The variants of the warm-up and of the test-format
+ * runs never are.
  */
 function latestBandVariant(module: ModuleId, history: BlockHistory): VariantKey {
   const prefix = `${module}${BAND_PREFIX}`;

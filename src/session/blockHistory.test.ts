@@ -355,6 +355,25 @@ describe('buildBlockHistory', () => {
     expect(buildBlockHistory(blocks, SESSIONS).size).toBe(0);
   });
 
+  it('a test-format run goes to its own variant {module}:test (F4, Р29): never the main variant or its «лучший»', () => {
+    const run = (module: ModuleId, summaryJson: string, startedAt: string): BlockRow =>
+      row({ module, flags: ['test_format'], paramsJson: '{"band":0,"trials":50}', summaryJson, startedAt });
+    for (const module of ['pzmr', 'szmr', 'gonogo', 'rdo'] as const) {
+      expect(variantOf(run(module, '{}', ago(1)))).toBe(`${module}:test`);
+      expect(variantOf({ ...run(module, '{}', ago(1)), flags: ['test_format', 'timing_unreliable'] })).toBe(`${module}:test`);
+    }
+    const regular = row({ module: 'szmr', paramsJson: '{"band":0}', summaryJson: '{"meanRt":400}', startedAt: ago(3) });
+    const h = buildBlockHistory(
+      [regular, run('szmr', '{"meanRt":350}', ago(2)), run('rdo', '{"meanAbsErrorMs":20}', ago(1))],
+      SESSIONS,
+    );
+    expect(h.get('szmr:test')?.map((e) => e.value)).toEqual([350]);
+    expect(h.get('rdo:test')?.map((e) => e.value)).toEqual([20]);
+    // The run is later, the main variant stays the band's.
+    expect(mainVariant('szmr', h)).toBe('szmr:b0');
+    expect(mainVariant('rdo', h)).toBe('rdo');
+  });
+
   it('a warm-up block goes to its own variant pzmr:warmup (F5, Р29): never the main ПЗМР variant or its «лучший»', () => {
     const pzmrSummary = '{"meanRt":300,"sdRt":20,"counts":{"miss":0,"late":0}}';
     const warmup = row({ module: 'pzmr', flags: ['warmup'], lBefore: 5, summaryJson: '{"meanRt":250,"sdRt":20,"counts":{"miss":0,"late":0}}', startedAt: ago(2) });
