@@ -4,9 +4,8 @@ import { MemoryRepository } from '../../data/memoryRepository';
 import { rebuildCaches } from '../../data/export';
 import { block, session } from '../../data/repository.contract';
 import { EMPTY_METRICS, type DiagnosticResults } from '../../engine/diagnostic';
-import { defaultModuleState } from '../../engine/derive';
 import { L_NORM } from '../../engine/planner';
-import { MODULE_IDS } from '../../engine/types';
+import { MODULE_IDS, type ModuleId } from '../../engine/types';
 import { createFakePlatform } from '../../testing/fakePlatform';
 import { moduleTitles } from '../../modules/registry';
 import { diagnosticCharts } from '../progressModel';
@@ -81,7 +80,7 @@ describe('Progress with two diagnostics', () => {
     const repo = new MemoryRepository();
     await seedDiagnostic(repo, 1, {});
     await seedDiagnostic(repo, 2, {});
-    await repo.saveModuleState({ ...defaultModuleState('pzmr'), sessionEndLevels: [3, 5, 6.5], lSaved: 6.5 });
+    await seedLevels(repo, 'pzmr', [3, 5, 6.5].map((lAfter) => ({ lAfter, paramsJson: '{"band":1}' })));
     await renderProgress(repo);
     const card = chartOf(moduleTitles.pzmr);
     expect(card.querySelectorAll('circle')).toHaveLength(3);
@@ -91,6 +90,64 @@ describe('Progress with two diagnostics', () => {
     expect(Math.max(...ticks)).toBeGreaterThanOrEqual(L_NORM.pzmr);
     expect(screen.getAllByText('≈ формат теста')).toHaveLength(1);
     expect(within(card).getByText('сессия с этим модулем')).toBeTruthy();
+    // No session before the load bands: no break.
+    expect(card.querySelector('line.chart-marker')).toBeNull();
+    expect(within(card).queryByText(BREAK_NOTE)).toBeNull();
+  });
+});
+
+const BREAK_NOTE = 'До черты уровень — окно ответа по старым правилам, после — полосы нагрузки';
+
+/** One training session per level, hours apart and ending an hour ago; the module's block of each at that level. */
+async function seedLevels(repo: MemoryRepository, module: ModuleId, levels: readonly { lAfter: number; paramsJson: string }[]): Promise<void> {
+  for (const [i, { lAfter, paramsJson }] of levels.entries()) {
+    const at = new Date(Date.now() - (levels.length - i) * 60 * 60 * 1000).toISOString();
+    const id = `${module}-${String(i)}`;
+    await repo.createSession(session(id, at, { endedAt: at }));
+    await repo.addBlock(block(id, id, at, { module, lAfter, paramsJson }), [], []);
+  }
+}
+
+describe('Progress after the load bands (F3, spec §3.1.6)', () => {
+  it('marks the first session of the load bands on the level chart, with the note under it', async () => {
+    const repo = new MemoryRepository();
+    const old = '{"windowMs":300}';
+    await seedLevels(repo, 'pzmr', [
+      { lAfter: 14, paramsJson: old },
+      { lAfter: 15, paramsJson: old },
+      { lAfter: 9, paramsJson: '{"band":2}' },
+      { lAfter: 10, paramsJson: '{"band":2}' },
+    ]);
+    await rebuildCaches(repo);
+    await renderProgress(repo);
+    const card = chartOf(moduleTitles.pzmr);
+    // The points as recorded.
+    expect([...card.querySelectorAll('circle > title')].map((t) => t.textContent)).toEqual(['1: 14', '2: 15', '3: 9', '4: 10']);
+    expect(card.querySelector('line.chart-marker')).not.toBeNull();
+    expect(within(card).getByText('0.3.0: уровень — это нагрузка')).toBeTruthy();
+    expect(within(card).getByText(BREAK_NOTE)).toBeTruthy();
+    // The norm line steps from the old 14 to the new 8.
+    expect(card.querySelectorAll('line.chart-ref')).toHaveLength(2);
+    // Only the chart with a break has the note.
+    expect(screen.getAllByText(BREAK_NOTE)).toHaveLength(1);
+  });
+
+  it('says the mean score of the overload blocks of the last 28 days', async () => {
+    const repo = new MemoryRepository();
+    const at = (h: number): string => new Date(Date.now() - h * 60 * 60 * 1000).toISOString();
+    const counts = (hit: number, miss: number): string =>
+      JSON.stringify({ counts: { hit, wrong: 0, miss, late: 0, false_start: 0, commission: 0, correct_reject: 0, early: 0, timing_late: 0 } });
+    await repo.createSession(session('s', at(5), { endedAt: at(4) }));
+    await repo.addBlock(block('o1', 's', at(5), { module: 'szmr', flags: ['overload'], summaryJson: counts(14, 6) }), [], []);
+    await repo.addBlock(block('o2', 's', at(4), { module: 'stroop', flags: ['overload'], summaryJson: counts(39, 11) }), [], []);
+    await renderProgress(repo);
+    const line = screen.getByText('Средний балл блоков перегрузки за 28 дней: 0,74 (блоков: 2)');
+    expect(line.closest('section')?.getAttribute('aria-labelledby')).toBe('levels-title');
+  });
+
+  it('says there were no overload blocks', async () => {
+    await renderProgress();
+    expect(screen.getByText('Блоков перегрузки за 28 дней не было.').closest('section')?.getAttribute('aria-labelledby')).toBe('levels-title');
   });
 });
 

@@ -248,13 +248,17 @@ export function repositoryContract(make: () => Promise<Repository>): void {
       await repo.addBlock(block('b3', 's2', T3, { lAfter: 9, flags: ['timing_unreliable'] }), [trial('t1', 'b3', 0)], []);
       await repo.addBlock(block('b1', 's1', T1, { lAfter: 4, flags: ['calibration'] }), [], []);
       await repo.addBlock(block('bx', 's1', T2, { module: 'gorbov' }), [], []);
-      await repo.addBlock(block('b2', 's1', T3, { lAfter: 5 }), [], []);
+      await repo.addBlock(block('b2', 's1', T3, { lAfter: 5, paramsJson: '{"band":1,"windowMs":480}' }), [], []);
       const rows = await repo.listBlockLevels('pzmr');
+      const params = '{"windowMs":512}';
       expect(rows).toEqual([
-        { id: 'b1', sessionId: 's1', module: 'pzmr', lAfter: 4, flags: ['calibration'], startedAt: T1 },
-        { id: 'b3', sessionId: 's2', module: 'pzmr', lAfter: 9, flags: ['timing_unreliable'], startedAt: T3 },
-        { id: 'b2', sessionId: 's1', module: 'pzmr', lAfter: 5, flags: [], startedAt: T3 },
+        { id: 'b1', sessionId: 's1', module: 'pzmr', lAfter: 4, flags: ['calibration'], startedAt: T1, paramsJson: params },
+        { id: 'b3', sessionId: 's2', module: 'pzmr', lAfter: 9, flags: ['timing_unreliable'], startedAt: T3, paramsJson: params },
+        { id: 'b2', sessionId: 's1', module: 'pzmr', lAfter: 5, flags: [], startedAt: T3, paramsJson: '{"band":1,"windowMs":480}' },
       ]);
+      // The same paramsJson as the full rows (Р9: the old level rule reads its band).
+      const full = new Map((await repo.listBlocks()).map((b) => [b.id, b.paramsJson]));
+      for (const r of rows) expect(r.paramsJson).toBe(full.get(r.id));
       rows[0]?.flags.push('fatigued');
       expect((await repo.listBlockLevels('pzmr'))[0]?.flags).toEqual(['calibration']);
       // The light rows are enough for deriveModuleStates and agree with full rows.

@@ -32,6 +32,8 @@ export interface BlockLevelRow {
   lAfter: number;
   flags: BlockFlag[];
   startedAt: string;
+  /** Read for its band: a band module's block without one is of the old level rule (Р9). */
+  paramsJson: string;
 }
 
 export interface TrialRow {

@@ -206,12 +206,15 @@ function stateWith(module: ModuleId, over: Partial<ModuleState>): ModuleState {
  * A repository with `state` saved and `n` level-moving blocks of its module at its lSaved, in a training session 30
  * days before T0: calibration counts the stored level-moving blocks, not lifetimeBlocks (T-R38).
  */
+/** Params of a block of the load bands at level L (Р9: its level counts as played, not as an old window level). */
+const bandParams = (L: number): string => JSON.stringify({ band: Math.floor(L / 4) });
+
 async function calibratedRepo(state: ModuleState, n = 3): Promise<MemoryRepository> {
   const repo = new MemoryRepository();
   const at = new Date(new Date(T0).getTime() - 30 * DAY).toISOString();
   await repo.createSession(session('calibrated', at, { endedAt: at }));
   for (let i = 0; i < n; i++) {
-    const row = block(`calibrated${String(i)}`, 'calibrated', at, { module: state.module, lBefore: state.lSaved, lAfter: state.lSaved });
+    const row = block(`calibrated${String(i)}`, 'calibrated', at, { module: state.module, lBefore: state.lSaved, lAfter: state.lSaved, paramsJson: bandParams(state.lSaved) });
     await repo.addBlock(row, [], []);
   }
   await repo.saveModuleState(state);
@@ -802,7 +805,7 @@ describe('SessionController — levels and persistence', () => {
     const daysAgo = (d: number): string => new Date(new Date(T0).getTime() - d * DAY).toISOString();
     const repo = new MemoryRepository();
     await repo.createSession(session('s5', daysAgo(5), { endedAt: daysAgo(5) }));
-    for (let i = 0; i < 3; i++) await repo.addBlock(block(`n${String(i)}`, 's5', daysAgo(5), { module: 'gonogo', lBefore: 10, lAfter: 10 }), [], []);
+    for (let i = 0; i < 3; i++) await repo.addBlock(block(`n${String(i)}`, 's5', daysAgo(5), { module: 'gonogo', lBefore: 10, lAfter: 10, paramsJson: bandParams(10) }), [], []);
     // An overload block yesterday is not training of the level: the break is still 5 days.
     await repo.createSession(session('s1', daysAgo(1), { endedAt: daysAgo(1) }));
     await repo.addBlock(block('o', 's1', daysAgo(1), { module: 'gonogo', lBefore: 13, lAfter: 14, flags: ['overload'] }), [], []);
@@ -1607,7 +1610,7 @@ describe('SessionController — overload', () => {
     const repo = new MemoryRepository();
     await repo.createSession(session('old', YESTERDAY, { endedAt: YESTERDAY }));
     for (let i = 0; i < 3; i++) {
-      await repo.addBlock(block(`old${String(i)}`, 'old', YESTERDAY, { module, lBefore: level, lAfter: level }), [], []);
+      await repo.addBlock(block(`old${String(i)}`, 'old', YESTERDAY, { module, lBefore: level, lAfter: level, paramsJson: bandParams(level) }), [], []);
     }
     await repo.saveModuleState(deriveModuleStates(await repo.listSessions(), await repo.listBlocks())[module]);
     return repo;

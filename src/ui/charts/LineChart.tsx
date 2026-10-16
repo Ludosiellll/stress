@@ -24,6 +24,12 @@ export interface LineChartProps {
   lowerIsBetter?: boolean;
   /** Horizontal dashed reference line; the y scale always reaches it. */
   refLine?: { y: number; label: string };
+  /**
+   * Dashed vertical line just before the slot whose label is `x` (a change of rules: that slot is the first after it),
+   * with its label above the plot. With `refYBefore` the reference line runs at refYBefore left of it and at refLine.y
+   * right of it; the y scale reaches both. Not drawn when no slot has the label.
+   */
+  marker?: { x: string; label: string; refYBefore?: number };
   /** Values the metric can take (e.g. min 0 for times, 0..100 for percent): the axis never goes past them. */
   domain?: ChartDomain;
   /** Whole units (milliseconds, %): values are rounded as the results tables round them and the ticks are whole. */
@@ -183,7 +189,15 @@ function summary(s: ChartSeries, fmt: (v: number) => string): string | null {
   return e.first === e.last ? `${fmt(e.first.y)} (${e.first.x})` : `${fmt(e.first.y)} (${e.first.x}) → ${fmt(e.last.y)} (${e.last.x})`;
 }
 
-export default function LineChart({ series, yLabel, xLabel, lowerIsBetter, refLine, domain, whole = false }: LineChartProps) {
+/** x of the marker label: centred on the line, kept clear of the y label on the left and inside the chart on the right. */
+function markerLabelX(lineX: number, label: string, yLabel: string): number {
+  const half = (label.length * CHAR_W) / 2;
+  const from = yLabel.length * CHAR_W + 12 + half;
+  const to = W - RIGHT - half;
+  return from > to ? (from + to) / 2 : Math.min(Math.max(lineX, from), to);
+}
+
+export default function LineChart({ series, yLabel, xLabel, lowerIsBetter, refLine, marker, domain, whole = false }: LineChartProps) {
   const fmt = whole ? fmtWhole : fmtValue;
   const drawn = series.slice(0, MAX_SERIES);
   const values = drawn.flatMap((s) => s.points.flatMap((p) => (p.y === null ? [] : [p.y])));
@@ -193,7 +207,10 @@ export default function LineChart({ series, yLabel, xLabel, lowerIsBetter, refLi
   const slots = widest.points.length;
   const xLabels = widest.points.map((p) => p.x);
 
-  const scale = refLine === undefined ? values : [...values, refLine.y];
+  const markerSlot = marker === undefined ? -1 : xLabels.indexOf(marker.x);
+  const shown = markerSlot < 0 ? undefined : marker;
+  const refBefore = refLine === undefined ? undefined : shown?.refYBefore;
+  const scale = [...values, ...(refLine === undefined ? [] : [refLine.y]), ...(refBefore === undefined ? [] : [refBefore])];
   const ticks = niceTicks(Math.min(...scale), Math.max(...scale), domain, whole);
   const lo = ticks[0] as number;
   const hi = ticks[ticks.length - 1] as number;
@@ -221,10 +238,14 @@ export default function LineChart({ series, yLabel, xLabel, lowerIsBetter, refLi
       return [multi ? `${s.name}, ${range}` : range];
     }),
     ...(lowerIsBetter === undefined ? [] : [lowerIsBetter ? 'меньше — лучше' : 'больше — лучше']),
+    ...(shown === undefined ? [] : [shown.label]),
   ].join('. ');
 
   const refY = refLine === undefined ? 0 : yAt(refLine.y);
   const refBelow = refLine !== undefined && refY - 6 < TOP + 10;
+  // Halfway between the slot before the marker and its own; at the slot itself when it is the first.
+  const markerX = markerSlot <= 0 ? xAt(0) : (xAt(markerSlot - 1) + xAt(markerSlot)) / 2;
+  const refFrom = refBefore === undefined ? left : markerX;
 
   return (
     <div className="chart">
@@ -263,9 +284,20 @@ export default function LineChart({ series, yLabel, xLabel, lowerIsBetter, refLi
             {xLabel}
           </text>
         )}
+        {shown !== undefined && (
+          <>
+            <line className="chart-marker" x1={markerX} x2={markerX} y1={TOP} y2={TOP + plotH} strokeDasharray="4 4" />
+            <text className="marker-label" x={markerLabelX(markerX, shown.label, yLabel)} y={15} textAnchor="middle">
+              {shown.label}
+            </text>
+          </>
+        )}
         {refLine !== undefined && (
           <>
-            <line className="chart-ref" x1={left} x2={W - RIGHT} y1={refY} y2={refY} strokeDasharray="6 4" />
+            {refBefore !== undefined && (
+              <line className="chart-ref" x1={left} x2={markerX} y1={yAt(refBefore)} y2={yAt(refBefore)} strokeDasharray="6 4" />
+            )}
+            <line className="chart-ref" x1={refFrom} x2={W - RIGHT} y1={refY} y2={refY} strokeDasharray="6 4" />
             <text className="ref-label" x={W - RIGHT - 2} y={refBelow ? refY + 17 : refY - 6} textAnchor="end">
               {refLine.label}
             </text>

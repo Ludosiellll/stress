@@ -6,6 +6,7 @@ import {
   FINISHER_POOL,
   L_NORM,
   MEMORY_SLOT_POOL,
+  OLD_L_NORM,
   REACTION_POOL,
   daysBetween,
   isDiagnosticDue,
@@ -148,6 +149,10 @@ describe('localDayIso', () => {
 describe('L_NORM', () => {
   it('the first level of the first band harder than the test format (F3, spec §3.1.5); memory keeps 9 until F13', () => {
     expect(L_NORM).toEqual({ pzmr: 8, szmr: 8, gonogo: 8, rdo: 10, gorbov: 12, schulte: 6, stroop: 12, taskswitch: 8, pomeh: 8, memory: 9, numseries: 0 });
+  });
+
+  it('OLD_L_NORM keeps the values of 0.2.0 for the step of the norm line in «Прогресс» (F3, spec §3.1.6)', () => {
+    expect(OLD_L_NORM).toEqual({ pzmr: 14, szmr: 12, gonogo: 10, rdo: 10, gorbov: 12, schulte: 6, stroop: 10, taskswitch: 10, pomeh: 14, memory: 9, numseries: 0 });
   });
 });
 

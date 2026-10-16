@@ -132,7 +132,7 @@ export class MemoryRepository implements Repository {
       sortedCopies(
         this.blocks.filter((b) => b.module === module),
         (b) => b.startedAt,
-      ).map((b) => ({ id: b.id, sessionId: b.sessionId, module: b.module, lAfter: b.lAfter, flags: b.flags, startedAt: b.startedAt })),
+      ).map((b) => ({ id: b.id, sessionId: b.sessionId, module: b.module, lAfter: b.lAfter, flags: b.flags, startedAt: b.startedAt, paramsJson: b.paramsJson })),
     );
   }
 

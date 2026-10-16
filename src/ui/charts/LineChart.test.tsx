@@ -79,6 +79,65 @@ describe('LineChart', () => {
     expect(Math.max(...ticks)).toBeGreaterThanOrEqual(14);
   });
 
+  describe('a marker (F3, spec §3.1.6)', () => {
+    const levels = [
+      { x: '1', y: 14 },
+      { x: '2', y: 15 },
+      { x: '3', y: 9 },
+      { x: '4', y: 10 },
+    ];
+    const LABEL = '0.3.0: уровень — это нагрузка';
+    const num = (el: Element | null | undefined, attr: string): number => Number(el?.getAttribute(attr));
+    const draw = (props: Partial<Parameters<typeof LineChart>[0]>) =>
+      render(<LineChart series={[{ name: 'Уровень', points: levels }]} yLabel="уровень" refLine={{ y: 8, label: '≈ формат теста' }} {...props} />);
+
+    it('marker draws a dashed vertical line at slot x with its label; the reference line steps there', () => {
+      const { container, getByText } = draw({ marker: { x: '3', label: LABEL, refYBefore: 14 } });
+      const marker = container.querySelector('line.chart-marker');
+      expect(marker?.getAttribute('stroke-dasharray')).not.toBeNull();
+      const circles = [...container.querySelectorAll('circle')];
+      const x = num(marker, 'x1');
+      expect(num(marker, 'x2')).toBe(x);
+      // Between the last session before it and slot «3»: the point of slot 3 is the first after the line.
+      expect(x).toBeGreaterThan(num(circles[1], 'cx'));
+      expect(x).toBeLessThan(num(circles[2], 'cx'));
+      // Top to bottom of the plot.
+      expect(num(marker, 'y2')).toBeGreaterThan(num(marker, 'y1'));
+      expect(getByText(LABEL)).toBeTruthy();
+      // Left of the line the reference is at refYBefore (14, the y of the first point), right of it at refLine.y (8).
+      const [before, after] = [...container.querySelectorAll('line.chart-ref')];
+      expect(num(before, 'x2')).toBe(x);
+      expect(num(after, 'x1')).toBe(x);
+      expect(num(before, 'x1')).toBeLessThan(x);
+      expect(num(after, 'x2')).toBeGreaterThan(x);
+      expect(num(before, 'y1')).toBeCloseTo(num(circles[0], 'cy'));
+      expect(num(before, 'y2')).toBeCloseTo(num(circles[0], 'cy'));
+      // 9 → 8 is a fifth of 14 → 9 further down.
+      const perLevel = (num(circles[2], 'cy') - num(circles[0], 'cy')) / 5;
+      expect(num(after, 'y1')).toBeCloseTo(num(circles[2], 'cy') + perLevel);
+      expect(num(after, 'y2')).toBeCloseTo(num(after, 'y1'));
+      expect(getByText('≈ формат теста')).toBeTruthy();
+      expect(container.querySelector('svg')?.getAttribute('aria-label')).toContain(LABEL);
+    });
+
+    it('without refYBefore the reference line runs across; a marker on no slot is not drawn', () => {
+      const plain = draw({ marker: { x: '3', label: LABEL } });
+      expect(plain.container.querySelectorAll('line.chart-marker')).toHaveLength(1);
+      expect(plain.container.querySelectorAll('line.chart-ref')).toHaveLength(1);
+      plain.unmount();
+      const nowhere = draw({ marker: { x: '9', label: LABEL, refYBefore: 14 } });
+      expect(nowhere.container.querySelector('line.chart-marker')).toBeNull();
+      expect(nowhere.container.querySelectorAll('line.chart-ref')).toHaveLength(1);
+      expect(nowhere.queryByText(LABEL)).toBeNull();
+    });
+
+    it('the scale reaches refYBefore', () => {
+      const { container } = draw({ marker: { x: '3', label: LABEL, refYBefore: 22 } });
+      const ticks = [...container.querySelectorAll('text.y-tick')].map((t) => Number(t.textContent));
+      expect(Math.max(...ticks)).toBeGreaterThanOrEqual(22);
+    });
+  });
+
   it('has at least three y ticks on nice numbers', () => {
     const { container } = renderChart();
     const ticks = [...container.querySelectorAll('text.y-tick')].map((t) => Number(t.textContent.replace(',', '.')));

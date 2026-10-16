@@ -264,8 +264,8 @@ export class SqliteRepository implements Repository {
   }
 
   async listBlockLevels(module: ModuleId): Promise<BlockLevelRow[]> {
-    const rows = await this.db.select<Pick<BlockDb, 'id' | 'session_id' | 'module' | 'l_after' | 'flags_json' | 'started_at'>>(
-      'SELECT id, session_id, module, l_after, flags_json, started_at FROM blocks WHERE module = ? ORDER BY started_at, rowid',
+    const rows = await this.db.select<Pick<BlockDb, 'id' | 'session_id' | 'module' | 'l_after' | 'flags_json' | 'started_at' | 'params_json'>>(
+      'SELECT id, session_id, module, l_after, flags_json, started_at, params_json FROM blocks WHERE module = ? ORDER BY started_at, rowid',
       [module],
     );
     return rows.map((r) => ({
@@ -275,6 +275,7 @@ export class SqliteRepository implements Repository {
       lAfter: r.l_after,
       flags: JSON.parse(r.flags_json) as BlockFlag[],
       startedAt: r.started_at,
+      paramsJson: r.params_json,
     }));
   }
 

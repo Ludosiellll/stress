@@ -1,8 +1,8 @@
 import { isPlateau, savedLevel } from './adaptive';
 import { R0, updateRating, type Rating } from './elo';
 import { itemEffectiveDifficulty, itemLimitMs } from './itemLimit';
-import type { ModuleState } from './planner';
-import { MODULE_IDS, type BlockFlag, type FamilyId, type ModuleId, type SessionKind } from './types';
+import { L_NORM, type ModuleState } from './planner';
+import { isBandModule, MODULE_IDS, type BlockFlag, type FamilyId, type ModuleId, type SessionKind } from './types';
 
 export { MODULE_IDS };
 
@@ -60,15 +60,82 @@ export interface DeriveBlock {
   lAfter: number;
   flags: readonly BlockFlag[];
   startedAt: string;
+  /** Read for `band` only (Р9). */
+  paramsJson: string;
+}
+
+/** A session's end level of a module as recorded; `loadRule`: its end block has a band (the load-band rules, Р9). */
+export interface LevelPoint {
+  level: number;
+  loadRule: boolean;
 }
 
 /** Modules without a level (number series are rated by Elo): no end levels, lSaved 0, never a plateau (M9). */
 const LEVELLESS: ReadonlySet<ModuleId> = new Set<ModuleId>(['numseries']);
 
 /**
+ * paramsJson.band, a whole number from 0 (F3); null: a block from before the bands, or damaged params. The one reader
+ * of the stored band: the old level rule (Р9), the history variants and the window floor all go by it.
+ */
+export function storedBand(paramsJson: string): number | null {
+  let params: unknown;
+  try {
+    params = JSON.parse(paramsJson);
+  } catch {
+    return null;
+  }
+  const band = typeof params === 'object' && params !== null ? (params as { band?: unknown }).band : undefined;
+  return typeof band === 'number' && Number.isInteger(band) && band >= 0 ? band : null;
+}
+
+/** The counted sessions and their blocks, both by startedAt (ties keep input order). */
+function countedInOrder(
+  sessions: readonly DeriveSession[],
+  blocks: readonly DeriveBlock[],
+): { sessions: DeriveSession[]; blocks: DeriveBlock[] } {
+  const counted = new Set(sessions.filter((s) => isCountedSession(s.kind)).map((s) => s.id));
+  return {
+    sessions: sessions.filter((s) => counted.has(s.id)).sort((a, b) => compareIso(a.startedAt, b.startedAt)),
+    blocks: blocks.filter((b) => counted.has(b.sessionId)).sort((a, b) => compareIso(a.startedAt, b.startedAt)),
+  };
+}
+
+/** End points of ordered counted sessions and blocks: the last clean block of each module in each session. */
+function endPointsOf(sessions: readonly DeriveSession[], blocks: readonly DeriveBlock[]): Record<ModuleId, LevelPoint[]> {
+  // Session id → module → end block; later blocks overwrite earlier ones.
+  const ends = new Map<string, Map<ModuleId, DeriveBlock>>();
+  for (const b of blocks) {
+    if (LEVELLESS.has(b.module) || !isCleanBlock(b.flags)) continue;
+    let perModule = ends.get(b.sessionId);
+    if (!perModule) {
+      perModule = new Map();
+      ends.set(b.sessionId, perModule);
+    }
+    perModule.set(b.module, b);
+  }
+  const points = Object.fromEntries(MODULE_IDS.map((m) => [m, [] as LevelPoint[]])) as Record<ModuleId, LevelPoint[]>;
+  for (const s of sessions) {
+    for (const [module, b] of ends.get(s.id) ?? []) points[module].push({ level: b.lAfter, loadRule: storedBand(b.paramsJson) !== null });
+  }
+  return points;
+}
+
+/**
+ * Each module's session end levels as recorded, in session order, from training and free sessions only: lAfter of the
+ * session's last clean block of the module (by startedAt, isCleanBlock); sessions without such a block add nothing.
+ * Ties keep input order. The level charts of «Прогресс» draw these.
+ */
+export function sessionEndPoints(sessions: readonly DeriveSession[], blocks: readonly DeriveBlock[]): Record<ModuleId, LevelPoint[]> {
+  const ordered = countedInOrder(sessions, blocks);
+  return endPointsOf(ordered.sessions, ordered.blocks);
+}
+
+/**
  * Module states from training and free sessions only (diagnostics never count).
- * A session's end level is lAfter of its last clean block of the module (by startedAt, isCleanBlock);
- * sessions without such a block add nothing. Ties keep input order.
+ * The end levels are those of sessionEndPoints, except that in a band module a level of the old rule (an end block
+ * without a band: the level was the window, Р9) counts as min(level, L_NORM): history rows never change, the caches
+ * rebuilt from them do (spec §3.1.6). The plateau looks at the saved levels after load-rule sessions only, so capped
+ * old levels never make a plateau on the day of the upgrade (T-R13); modules without bands look at every session.
  * Every block counts in lifetimeBlocks; lastTrainedAt is the last block that was neither an overload nor a warm-up
  * block, so a finisher or the daily ПЗМР warm-up does not make its module look trained and take away its regular
  * slot (W2-R40, F5).
@@ -79,35 +146,26 @@ export function deriveModuleStates(
   blocks: readonly DeriveBlock[],
 ): Record<ModuleId, ModuleState> {
   const states = Object.fromEntries(MODULE_IDS.map((m) => [m, defaultModuleState(m)])) as Record<ModuleId, ModuleState>;
-  const counted = new Set(sessions.filter((s) => isCountedSession(s.kind)).map((s) => s.id));
-  const ordered = blocks.filter((b) => counted.has(b.sessionId)).sort((a, b) => compareIso(a.startedAt, b.startedAt));
-
-  // Session id → module → end level; later blocks overwrite earlier ones.
-  const endLevels = new Map<string, Map<ModuleId, number>>();
-  for (const b of ordered) {
+  const ordered = countedInOrder(sessions, blocks);
+  for (const b of ordered.blocks) {
     const st = states[b.module];
     st.lifetimeBlocks++;
     if (movesLevel(b.flags)) st.lastTrainedAt = b.startedAt;
-    if (LEVELLESS.has(b.module) || !isCleanBlock(b.flags)) continue;
-    let perModule = endLevels.get(b.sessionId);
-    if (!perModule) {
-      perModule = new Map();
-      endLevels.set(b.sessionId, perModule);
-    }
-    perModule.set(b.module, b.lAfter);
   }
 
-  const orderedSessions = sessions.filter((s) => counted.has(s.id)).sort((a, b) => compareIso(a.startedAt, b.startedAt));
-  for (const s of orderedSessions) {
-    for (const [module, level] of endLevels.get(s.id) ?? []) {
-      const st = states[module];
-      st.sessionEndLevels.push(level);
-      st.savedHistory.push(savedLevel(st.sessionEndLevels));
+  const points = endPointsOf(ordered.sessions, ordered.blocks);
+  for (const module of MODULE_IDS) {
+    const st = states[module];
+    const banded = isBandModule(module);
+    const plateauHistory: number[] = [];
+    for (const p of points[module]) {
+      st.sessionEndLevels.push(banded && !p.loadRule ? Math.min(p.level, L_NORM[module]) : p.level);
+      const saved = savedLevel(st.sessionEndLevels);
+      st.savedHistory.push(saved);
+      if (!banded || p.loadRule) plateauHistory.push(saved);
     }
-  }
-  for (const st of Object.values(states)) {
     st.lSaved = savedLevel(st.sessionEndLevels);
-    st.plateau = isPlateau(st.savedHistory);
+    st.plateau = isPlateau(plateauHistory);
   }
   return states;
 }

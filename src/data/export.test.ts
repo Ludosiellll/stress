@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { deriveModuleStates, deriveRatings, MODULE_IDS } from '../engine/derive';
+import { parseExportBundle } from './bundleSchema';
 import { exportBundle, rebuildCaches, toCsv } from './export';
+import { importBundle } from './importBundle';
 import { MemoryRepository } from './memoryRepository';
 import { block, item, session, trial } from './repository.contract';
 
@@ -95,7 +97,7 @@ describe('rebuildCaches', () => {
 
     const listBlocks = vi.spyOn(repo, 'listBlocks');
     await rebuildCaches(repo);
-    // M6: the light rows per module are enough; the full history (params, summaries) is never read.
+    // M6: the light rows per module are enough; the full rows (summaries, scores) are never read.
     expect(listBlocks).not.toHaveBeenCalled();
 
     const sessions = await repo.listSessions();
@@ -120,7 +122,7 @@ describe('rebuildCaches', () => {
     const repo = new MemoryRepository();
     await repo.createSession(session('t1', '2026-10-01T08:00:00.000Z'));
     await repo.createSession(session('t2', '2026-10-02T08:00:00.000Z'));
-    await repo.addBlock(block('b1', 't1', '2026-10-01T08:01:00.000Z', { module: 'taskswitch', lAfter: 10 }), [], []);
+    await repo.addBlock(block('b1', 't1', '2026-10-01T08:01:00.000Z', { module: 'taskswitch', lAfter: 10, paramsJson: '{"band":2}' }), [], []);
     // t2 played taskswitch only as the finisher; the old cache dated the module by it.
     const finisherAt = '2026-10-02T08:40:00.000Z';
     await repo.addBlock(block('b2', 't2', finisherAt, { module: 'taskswitch', lAfter: 13, flags: ['overload'] }), [], []);
@@ -132,5 +134,24 @@ describe('rebuildCaches', () => {
       lifetimeBlocks: 2,
       lSaved: 10,
     });
+  });
+
+  it('a 0.2.0 export restores and rebuildCaches caps the band levels', async () => {
+    // A 0.2.0 file: ПЗМР trained to 16, its params without a band (the level was the window).
+    const old = new MemoryRepository();
+    await old.createSession(session('t1', '2026-10-01T08:00:00.000Z', { appVersion: '0.2.0' }));
+    await old.addBlock(block('b1', 't1', '2026-10-01T08:01:00.000Z', { lBefore: 15.5, lAfter: 16, paramsJson: '{"windowMs":283}' }), [], []);
+    await old.addBlock(block('b2', 't1', '2026-10-01T08:05:00.000Z', { module: 'rdo', lBefore: 15, lAfter: 16, paramsJson: '{"periodMs":3000}' }), [], []);
+    const file = parseExportBundle(await exportBundle(old, '0.2.0'));
+    if (!file.ok) throw new Error(file.error);
+
+    const repo = new MemoryRepository();
+    const report = await importBundle(repo, file.bundle, { pause: () => Promise.resolve() });
+    expect(report.error).toBeNull();
+    const states = await repo.getModuleStates();
+    // The band module: min(16, L_NORM 8); РДО has no bands and keeps 16. The history row is as it was.
+    expect(states.pzmr.lSaved).toBe(8);
+    expect(states.rdo.lSaved).toBe(16);
+    expect((await repo.listBlocks())[0]?.lAfter).toBe(16);
   });
 });

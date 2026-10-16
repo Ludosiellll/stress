@@ -1,4 +1,4 @@
-import { isCountedSession } from '../engine/derive';
+import { isCountedSession, storedBand } from '../engine/derive';
 import type { NormId } from '../engine/norms';
 import { COND_PAIRS } from '../engine/reaction/conditions';
 import { isBandModule, type BlockFlag, type ModuleId, type SessionKind } from '../engine/types';
@@ -141,12 +141,6 @@ function tableSeconds(summary: Json | null): number | null {
 /** The ПЗМР warm-up is a variant of its own (F5, Р29): its blocks never become «лучший» of the main variant. */
 const WARMUP_VARIANT: VariantKey = 'pzmr:warmup';
 const BAND_PREFIX = ':b';
-
-/** paramsJson.band of a band module's block, a whole number from 0 (F3); null: a block from before the bands, or damaged. */
-export function storedBand(paramsJson: string): number | null {
-  const band = num(parseObject(paramsJson), 'band');
-  return band !== null && Number.isInteger(band) && band >= 0 ? band : null;
-}
 
 /**
  * A band module's variant (Р29): its warm-up's own, else the band the block played (`pzmr:b2`); a block without a band

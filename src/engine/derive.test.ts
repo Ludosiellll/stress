@@ -9,6 +9,8 @@ import {
   isCleanBlock,
   isCountedSession,
   movesLevel,
+  sessionEndPoints,
+  storedBand,
 } from './derive';
 import { R0, updateRating, type Rating } from './elo';
 import { effectiveDifficulty } from './itemLimit';
@@ -25,18 +27,23 @@ interface B {
   lAfter: number;
   flags: BlockFlag[];
   startedAt: string;
+  paramsJson: string;
 }
 
 const day = (d: number, hh = 8, mm = 0): string =>
   `2026-10-${String(d).padStart(2, '0')}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00.000Z`;
 const ses = (id: string, startedAt: string, kind: SessionKind = 'training'): S => ({ id, startedAt, kind });
-const blk = (sessionId: string, module: ModuleId, lAfter: number, startedAt: string, flags: BlockFlag[] = []): B => ({
+/** A block of the load-band rules by default (a numeric band, Р9): its level counts as recorded. */
+const blk = (sessionId: string, module: ModuleId, lAfter: number, startedAt: string, flags: BlockFlag[] = [], paramsJson = '{"band":0}'): B => ({
   sessionId,
   module,
   lAfter,
   flags,
   startedAt,
+  paramsJson,
 });
+/** A block from before the load bands: no band in its params. */
+const OLD = '{"windowMs":300}';
 
 describe('isCountedSession', () => {
   it('counts training and free sessions, never diagnostics', () => {
@@ -250,6 +257,83 @@ describe('deriveModuleStates', () => {
       }),
       { numRuns: 1000 },
     );
+  });
+});
+
+describe('old levels after the load bands (F3, Р9, spec §3.1.6)', () => {
+  it('blocks without a band count as the old level rule', () => {
+    const sessions = [ses('s1', day(1)), ses('s2', day(2)), ses('r1', day(3)), ses('r2', day(4)), ses('x', day(5))];
+    const states = deriveModuleStates(sessions, [
+      blk('s1', 'pzmr', 16, day(1, 8, 1), [], OLD),
+      blk('s2', 'pzmr', 17, day(2, 8, 1), [], '{"band":4}'),
+      // РДО has no bands: an old level stays as it is.
+      blk('r1', 'rdo', 16, day(3, 8, 1), [], OLD),
+      // Unreadable params: the old rule.
+      blk('x', 'szmr', 12, day(5, 8, 1), [], 'not json'),
+    ]);
+    expect(states.pzmr.sessionEndLevels).toEqual([8, 17]);
+    expect(states.pzmr.lSaved).toBe(12.5);
+    expect(states.rdo.sessionEndLevels).toEqual([16]);
+    expect(states.rdo.lSaved).toBe(16);
+    expect(states.szmr.sessionEndLevels).toEqual([8]);
+    // Only the first session alone: L_saved 16 → 8.
+    expect(deriveModuleStates(sessions.slice(0, 1), [blk('s1', 'pzmr', 16, day(1, 8, 1), [], OLD)]).pzmr.lSaved).toBe(8);
+    // A level below the new L_norm is not raised.
+    expect(deriveModuleStates(sessions.slice(0, 1), [blk('s1', 'pzmr', 5, day(1, 8, 1), [], OLD)]).pzmr.lSaved).toBe(5);
+  });
+
+  it('a band of the wrong type is no band; the end block of the session decides', () => {
+    const sessions = [ses('s1', day(1)), ses('s2', day(2)), ses('s3', day(3))];
+    const states = deriveModuleStates(sessions, [
+      blk('s1', 'gonogo', 15, day(1, 8, 1), [], '{"band":"3"}'),
+      blk('s2', 'gonogo', 15, day(2, 8, 1), [], '{"band":-1}'),
+      // An early block of s3 with a band, the end block without: the old rule.
+      blk('s3', 'gonogo', 14, day(3, 8, 1), [], '{"band":3}'),
+      blk('s3', 'gonogo', 15, day(3, 8, 2), [], OLD),
+    ]);
+    expect(states.gonogo.sessionEndLevels).toEqual([8, 8, 8]);
+  });
+
+  it('sessionEndPoints keeps the recorded levels and marks the load rule', () => {
+    const sessions = [ses('s1', day(1)), ses('s2', day(2)), ses('d', day(3), 'diagnostic')];
+    const points = sessionEndPoints(sessions, [
+      blk('s2', 'pzmr', 17, day(2, 8, 1), [], '{"band":4}'),
+      blk('s1', 'pzmr', 16, day(1, 8, 1), [], OLD),
+      blk('s1', 'pzmr', 18, day(1, 8, 2), ['fatigued'], OLD),
+      blk('d', 'pzmr', 30, day(3, 8, 1), [], '{"band":7}'),
+      blk('s1', 'numseries', 0, day(1, 8, 3)),
+    ]);
+    expect(points.pzmr).toEqual([
+      { level: 16, loadRule: false },
+      { level: 17, loadRule: true },
+    ]);
+    expect(points.numseries).toEqual([]);
+    expect(Object.keys(points)).toEqual([...MODULE_IDS]);
+  });
+
+  it('plateau counts only load-rule points: capped old levels never make a plateau on the upgrade day (T-R13)', () => {
+    const old = [1, 2, 3, 4, 5, 6, 7].map((d) => ses(`o${String(d)}`, day(d)));
+    const oldBlocks = old.map((s) => blk(s.id, 'pzmr', 16, s.startedAt, [], OLD));
+    // Seven old sessions at 16: all capped at 8, which would be 6 sessions without a new maximum.
+    expect(deriveModuleStates(old, oldBlocks).pzmr).toMatchObject({ lSaved: 8, plateau: false });
+    const fresh = [10, 11, 12, 13, 14, 15].map((d) => ses(`n${String(d)}`, day(d)));
+    const freshBlocks = fresh.map((s) => blk(s.id, 'pzmr', 8, s.startedAt));
+    // The upgrade day: one load-rule session.
+    expect(deriveModuleStates([...old, ...fresh.slice(0, 1)], [...oldBlocks, ...freshBlocks.slice(0, 1)]).pzmr.plateau).toBe(false);
+    // Five load-rule sessions after the first one without a new maximum: a plateau again.
+    expect(deriveModuleStates([...old, ...fresh.slice(0, 5)], [...oldBlocks, ...freshBlocks.slice(0, 5)]).pzmr.plateau).toBe(false);
+    expect(deriveModuleStates([...old, ...fresh], [...oldBlocks, ...freshBlocks]).pzmr.plateau).toBe(true);
+    // Modules without bands keep the plateau over every session (old params or not).
+    const gorbov = old.slice(0, 6).map((s) => blk(s.id, 'gorbov', 5, s.startedAt, [], OLD));
+    expect(deriveModuleStates(old.slice(0, 6), gorbov).gorbov.plateau).toBe(true);
+  });
+
+  it('storedBand: a whole number from 0, else null', () => {
+    expect(storedBand('{"band":0}')).toBe(0);
+    expect(storedBand('{"band":4,"windowMs":300}')).toBe(4);
+    for (const text of ['{"windowMs":300}', '{"band":"3"}', '{"band":-1}', '{"band":1.5}', '{"band":null}', 'not json', '[1]', 'null']) {
+      expect(storedBand(text), text).toBeNull();
+    }
   });
 });
 

@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import { useApp } from '../AppContext';
 import LineChart, { type ChartDomain, type ChartSeries } from '../charts/LineChart';
 import { logEvent } from '../errorLog';
-import { noBreakUnits } from '../format';
+import { decimal, noBreakUnits } from '../format';
 import { useKeyDown } from '../keys';
-import { loadProgressModel, SESSION_LINES, type ProgressModel } from '../progressModel';
+import { loadProgressModel, SESSION_LINES, type OverloadMean, type ProgressModel } from '../progressModel';
 import ReadinessBlock from '../views/ReadinessBlock';
 
 export interface ProgressProps {
@@ -19,12 +19,15 @@ function ChartCard(props: {
   lowerIsBetter?: boolean;
   series: ChartSeries[];
   refLine?: { y: number; label: string };
+  marker?: { x: string; label: string; refYBefore?: number };
   /** x labels of values measured with dropped frames, listed under the chart. */
   unreliable?: readonly string[];
+  /** A line under the chart. */
+  footnote?: string;
   domain: ChartDomain;
   whole?: boolean;
 }) {
-  const { title, note, yLabel, xLabel, lowerIsBetter, series, refLine, unreliable = [], domain, whole = false } = props;
+  const { title, note, yLabel, xLabel, lowerIsBetter, series, refLine, marker, unreliable = [], footnote, domain, whole = false } = props;
   return (
     <figure className="chart-card">
       <figcaption>
@@ -39,8 +42,10 @@ function ChartCard(props: {
         {...(xLabel === undefined ? {} : { xLabel })}
         {...(lowerIsBetter === undefined ? {} : { lowerIsBetter })}
         {...(refLine === undefined ? {} : { refLine })}
+        {...(marker === undefined ? {} : { marker })}
       />
       {unreliable.length > 0 && <p className="muted chart-note">Замер ненадёжен (пропуски кадров): {unreliable.join(', ')}</p>}
+      {footnote !== undefined && <p className="muted chart-note">{footnote}</p>}
     </figure>
   );
 }
@@ -122,11 +127,20 @@ function Diagnostics({ model }: { model: ProgressModel }) {
   );
 }
 
+const MARKER_LABEL = '0.3.0: уровень — это нагрузка';
+const MARKER_NOTE = 'До черты уровень — окно ответа по старым правилам, после — полосы нагрузки';
+
+/** «Средний балл блоков перегрузки за 28 дней: 0,74 (блоков: 2)» (F3). */
+function overloadLine(o: OverloadMean | null): string {
+  return o === null ? 'Блоков перегрузки за 28 дней не было.' : `Средний балл блоков перегрузки за 28 дней: ${decimal(o.mean, 2)} (блоков: ${String(o.blocks)})`;
+}
+
 function Levels({ model }: { model: ProgressModel }) {
   return (
     <section aria-labelledby="levels-title">
       <h2 id="levels-title">Уровни по модулям</h2>
       <p className="muted">Уровень на конец каждой сессии. Пунктир — уровень, при котором модуль примерно соответствует формату теста.</p>
+      <p>{overloadLine(model.overload28d)}</p>
       <div className="chart-grid">
         {model.levels.map((l) => (
           <ChartCard
@@ -139,6 +153,7 @@ function Levels({ model }: { model: ProgressModel }) {
             series={l.series}
             domain={{ min: 0 }}
             {...(l.series.some((s) => s.points.length > 0) ? { refLine: { y: l.norm, label: '≈ формат теста' } } : {})}
+            {...(l.marker === null ? {} : { marker: { x: l.marker.x, label: MARKER_LABEL, refYBefore: l.marker.normBefore }, footnote: MARKER_NOTE })}
           />
         ))}
       </div>

@@ -1,14 +1,17 @@
 import type { Repository } from '../data/repository';
-import type { DiagnosticRow, SessionRow } from '../data/rows';
+import type { BlockRow, DiagnosticRow, SessionRow } from '../data/rows';
 import { localDayIso, localDayNumber } from '../engine/dates';
 import type { FormDay } from '../engine/dayForm';
+import { sessionEndPoints, type LevelPoint } from '../engine/derive';
 import { parseResults, type DiagnosticMetrics, type DiagnosticResults } from '../engine/diagnostic';
-import { L_NORM } from '../engine/planner';
-import { median } from '../engine/stats';
-import { MODULE_IDS, type ModuleId, type ReactionModuleId, type SessionKind } from '../engine/types';
+import { L_NORM, OLD_L_NORM } from '../engine/planner';
+import { penalizedScore } from '../engine/reaction/summary';
+import type { Outcome } from '../engine/reaction/types';
+import { mean, median } from '../engine/stats';
+import { isBandModule, MODULE_IDS, type ModuleId, type ReactionModuleId, type SessionKind } from '../engine/types';
 import { moduleTitles } from '../modules/registry';
 import { assessModules, meanFamilyRating, type ModuleAssessment } from '../session/assessment';
-import { buildBlockHistory } from '../session/blockHistory';
+import { buildBlockHistory, parseObject } from '../session/blockHistory';
 import { pastBlocks, warmupDays } from '../session/pastBlocks';
 import { shownCost } from '../session/steps';
 import type { ChartDomain, ChartPoint, ChartSeries } from './charts/LineChart';
@@ -40,6 +43,17 @@ export interface LevelChartSpec {
   /** Level of the test format (L_NORM). */
   norm: number;
   series: ChartSeries[];
+  /**
+   * The break before the first session of the load bands (Р9): its x and the norm before it (OLD_L_NORM). Only the six
+   * band modules; null without a load-band session or without a session before it.
+   */
+  marker: { x: string; normBefore: number } | null;
+}
+
+/** The mean penalised score of the band modules' overload blocks over OVERLOAD_DAYS days and how many there were. */
+export interface OverloadMean {
+  mean: number;
+  blocks: number;
 }
 
 export interface SessionLine {
@@ -58,6 +72,8 @@ export interface ProgressModel {
   /** «Форма дня»: the daily median of the ПЗМР warm-up over FORM_CHART_DAYS days (F5). */
   formOfDay: ChartPoint[];
   levels: LevelChartSpec[];
+  /** «Средний балл блоков перегрузки за 28 дней» (F3); null without such blocks. */
+  overload28d: OverloadMean | null;
   /** Newest first, at most SESSION_LINES. */
   sessions: SessionLine[];
   sessionCount: number;
@@ -66,6 +82,10 @@ export interface ProgressModel {
 export const SESSION_LINES = 50;
 /** The form-of-day chart covers today and the 29 days before it. */
 export const FORM_CHART_DAYS = 30;
+
+/** The window of overload28d: [now − 28 days, now]. */
+export const OVERLOAD_DAYS = 28;
+const DAY_MS = 86_400_000;
 
 /** Modules with a level (numseries is rated by Elo, not by L). */
 const LEVEL_MODULES: readonly ModuleId[] = MODULE_IDS.filter((m) => m !== 'numseries');
@@ -225,6 +245,55 @@ export function formOfDayPoints(days: readonly FormDay[], today: string): ChartP
     .map(([day, rts]) => ({ x: `${day.slice(8, 10)}.${day.slice(5, 7)}`, y: median(rts) }));
 }
 
+/**
+ * A level chart: the session end levels as recorded (not the capped cache) and, in a band module, the marker at the
+ * first load-rule session when an older session comes before it.
+ */
+export function levelChart(module: ModuleId, points: readonly LevelPoint[]): LevelChartSpec {
+  const first = isBandModule(module) ? points.findIndex((p) => p.loadRule) : -1;
+  return {
+    module,
+    title: moduleTitles[module],
+    norm: L_NORM[module],
+    series: [{ name: 'Уровень', points: points.map((p, i) => ({ x: String(i + 1), y: p.level })) }],
+    marker: first > 0 ? { x: String(first + 1), normBefore: OLD_L_NORM[module] } : null,
+  };
+}
+
+const OUTCOMES: readonly Outcome[] = ['hit', 'wrong', 'miss', 'late', 'false_start', 'commission', 'correct_reject', 'early', 'timing_late'];
+
+/**
+ * The penalised score of a stored reaction block, recomputed from summaryJson.counts (T-R31): blocks stored before F1
+ * keep the plain share of successes as their score, so the stored score cannot be averaged with later ones. Every
+ * summary since 0.1.0 stores all nine counts, one per non-practice trial, so n is their sum. null: counts missing,
+ * damaged or all zero.
+ */
+function scoreFromCounts(summaryJson: string): number | null {
+  const raw = parseObject(summaryJson)?.['counts'];
+  if (typeof raw !== 'object' || raw === null) return null;
+  const counts = {} as Record<Outcome, number>;
+  for (const o of OUTCOMES) {
+    const v = (raw as Partial<Record<Outcome, unknown>>)[o];
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) return null;
+    counts[o] = v;
+  }
+  const n = OUTCOMES.reduce((sum, o) => sum + counts[o], 0);
+  return n === 0 ? null : penalizedScore(counts, n);
+}
+
+/** Overload blocks of the band modules started in [now − OVERLOAD_DAYS days, now], scored by scoreFromCounts. */
+export function overload28d(blocks: readonly Pick<BlockRow, 'module' | 'flags' | 'startedAt' | 'summaryJson'>[], now: Date): OverloadMean | null {
+  const end = now.getTime();
+  const start = end - OVERLOAD_DAYS * DAY_MS;
+  const scores = blocks.flatMap((b) => {
+    const t = Date.parse(b.startedAt);
+    if (!isBandModule(b.module) || !b.flags.includes('overload') || !(t >= start && t <= end)) return [];
+    const s = scoreFromCounts(b.summaryJson);
+    return s === null ? [] : [s];
+  });
+  return scores.length === 0 ? null : { mean: mean(scores), blocks: scores.length };
+}
+
 export function sessionLines(sessions: readonly SessionRow[], blocksBySession: ReadonlyMap<string, number>): SessionLine[] {
   return [...sessions]
     .reverse()
@@ -247,22 +316,14 @@ export async function loadProgressModel(repo: Repository, now: Date = new Date()
     repo.getRatings(),
   ]);
   const blocksBySession = count(blocks.map((b) => b.sessionId));
+  const points = sessionEndPoints(sessions, blocks);
   return {
     readiness: readinessOf(diagnostics),
     assessment: assessModules({ states, meanRating: meanFamilyRating(ratings), history: buildBlockHistory(blocks, sessions), now }),
     diagnostics: diagnosticCharts(diagnostics),
     formOfDay: formOfDayPoints(warmupDays(pastBlocks(blocks, sessions)), localDayIso(now.toISOString())),
-    levels: LEVEL_MODULES.map((module) => ({
-      module,
-      title: moduleTitles[module],
-      norm: L_NORM[module],
-      series: [
-        {
-          name: 'Уровень',
-          points: states[module].sessionEndLevels.map((y, i) => ({ x: String(i + 1), y })),
-        },
-      ],
-    })),
+    levels: LEVEL_MODULES.map((module) => levelChart(module, points[module])),
+    overload28d: overload28d(blocks, now),
     sessions: sessionLines(sessions, blocksBySession),
     sessionCount: sessions.length,
   };

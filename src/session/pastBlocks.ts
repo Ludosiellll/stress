@@ -1,12 +1,12 @@
 import type { BlockRow } from '../data/rows';
 import { localDayIso } from '../engine/dates';
 import type { FormDay } from '../engine/dayForm';
-import { isCountedSession } from '../engine/derive';
+import { isCountedSession, storedBand } from '../engine/derive';
 import type { BlockFlag, ReactionModuleId, SessionKind } from '../engine/types';
 import { FLOOR_HITS } from '../engine/windowFloor';
 import { bandIndex } from '../modules/reaction/common';
 import { pzmr } from '../modules/reaction/pzmr';
-import { parseObject, storedBand } from './blockHistory';
+import { parseObject } from './blockHistory';
 
 /**
  * The block history the controller read at start (assessment О11, with the same listBlocks + listSessions as the

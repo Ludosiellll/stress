@@ -50,7 +50,9 @@ function simulate(): Record<ModuleId, number[]> {
         const warmup = segment.purpose === 'warmup';
         const flags: BlockFlag[] = overload ? ['overload'] : warmup ? ['warmup'] : [];
         const lAfter = L_NORM[segment.module] + (overload ? OVERLOAD_LEVEL_STEP : 0);
-        blocks.push({ sessionId, module: segment.module, lAfter, flags, startedAt: at(day, minute++) });
+        // Blocks of the load bands (Р9): the levels count as played.
+        const paramsJson = JSON.stringify({ band: Math.floor(lAfter / 4) });
+        blocks.push({ sessionId, module: segment.module, lAfter, flags, startedAt: at(day, minute++), paramsJson });
         const days = regularDays[segment.module];
         if (flags.length === 0 && days.at(-1) !== day) days.push(day);
       }

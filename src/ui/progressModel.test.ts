@@ -4,7 +4,7 @@ import { block, session } from '../data/repository.contract';
 import { MemoryRepository } from '../data/memoryRepository';
 import { rebuildCaches } from '../data/export';
 import { MODULE_IDS } from '../engine/types';
-import { diagnosticCharts, durationText, formOfDayPoints, loadProgressModel, ruDate, sessionLines, SESSION_LINES } from './progressModel';
+import { diagnosticCharts, durationText, formOfDayPoints, loadProgressModel, overload28d, ruDate, sessionLines, SESSION_LINES } from './progressModel';
 
 function row(number: number, results: unknown): DiagnosticRow {
   return { id: `d${String(number)}`, sessionId: 's', number, at: '2026-10-01T10:00:00.000Z', resultsJson: typeof results === 'string' ? results : JSON.stringify(results) };
@@ -158,6 +158,95 @@ describe('loadProgressModel', () => {
     expect(model.assessment.at(-1)).toEqual({ module: 'numseries', title: 'Числовые ряды', step: '—', lastBest: 'ещё не тренировался', norm: '—', goal: '—' });
     // The session table counts the same blocks.
     expect(model.sessions.map((s) => s.blocks)).toEqual([1]);
+  });
+});
+
+describe('the level charts after the load bands (F3, Р9, spec §3.1.6)', () => {
+  const at = (day: number): string => new Date(2026, 9, day, 10).toISOString();
+
+  it('the level chart keeps the recorded points and marks the first load-band session', async () => {
+    const repo = new MemoryRepository();
+    const levels: [number, number, string][] = [
+      [1, 14, '{"windowMs":300}'],
+      [2, 15, '{"windowMs":290}'],
+      [3, 9, '{"band":2}'],
+      [4, 10, '{"band":2}'],
+    ];
+    for (const [day, lAfter, paramsJson] of levels) {
+      await repo.createSession(session(`s${String(day)}`, at(day), { endedAt: at(day) }));
+      await repo.addBlock(block(`p${String(day)}`, `s${String(day)}`, at(day), { module: 'pzmr', lAfter, paramsJson }), [], []);
+      // Струп: every session of the load bands, so no marker.
+      await repo.addBlock(block(`t${String(day)}`, `s${String(day)}`, at(day), { module: 'stroop', lAfter: 3, paramsJson: '{"band":0}' }), [], []);
+      // РДО has no bands: its old levels are no break.
+      await repo.addBlock(block(`r${String(day)}`, `s${String(day)}`, at(day), { module: 'rdo', lAfter: 12, paramsJson: '{"periodMs":3000}' }), [], []);
+    }
+    // The cache holds the capped levels; the chart draws the recorded ones.
+    await rebuildCaches(repo);
+    const model = await loadProgressModel(repo, new Date(2026, 9, 5, 12));
+    const chart = (m: string) => model.levels.find((l) => l.module === m);
+    expect(chart('pzmr')?.series[0]?.points).toEqual([
+      { x: '1', y: 14 },
+      { x: '2', y: 15 },
+      { x: '3', y: 9 },
+      { x: '4', y: 10 },
+    ]);
+    expect(chart('pzmr')).toMatchObject({ norm: 8, marker: { x: '3', normBefore: 14 } });
+    expect(chart('stroop')?.marker).toBeNull();
+    expect(chart('rdo')?.marker).toBeNull();
+    // No sessions: no marker either.
+    expect(chart('szmr')?.marker).toBeNull();
+    // 14 and 15 are capped at 8 in the cache: L_saved of ПЗМР is median(8, 9, 10).
+    expect((await repo.getModuleStates()).pzmr.lSaved).toBe(9);
+  });
+
+  it('a module whose first session already has a band gets no marker', async () => {
+    const repo = new MemoryRepository();
+    await repo.createSession(session('s1', at(1), { endedAt: at(1) }));
+    await repo.addBlock(block('p1', 's1', at(1), { module: 'pzmr', lAfter: 9, paramsJson: '{"band":2}' }), [], []);
+    const model = await loadProgressModel(repo, new Date(2026, 9, 5, 12));
+    expect(model.levels[0]).toMatchObject({ module: 'pzmr', marker: null, series: [{ points: [{ x: '1', y: 9 }] }] });
+  });
+
+  it('overload28d: the mean score of the band modules\' overload blocks of the last 28 days, recomputed from their counts (T-R31)', () => {
+    const now = new Date('2026-10-30T12:00:00.000Z');
+    const counts = (hit: number, wrong = 0, falseStart = 0, miss = 0) =>
+      JSON.stringify({ n: hit + wrong + falseStart + miss, score: hit / (hit + wrong + falseStart + miss), counts: { hit, wrong, miss, late: 0, false_start: falseStart, commission: 0, correct_reject: 0, early: 0, timing_late: 0 } });
+    const over = (id: string, startedAt: string, summaryJson: string, module: 'szmr' | 'pzmr' | 'rdo' = 'szmr', score = 0.5) =>
+      block(id, 's', startedAt, { module, flags: ['overload'], summaryJson, score });
+    const rows = [
+      // A pre-F1 block: its stored score is the hit share 0.85; with the penalty it is (17 − 2 − 2·1) / 20 = 0.65.
+      over('a', '2026-10-20T10:00:00.000Z', counts(17, 2, 1), 'szmr', 0.85),
+      // An F1 block: its stored score is already penalised, (18 − 1) / 20 = 0.85.
+      over('b', '2026-10-29T10:00:00.000Z', counts(18, 1, 0, 1), 'pzmr', 0.85),
+      // Exactly 28 days back: in.
+      over('c', '2026-10-02T12:00:00.000Z', counts(14, 0, 0, 6)),
+      // Older than 28 days, in the future, РДО (no bands), not an overload block: out.
+      over('d', '2026-10-02T11:59:59.000Z', counts(20)),
+      over('e', '2026-10-30T12:00:01.000Z', counts(20)),
+      over('f', '2026-10-25T10:00:00.000Z', counts(20), 'rdo'),
+      block('g', 's', '2026-10-25T10:00:00.000Z', { module: 'szmr', summaryJson: counts(20) }),
+      // Unreadable counts: left out, not counted as 0.
+      over('h', '2026-10-25T10:00:00.000Z', 'not json'),
+      over('i', '2026-10-25T10:00:00.000Z', JSON.stringify({ counts: { hit: 'many' } })),
+      over('j', '2026-10-25T10:00:00.000Z', JSON.stringify({ score: 0.9 })),
+      over('k', '2026-10-25T10:00:00.000Z', JSON.stringify({ counts: { hit: 0, wrong: 0, miss: 0, late: 0, false_start: 0, commission: 0, correct_reject: 0, early: 0, timing_late: 0 } })),
+      over('l', 'not a date', counts(20)),
+    ];
+    const result = overload28d(rows, now);
+    expect(result?.blocks).toBe(3);
+    expect(result?.mean).toBeCloseTo((0.65 + 0.85 + 0.7) / 3, 10);
+    expect(overload28d([], now)).toBeNull();
+    expect(overload28d(rows.slice(3), now)).toBeNull();
+  });
+
+  it('loadProgressModel reads overload28d from the block history', async () => {
+    const repo = new MemoryRepository();
+    const now = new Date(2026, 9, 15, 12);
+    await repo.createSession(session('s', at(14), { endedAt: at(14) }));
+    const summaryJson = JSON.stringify({ counts: { hit: 15, wrong: 0, miss: 5, late: 0, false_start: 0, commission: 0, correct_reject: 0, early: 0, timing_late: 0 } });
+    await repo.addBlock(block('o', 's', at(14), { module: 'gonogo', flags: ['overload'], summaryJson }), [], []);
+    expect((await loadProgressModel(repo, now)).overload28d).toEqual({ mean: 0.75, blocks: 1 });
+    expect((await loadProgressModel(new MemoryRepository(), now)).overload28d).toBeNull();
   });
 });
 

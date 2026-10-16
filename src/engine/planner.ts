@@ -22,6 +22,24 @@ export const L_NORM: Record<ModuleId, number> = {
   numseries: 0,
 };
 
+/**
+ * L_NORM of 0.2.0, when a band module's level was its window: «Прогресс» draws the norm line at it before the first
+ * session of the load bands (spec §3.1.6).
+ */
+export const OLD_L_NORM: Readonly<Record<ModuleId, number>> = {
+  pzmr: 14,
+  szmr: 12,
+  gonogo: 10,
+  rdo: 10,
+  gorbov: 12,
+  schulte: 6,
+  stroop: 10,
+  taskswitch: 10,
+  pomeh: 14,
+  memory: 9,
+  numseries: 0,
+};
+
 export type SegmentPurpose = 'warmup' | 'reaction' | 'attention' | 'logic' | 'diagnostic' | 'free' | 'finisher';
 
 /**

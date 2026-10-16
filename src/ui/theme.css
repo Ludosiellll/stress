@@ -497,12 +497,14 @@ legend {
   stroke-width: 1;
 }
 
-.chart .chart-ref {
+.chart .chart-ref,
+.chart .chart-marker {
   stroke: var(--muted);
   stroke-width: 1.5;
 }
 
-.chart .ref-label {
+.chart .ref-label,
+.chart .marker-label {
   fill: var(--text);
 }
 
