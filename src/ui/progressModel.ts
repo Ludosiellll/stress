@@ -221,17 +221,23 @@ const VERDICTS: Record<Trend['verdict'], string> = { better: 'лучше', worse
 /**
  * «Тренд: −12 мс за 5 недель — лучше (шум ±3 мс)» (F7): the change and 2σ̂ in whole units, seconds with one decimal;
  * the period in weeks from 14 days on, else in days. With a series name: «V: тренд …». Without a trend: NO_TREND.
+ * Points all on one day have no slope: «Тренда пока нет — все точки в один день (шум ±3 мс)».
  */
 export function trendText(t: Trend | null, unit: TrendUnit, seriesName?: string, noTrend = NO_TREND): string {
   if (t === null) return noTrend;
   const size = (v: number): string => (unit === 'с' ? decimal(Math.abs(v), 1) : String(Math.round(Math.abs(v))));
   const withUnit = (text: string): string => (unit === '' ? text : `${text} ${unit}`);
+  const noise = `(шум ±${withUnit(size(2 * t.sigma))})`;
+  if (Math.round(t.days) === 0) {
+    const line = `пока нет — все точки в один день ${noise}`;
+    return seriesName === undefined ? `Тренда ${line}` : `${seriesName}: тренда ${line}`;
+  }
   const change = size(t.change);
   const signed = /^0(,0)?$/.test(change) ? '0' : `${t.change < 0 ? '−' : '+'}${change}`;
   const days = Math.round(t.days);
   const weeks = Math.round(days / 7);
   const period = days >= 14 ? `${String(weeks)} ${plural(weeks, 'неделю', 'недели', 'недель')}` : `${String(days)} дн.`;
-  const line = `${withUnit(signed)} за ${period} — ${VERDICTS[t.verdict]} (шум ±${withUnit(size(2 * t.sigma))})`;
+  const line = `${withUnit(signed)} за ${period} — ${VERDICTS[t.verdict]} ${noise}`;
   return seriesName === undefined ? `Тренд: ${line}` : `${seriesName}: тренд ${line}`;
 }
 

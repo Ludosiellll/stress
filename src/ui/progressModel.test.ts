@@ -611,6 +611,17 @@ describe('noise band and trend (F7, Р19)', () => {
     expect(trendText(null, 'с', 'V')).toBe('Полоса шума и тренд появятся после 3 точек.');
   });
 
+  it('trendText: points all on one day have no slope yet, and the line says so instead of «за 0 дн.»', () => {
+    const sameDay = trend([300, 290, 310].map((y) => ({ t: 5, y })), true);
+    expect(sameDay?.days).toBe(0);
+    expect(trendText(sameDay, 'мс')).toBe('Тренда пока нет — все точки в один день (шум ±22 мс)');
+    expect(trendText(made({ days: 0, change: 0, sigma: 0.5, verdict: 'noise' }), 'с', 'V')).toBe(
+      'V: тренда пока нет — все точки в один день (шум ±1,0 с)',
+    );
+    // One day apart is a period already.
+    expect(trendText(made({ days: 1, change: -2, sigma: 0.5 }), 'с')).toBe('Тренд: −2,0 с за 1 дн. — лучше (шум ±1,0 с)');
+  });
+
   it('trendView: the band is the line ± 2σ̂ at the x of the last points; gaps and undated points are left out', () => {
     const ys = [999, 300, null, 298, 295, 292, 290, 288];
     const points = ys.map((y, i) => ({ x: `№${String(i + 1)}`, t: i === 2 ? null : 7 * i, y }));
