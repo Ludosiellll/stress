@@ -325,7 +325,10 @@ test('number series: a skipped item counts as wrong', async ({ page }) => {
   await playSession(page, { stopAt: 'series' });
   const counter = page.locator('.series .muted').first();
   await expect(counter).toHaveText('Задача 1 из 3');
-  await page.getByRole('textbox', { name: 'Ответ' }).press('Space');
+  const input = page.getByRole('textbox', { name: 'Ответ' });
+  // The field is disabled while the session is busy: a press then would be lost (retries are 0).
+  await expect(input).toBeEnabled();
+  await input.press('Space');
   await expect(counter).toHaveText('Задача 2 из 3');
   await playSession(page, { stopAt: 'summary' });
   await expect(page.locator('.summary')).toContainText('Верно: 2 из 3');

@@ -426,8 +426,8 @@ function SessionFlow({
             onProgress={(share) => {
               progress.current = { step, share, answered: [] };
             }}
-            onSubmit={(answers) => {
-              run((c) => c.submitMemory(answers));
+            onSubmit={(answers, audioPlayed) => {
+              run((c) => c.submitMemory(answers, audioPlayed));
             }}
             onFocusLost={() => {
               setNotice(FOCUS_LOST);

@@ -218,7 +218,8 @@ describe('assessBlock', () => {
     });
 
     it('the span norm: 10 answers with 7 exact give it, 6 exact do not', () => {
-      const norm = (exact: number): string[] => assessBlock(memoryRow({ mode: 'digits', length: 9, exact, positionsCorrect: 80, answers: tenRows }), ctx).norms;
+      const norm = (exact: number): string[] =>
+        assessBlock(memoryRow({ mode: 'digits', length: 9, exact, positionsCorrect: 80, partial: 80 / 90, answers: tenRows }), ctx).norms;
       expect(norm(7)).toEqual(['Норма (ориентир), объём: 9 — высокий. Woods 2011, молодые взрослые, слуховое предъявление']);
       expect(norm(6)).toEqual([]);
     });

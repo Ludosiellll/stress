@@ -156,7 +156,7 @@ export interface SeriesAnswer {
   given: number | null;
   timeMs: number;
   /** Skipped (F12: Space; F11: not reached before a counted Esc): a wrong answer, whatever `given` says. */
-  skipped?: boolean;
+  skipped?: true;
 }
 
 /**

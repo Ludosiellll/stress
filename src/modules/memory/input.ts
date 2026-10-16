@@ -10,6 +10,8 @@ const DIGIT_CODE = /^(?:Digit|Numpad)([0-9])$/;
  * The letter of the set the key stands for, or null. With a Russian layout the printed letter (`key`) counts;
  * otherwise (e.g. an English layout, where the same key gives 'd') the physical key is read as ЙЦУКЕН, so the
  * user never has to switch layouts.
+ * Apart from numseries' letterFromKey on purpose: only MEMORY_LETTERS count, so a printed letter outside the set
+ * (a Russian layout other than ЙЦУКЕН) falls back to the physical key.
  */
 export function letterFromKey(e: { key: string; code: string }): string | null {
   const upper = e.key.toUpperCase();

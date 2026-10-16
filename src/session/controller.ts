@@ -619,10 +619,12 @@ export class SessionController {
    * One answer per trial, in order; the span protocol (diagnostics) ends early when it stops (checkMemoryAnswers).
    * A fixed block's s is its partial score, the positions right over the positions of all its rows (F13), and its summary
    * keeps the mode, the row length, the card's showing and sound, the exact rows, the positions right, s and every
-   * answer. The span protocol is that of 0.2.0: s = exact rows / rows shown, and its span goes to the diagnostic results.
-   * The level moves by nextLevel with no stability rule (no RTs).
+   * answer. A card with sound that never played (`audioPlayed` false: no unlock, a blocked device) is stored and shown
+   * as a card without sound, with the AUDIO_NOT_PLAYED line reaction blocks get (T-R67). The span protocol is that of
+   * 0.2.0: s = exact rows / rows shown, and its span goes to the diagnostic results. The level moves by nextLevel with no
+   * stability rule (no RTs).
    */
-  async submitMemory(answers: readonly MemoryAnswer[]): Promise<void> {
+  async submitMemory(answers: readonly MemoryAnswer[], audioPlayed?: boolean): Promise<void> {
     const step = this.take('memory_block');
     checkMemoryAnswers(step, answers);
     const { trials, params, mode, protocol } = step;
@@ -646,7 +648,9 @@ export class SessionController {
         });
         return;
       }
-      const { length, exposureMs, sound } = params;
+      const { length, exposureMs } = params;
+      const silent = params.sound && audioPlayed === false;
+      const sound = params.sound && !silent;
       await this.completeBlock({
         module: 'memory',
         L: step.L,
@@ -654,7 +658,7 @@ export class SessionController {
         level: NO_STABILITY_RULE,
         hitRts: [],
         summary: { mode, length, exposureMs, sound, exact, positionsCorrect, partial, answers },
-        lines: [memoryLine({ partial, exact, trials: n, length, mode, exposureMs, sound })],
+        lines: [memoryLine({ partial, exact, trials: n, length, mode, exposureMs, sound }), ...(silent ? [AUDIO_NOT_PLAYED] : [])],
         rows: () => ({ trials: [], items: [] }),
       });
     });
@@ -771,7 +775,7 @@ export class SessionController {
    */
   private async countDiscard(step: BlockStep, progress: number, answered: readonly SeriesAnswer[]): Promise<DiscardOutcome> {
     if (step.kind === 'numseries_block') {
-      const skipped = step.items.slice(answered.length).map((it) => ({ itemId: it.id, given: null, timeMs: 0, skipped: true }));
+      const skipped = step.items.slice(answered.length).map((it): SeriesAnswer => ({ itemId: it.id, given: null, timeMs: 0, skipped: true }));
       const outcomes = scoreSeries(step, [...answered, ...skipped]);
       await this.exclusive(() => this.completeSeries(outcomes, progress));
       return { kind: 'counted', progress, lBefore: 0, lAfter: 0, levelMoves: false, series: true };

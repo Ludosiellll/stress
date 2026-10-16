@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { nextLevel, type DeltaInput } from '../../src/engine/adaptive';
 import { MEMORY_TRIALS, memoryModeForBlock, memoryParams, type MemoryMode } from '../../src/modules/memory/params';
 import { Rand } from './models/learner';
-import { capacity, recallRow } from './models/memory';
+import { capacity, expectedRowShare, recallRow } from './models/memory';
 
 /**
  * F13 (spec §4.7, §8.5): one level for the four memory modes, 10 rows a block, the level moved by the partial score
@@ -11,20 +11,21 @@ import { capacity, recallRow } from './models/memory';
  * §8.5: the session's g = 2 boosts are left out).
  */
 
-const TRIALS_PER_POINT = 20_000;
+/** Rows sampled where the computed expectation is checked against recallRow. */
+const SAMPLED_ROWS = 50_000;
 const MODES_VS_DIGITS: readonly MemoryMode[] = ['letters', 'positions', 'card3x3'];
 const LADDER_BLOCKS = 4000;
 /** Blocks left out before the equilibrium is read: the ladder starts at L 9. */
 const BURN_IN = 200;
 const START_L = 9;
 
-/** The mean share of positions right of TRIALS_PER_POINT rows of `mode` at L. */
-function expectedPartial(r: Rand, mode: MemoryMode, L: number): number {
+/**
+ * The expected share of positions right of a row of `mode` at L, computed (expectedRowShare) rather than sampled: the
+ * narrowest gap (0.0373 of 0.04) carries no sampling error (T-R67).
+ */
+function expectedPartial(mode: MemoryMode, L: number): number {
   const p = memoryParams(L, mode);
-  const k = capacity(mode, p.exposureMs, p.sound);
-  let sum = 0;
-  for (let i = 0; i < TRIALS_PER_POINT; i++) sum += recallRow(r, p.length, k) / p.length;
-  return sum / TRIALS_PER_POINT;
+  return expectedRowShare(p.length, capacity(mode, p.exposureMs, p.sound));
 }
 
 /** A block's staircase input: s and nothing else (no calibration, no boost, no stability rule for memory). */
@@ -66,12 +67,27 @@ function ladder(r: Rand): { equilibrium: number; sdDelta: number } {
 }
 
 describe('memory simulation (F13)', () => {
-  it('each mode is within 0.04 of digits in expected partial score at L 9…27', () => {
+  it('the computed expectation is the mean of recallRow (within 4 standard errors)', () => {
     const r = new Rand(5);
+    for (const [length, k] of [[7, 7.5], [9, 7.5], [9, 5.2], [12, 6.3], [4, 0.6]] as const) {
+      let sum = 0;
+      let squares = 0;
+      for (let i = 0; i < SAMPLED_ROWS; i++) {
+        const share = recallRow(r, length, k) / length;
+        sum += share;
+        squares += share * share;
+      }
+      const mean = sum / SAMPLED_ROWS;
+      const se = Math.sqrt((squares / SAMPLED_ROWS - mean * mean) / SAMPLED_ROWS);
+      expect(Math.abs(expectedRowShare(length, k) - mean), `length ${String(length)}, K ${String(k)}`).toBeLessThanOrEqual(4 * se);
+    }
+  });
+
+  it('each mode is within 0.04 of digits in expected partial score at L 9…27', () => {
     for (let L = 9; L <= 27; L += 3) {
-      const digits = expectedPartial(r, 'digits', L);
+      const digits = expectedPartial('digits', L);
       for (const mode of MODES_VS_DIGITS) {
-        expect(Math.abs(expectedPartial(r, mode, L) - digits), `${mode} at L ${String(L)}`).toBeLessThanOrEqual(0.04);
+        expect(Math.abs(expectedPartial(mode, L) - digits), `${mode} at L ${String(L)}`).toBeLessThanOrEqual(0.04);
       }
     }
   });

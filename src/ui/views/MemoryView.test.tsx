@@ -57,7 +57,7 @@ afterEach(() => {
 
 function renderView(s: StepOf<'memory_block'>, o: { exposeAnswer?: boolean; busy?: boolean; audio?: AudioOut } = {}) {
   const handlers = {
-    onSubmit: vi.fn<(a: MemoryAnswer[]) => void>(),
+    onSubmit: vi.fn<(a: MemoryAnswer[], audioPlayed?: boolean) => void>(),
     onFocusLost: vi.fn<() => void>(),
     onProgress: vi.fn<(p: number) => void>(),
   };
@@ -379,6 +379,39 @@ describe('MemoryView', () => {
     // The next card plays it again, the answer screen never.
     await showTrial();
     expect(log).toEqual(['start', 'active true', 'stop', 'start', 'active true', 'stop']);
+  });
+
+  it('a block with sound reports whether it played: false when no card started it (T-R67); a quiet block reports nothing', async () => {
+    const card = () => step([trial({ mode: 'card3x3', gridSide: 3, rows: 2, sound: true })], { audio: CARD_AUDIO });
+    const answer = async (): Promise<void> => {
+      await showTrial();
+      for (const d of ['7', '3', '9', '1']) key(d);
+      key('Enter');
+    };
+    for (const started of [true, false]) {
+      const fake = fakeAudio();
+      fake.handle.start.mockImplementation(() => started);
+      const view = renderView(card(), { audio: fake.audio });
+      await answer();
+      expect(view.onSubmit).toHaveBeenCalledTimes(1);
+      expect(view.onSubmit.mock.calls[0]?.[0].map((a) => a.given)).toEqual([['7', '3', '9', '1']]);
+      expect(view.onSubmit.mock.calls[0]?.[1]).toBe(started);
+      view.unmount();
+    }
+    // The sound could not even be built: it never played.
+    const broken = fakeAudio();
+    broken.prepare.mockImplementation(() => {
+      throw new Error('no buffer');
+    });
+    const silent = renderView(card(), { audio: broken.audio });
+    await answer();
+    expect(silent.onSubmit.mock.calls[0]?.[1]).toBe(false);
+    silent.unmount();
+    const quiet = renderView(step([trial()]));
+    await showTrial();
+    key('7');
+    key('Enter');
+    expect(quiet.onSubmit.mock.calls[0]).toHaveLength(1);
   });
 
   it('a card with sound waits for the unlock, at most UNLOCK_WAIT_MS; a block without sound neither prepares nor unlocks', async () => {

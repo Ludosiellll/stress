@@ -798,6 +798,33 @@ describe('Session reaction blocks', () => {
     expect(document.querySelector('.memory canvas')).toBeTruthy();
   });
 
+  it('a card whose sound could not play: submitMemory hears audioPlayed false (T-R67)', async () => {
+    const audio: AudioOut = {
+      available: true,
+      unlock: () => Promise.resolve(),
+      setVolume: vi.fn<AudioOut['setVolume']>(),
+      // The sound cannot be built: no card starts it.
+      prepare: vi.fn<AudioOut['prepare']>(() => null),
+      hold: vi.fn<AudioOut['hold']>(() => () => undefined),
+    };
+    const c = fakeDriver(CARD);
+    await renderSession(c, { audio });
+    for (let ts = 0; ts <= 7000 && document.querySelector('.memory-response') === null; ts += 50) {
+      frames.run(ts);
+      await act(async () => {
+        await Promise.resolve();
+      });
+    }
+    expect(document.querySelector('.memory-response')).toBeTruthy();
+    await nextTask();
+    for (const d of CARD.trials[0]?.items ?? []) await press(d);
+    await press('Enter');
+    await waitFor(() => {
+      expect(c.submitMemory).toHaveBeenCalledTimes(1);
+    });
+    expect(c.submitMemory.mock.calls[0]?.[1]).toBe(false);
+  });
+
   it('memory answers go to submitMemory; focus loss discards the memory block', async () => {
     const c = fakeDriver(MEMORY);
     await renderSession(c);

@@ -70,13 +70,14 @@ export type HistoryRow = Pick<BlockRow, 'sessionId' | 'module' | 'lBefore' | 'fl
 /** The СЗМР norm is a choice of 2: it applies to a block of 2 colours on 2 keys only. */
 export const isTwoChoice = (p: { nColors: number; nKeys: number }): boolean => p.nColors === 2 && p.nKeys === 2;
 /**
- * A training memory block gives a span only with this many exact rows: of the MEMORY_TRIALS (10) rows of F13, 7; a
- * block of 0.2.0 had 6 rows and keeps its rule, 4 of them (T-R21).
+ * When a training memory block gives a span: all its rows answered and enough of them exact. A block of F13 (it stores
+ * its partial score) has MEMORY_TRIALS (10) rows and needs 7; a block of 0.2.0 had 6 rows and keeps its rule, 4 of them
+ * (T-R21). The rule goes by the partial score, not by the rows: a scaled F13 block of 6 rows is no 0.2.0 block (T-R67).
  */
-const MEMORY_SPAN_MIN_EXACT: ReadonlyMap<number, number> = new Map([
-  [MEMORY_TRIALS, 7],
-  [6, 4],
-]);
+const MEMORY_SPAN_RULE = {
+  f13: { rows: MEMORY_TRIALS, minExact: 7 },
+  old: { rows: 6, minExact: 4 },
+} as const;
 const MS_PER_DAY = 86_400_000;
 
 const GORBOV_TASKS = ['black_up', 'red_down', 'alternate'] as const;
@@ -289,7 +290,7 @@ function metricFrom(module: ModuleId, summary: Json | null): number | null {
 
 /**
  * Memory: the span protocol's span; a training block of digits gives its row length with all its rows answered and
- * enough of them exact: 7 of 10, or 4 of the 6 of a 0.2.0 block (MEMORY_SPAN_MIN_EXACT, T-R21).
+ * enough of them exact: 7 of 10 in a block of F13, 4 of 6 in a block of 0.2.0 (MEMORY_SPAN_RULE, T-R21, T-R67).
  */
 function memoryNorms(summary: Json | null): NormSample[] {
   if (summary?.['protocol'] === 'span') {
@@ -300,8 +301,8 @@ function memoryNorms(summary: Json | null): NormSample[] {
   const exact = num(summary, 'exact');
   const length = positiveWhole(summary, 'length');
   const rows = Array.isArray(answers) ? answers.length : 0;
-  const minExact = MEMORY_SPAN_MIN_EXACT.get(rows);
-  if (oneOf(summary, 'mode', MEMORY_MODES) !== 'digits' || minExact === undefined || exact === null || exact < minExact || exact > rows) {
+  const rule = num(summary, 'partial') === null ? MEMORY_SPAN_RULE.old : MEMORY_SPAN_RULE.f13;
+  if (oneOf(summary, 'mode', MEMORY_MODES) !== 'digits' || rows !== rule.rows || exact === null || exact < rule.minExact || exact > rows) {
     return [];
   }
   return length === null ? [] : [{ id: 'memorySpan', value: length }];

@@ -46,3 +46,29 @@ export function recallRow(r: Rand, length: number, kMean: number): number {
   }
   return right;
 }
+
+/** Φ(z), the standard normal CDF, by the Chebyshev fit of erfc (Numerical Recipes `erfcc`, relative error < 1.2·10⁻⁷). */
+export function normalCdf(z: number): number {
+  const x = Math.abs(z) / Math.SQRT2;
+  const t = 1 / (1 + x / 2);
+  const poly = [-1.26551223, 1.00002368, 0.37409196, 0.09678418, -0.18628806, 0.27886807, -1.13520398, 1.48851587, -0.82215223, 0.17087277]
+    .reduceRight((acc, c) => c + t * acc, 0);
+  const erfc = t * Math.exp(-x * x + poly);
+  return z >= 0 ? 1 - erfc / 2 : erfc / 2;
+}
+
+/**
+ * The expected share of positions right in a row of `length` under recallRow, computed instead of sampled: K is within
+ * the row with P(K ≥ length) (each position 0.98); otherwise ⌊K⌋ = m with P(m ≤ K < m + 1) (m = 0 for every K below 1),
+ * and the row keeps 0.95·m + 0.5 (the last position) + 0.25·(length − 1 − m) positions.
+ */
+export function expectedRowShare(length: number, kMean: number): number {
+  /** P(K < x). */
+  const below = (x: number): number => normalCdf((x - kMean) / CAPACITY_SD);
+  let right = 0.98 * length * (1 - below(length));
+  for (let m = 0; m < length; m++) {
+    const p = below(m + 1) - (m === 0 ? 0 : below(m));
+    right += p * (0.95 * m + 0.5 + 0.25 * (length - 1 - m));
+  }
+  return right / length;
+}

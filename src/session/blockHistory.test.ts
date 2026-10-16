@@ -354,14 +354,26 @@ describe('normSamples', () => {
   });
 
   it('память: digits, all 10 answers and at least 7 exact give the row length (F13)', () => {
-    expect(normSamples(memory({ mode: 'digits', length: 7, exact: 7, answers: answers(10) }), 'training')).toEqual([{ id: 'memorySpan', value: 7 }]);
-    expect(normSamples(memory({ mode: 'digits', length: 7, exact: 10, answers: answers(10) }), 'training')).toEqual([{ id: 'memorySpan', value: 7 }]);
-    expect(normSamples(memory({ mode: 'digits', length: 7, exact: 6, answers: answers(10) }), 'training')).toEqual([]);
-    expect(normSamples(memory({ mode: 'card3x3', length: 9, exact: 10, answers: answers(10) }), 'training')).toEqual([]);
-    expect(normSamples(memory({ mode: 'letters', length: 7, exact: 10, answers: answers(10) }), 'training')).toEqual([]);
-    expect(normSamples(memory({ mode: 'digits', length: 'x', exact: 9, answers: answers(10) }), 'training')).toEqual([]);
+    // A block of F13 stores its partial score.
+    const f13 = (summary: object) => memory({ partial: 0.9, ...summary });
+    expect(normSamples(f13({ mode: 'digits', length: 7, exact: 7, answers: answers(10) }), 'training')).toEqual([{ id: 'memorySpan', value: 7 }]);
+    expect(normSamples(f13({ mode: 'digits', length: 7, exact: 10, answers: answers(10) }), 'training')).toEqual([{ id: 'memorySpan', value: 7 }]);
+    expect(normSamples(f13({ mode: 'digits', length: 7, exact: 6, answers: answers(10) }), 'training')).toEqual([]);
+    expect(normSamples(f13({ mode: 'card3x3', length: 9, exact: 10, answers: answers(10) }), 'training')).toEqual([]);
+    expect(normSamples(f13({ mode: 'letters', length: 7, exact: 10, answers: answers(10) }), 'training')).toEqual([]);
+    expect(normSamples(f13({ mode: 'digits', length: 'x', exact: 9, answers: answers(10) }), 'training')).toEqual([]);
     // Under the e2e scale, or another number of rows: no norm.
-    for (const n of [3, 5, 9, 11]) expect(normSamples(memory({ mode: 'digits', length: 7, exact: n, answers: answers(n) }), 'training')).toEqual([]);
+    for (const n of [3, 5, 6, 9, 11]) expect(normSamples(f13({ mode: 'digits', length: 7, exact: n, answers: answers(n) }), 'training')).toEqual([]);
+  });
+
+  it('память: the rule goes by the partial score a block of F13 stores, not by its rows (T-R67)', () => {
+    // A block of F13 with 6 rows (a scaled block) is no 0.2.0 block: 4 exact of 6 give no norm.
+    expect(normSamples(memory({ mode: 'digits', length: 7, exact: 4, partial: 0.8, answers: answers(6) }), 'training')).toEqual([]);
+    expect(normSamples(memory({ mode: 'digits', length: 7, exact: 6, partial: 1, answers: answers(6) }), 'training')).toEqual([]);
+    // A row without a partial score is of 0.2.0: 10 rows were never its size.
+    expect(normSamples(memory({ mode: 'digits', length: 7, exact: 10, answers: answers(10) }), 'training')).toEqual([]);
+    // A damaged partial score is no partial score.
+    expect(normSamples(memory({ mode: 'digits', length: 7, exact: 4, partial: '0.8', answers: answers(6) }), 'training')).toEqual([{ id: 'memorySpan', value: 7 }]);
   });
 
   it('память: a 0.2.0 block of 6 rows keeps its rule, at least 4 exact (T-R21)', () => {
@@ -387,7 +399,7 @@ describe('normSamples', () => {
     expect(normSamples(row({ module: 'szmr', lBefore: 0, summaryJson: '{"meanRt":-1}' }), 'diagnostic')).toEqual([]);
     expect(normSamples(table('black_up', 0), 'training')).toEqual([]);
     expect(normSamples(memory({ mode: 'digits', length: 7, exact: 9, answers: answers(6) }), 'training')).toEqual([]);
-    expect(normSamples(memory({ mode: 'digits', length: 7, exact: 11, answers: answers(10) }), 'training')).toEqual([]);
+    expect(normSamples(memory({ mode: 'digits', length: 7, exact: 11, partial: 1, answers: answers(10) }), 'training')).toEqual([]);
     expect(normSamples(memory({ mode: 'digits', length: 0, exact: 6, answers: answers(6) }), 'training')).toEqual([]);
     expect(normSamples(memory({ protocol: 'span', mode: 'digits', exact: 9, span: -2, answers: answers(14) }), 'diagnostic')).toEqual([]);
   });

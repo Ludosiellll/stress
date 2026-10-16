@@ -2942,7 +2942,7 @@ describe('SessionController — memory', () => {
       audios.push(b.audio);
       if (b.mode === 'card3x3') {
         expect(b.trials.every((t) => t.sound && t.cardMs === 5000)).toBe(true);
-        // Half the rows right: the level stays where the card has its sound.
+        // 7 of the 9 positions of every row right (s ≈ 0.78): the level stays where the card has its sound.
         await h.c.submitMemory(b.trials.map((t) => ({ given: t.items.slice(0, 7), timeMs: 3000 })));
         const { view } = expectStep(h.c, 'summary');
         expect(view.lines[0]).toMatch(/ · длина 9 \(карточка 3×3, 5 с, со звуком\)$/);
@@ -2955,6 +2955,48 @@ describe('SessionController — memory', () => {
       await h.c.continueAfterSummary();
     }
     expect(audios).toEqual([null, null, CARD_AUDIO]);
+  });
+
+  it('a card whose sound never started stores sound: false and says the sound did not play (T-R67)', async () => {
+    const repo = await calibratedRepo(stateWith('memory', { lSaved: 22, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    await repo.addBlock(block('card', 'calibrated', T0, { module: 'memory', paramsJson: '{"mode":"card3x3"}' }), [], []);
+    const h = await begin(planFree('memory', 5), { repo });
+    const lines: string[][] = [];
+    for (let i = 0; i < 3; i++) {
+      const b = memoryBlock(h);
+      const given = (t: (typeof b.trials)[number]) => t.items.map((x, k) => (k < Math.round(0.8 * t.items.length) ? x : ''));
+      if (b.mode === 'card3x3') await h.c.submitMemory(b.trials.map((t) => ({ given: given(t), timeMs: 3000 })), false);
+      else await h.c.submitMemory(b.trials.map((t) => ({ given: given(t), timeMs: 3000 })));
+      lines.push(expectStep(h.c, 'summary').view.lines);
+      await h.c.continueAfterSummary();
+    }
+    const card = lines[2] ?? [];
+    expect(card[0]).toMatch(/ · длина 9 \(карточка 3×3, 5 с\)$/);
+    expect(card.at(-1)).toBe(AUDIO_NOT_PLAYED);
+    // The blocks without sound have no such line.
+    expect(lines.slice(0, 2).flat()).not.toContain(AUDIO_NOT_PLAYED);
+    const row = (await h.repo.listBlocks()).filter((r) => r.sessionId === h.c.sessionId).at(-1);
+    expect(JSON.parse(row?.summaryJson ?? '')).toMatchObject({ mode: 'card3x3', exposureMs: 5000, sound: false });
+    // The parameters keep what was planned: a card with sound.
+    expect(JSON.parse(row?.paramsJson ?? '')).toMatchObject({ mode: 'card3x3', sound: true });
+  });
+
+  it('a card whose sound played keeps sound: true and no note (T-R67)', async () => {
+    const repo = await calibratedRepo(stateWith('memory', { lSaved: 22, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    await repo.addBlock(block('card', 'calibrated', T0, { module: 'memory', paramsJson: '{"mode":"card3x3"}' }), [], []);
+    const h = await begin(planFree('memory', 5), { repo });
+    for (let i = 0; i < 3; i++) {
+      const b = memoryBlock(h);
+      const answers = b.trials.map((t) => ({ given: t.items.map((x, k) => (k < Math.round(0.8 * t.items.length) ? x : '')), timeMs: 3000 }));
+      await h.c.submitMemory(answers, b.mode === 'card3x3' ? true : undefined);
+      if (b.mode === 'card3x3') {
+        const { view } = expectStep(h.c, 'summary');
+        expect(view.lines).toEqual([expect.stringMatching(/ · длина 9 \(карточка 3×3, 5 с, со звуком\)$/)]);
+        const row = (await h.repo.listBlocks()).filter((r) => r.sessionId === h.c.sessionId).at(-1);
+        expect(JSON.parse(row?.summaryJson ?? '')).toMatchObject({ sound: true });
+      }
+      await h.c.continueAfterSummary();
+    }
   });
 
   it('discardBlock keeps the memory level', async () => {

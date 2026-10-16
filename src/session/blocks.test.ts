@@ -60,7 +60,7 @@ import {
 } from './blocks';
 import { appendPast, pastBlocks } from './pastBlocks';
 import { logicItemRows } from './rowsBuild';
-import { MEMORY_SPAN_INSTRUCTION, OVERLOAD_PREFIX, OVERLOAD_SOUND_PREFIX, overloadBandPrefix, rdoSpeedNote, type StepOf } from './steps';
+import { MEMORY_SPAN_INSTRUCTION, OVERLOAD_PREFIX, OVERLOAD_SOUND_PREFIX, overloadBandPrefix, rdoSpeedNote, type SeriesAnswer, type StepOf } from './steps';
 import { testFormatInstruction } from './testFormat';
 
 const counts: Record<Outcome, number> = { hit: 0, wrong: 0, miss: 0, late: 0, false_start: 0, commission: 0, correct_reject: 0, early: 0, timing_late: 0 };
@@ -1211,7 +1211,7 @@ describe('number series', () => {
   });
 
   it('Space skips an item (F12): wrong in training and in a diagnostic, and its time counts toward the total limit', () => {
-    const skip = { itemId: 'arith:1', given: null, timeMs: 2500, skipped: true };
+    const skip: SeriesAnswer = { itemId: 'arith:1', given: null, timeMs: 2500, skipped: true };
     const rest = [
       { itemId: 'arith:2', given: 4, timeMs: 5000 },
       { itemId: 'arith:3', given: 4, timeMs: 3000 },
