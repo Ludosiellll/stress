@@ -57,7 +57,7 @@ export function readinessOf(diagnostics: readonly DiagnosticRow[]): HomeModel['r
   const latest = parseResults(last);
   if (latest === null) return { abilities: NO_ABILITIES, overall: null, unreliable: [], deferred: false };
   const earlier = diagnostics.slice(0, -1).flatMap((d) => parseResults(d) ?? []);
-  return { ...readinessOfLatest(earlier, latest), unreliable: latest.unreliable };
+  return { ...readinessOfLatest(earlier, latest), unreliable: [...latest.unreliable] };
 }
 
 const PHASE_TITLES: Record<PhaseId, string> = {

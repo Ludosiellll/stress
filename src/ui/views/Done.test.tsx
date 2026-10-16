@@ -132,12 +132,19 @@ describe('Done', () => {
     ]);
   });
 
-  it('«Перезапуск» is the last column: «да» for a module restarted with Esc; focus losses do not count (Р22)', () => {
-    const restarts = { pzmr: { user: 1, focus: 0 }, gorbov: { user: 1, focus: 2 }, szmr: { user: 0, focus: 3 } };
+  it('«Перезапуск» is the last column: «да» for a restart with Esc, «фокус» for one after a focus loss (Р22, T-R57)', () => {
+    const restarts = {
+      pzmr: { user: 1, focus: 0 },
+      gorbov: { user: 1, focus: 2 },
+      szmr: { user: 0, focus: 3 },
+      gonogo: { user: 0, focus: 1 },
+      memory: { user: 2, focus: 1 },
+      rdo: { user: 0, focus: 0 },
+    };
     render(<Done diagnostic={{ ...RESULTS, restarts }} seriesTotal={20} summaries={[]} comparison={WITH_PREVIOUS} onHome={vi.fn()} />);
     expect(headers().at(-1)).toBe('Перезапуск');
     // Горбов: its three rows.
-    expect(restartCells()).toEqual(['да', '—', '—', '—', 'да', 'да', 'да', '—', '—', '—', '—', '—']);
+    expect(restartCells()).toEqual(['да', 'фокус ×3', 'фокус', '—', 'да; фокус ×2', 'да; фокус ×2', 'да; фокус ×2', '—', '—', '—', '—', 'да; фокус']);
   });
 
   it('«Перезапуск» reads «—» everywhere without restarts (a diagnostic stored before F11)', () => {

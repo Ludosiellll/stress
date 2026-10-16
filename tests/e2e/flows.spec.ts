@@ -375,7 +375,9 @@ test('in a diagnostic the second Esc is ignored and the results say «да»', a
   await playSession(page, { stopAt: 'reaction' });
   await waitForStimuli(page, 1);
   await cancelPendingPresses(page);
-  await escapeUntil(page, 'Повтор блока');
+  // One press: the running block's own listener takes it; a second one would open «Пауза» over the notice.
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('heading', { name: 'Повтор блока' })).toBeVisible();
   await expect(page.getByText('Блок перезапущен. В диагностике это можно сделать один раз за задание.')).toBeVisible();
   await page.getByRole('button', { name: 'Дальше (Enter)' }).click();
   // The second Escape in the same task: the block goes on, and the hint says why.

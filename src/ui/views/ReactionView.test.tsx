@@ -118,10 +118,10 @@ afterEach(() => {
   installE2eHooks({ location: { search: '' } });
 });
 
-function renderView(s = step(), audio: AudioOut = fakeAudio().audio, escAllowed = true) {
+function renderView(s = step(), audio: AudioOut = fakeAudio().audio, canStop: () => boolean = () => true) {
   const handlers = { onDone: vi.fn(), onAbort: vi.fn(), onError: vi.fn() };
   const view = renderWithApp(
-    <ReactionView step={s} nominalFrameMs={16} escAllowed={escAllowed} {...handlers} />,
+    <ReactionView step={s} nominalFrameMs={16} canStop={canStop} {...handlers} />,
     createFakePlatform(),
     new MemoryRepository(),
     audio,
@@ -308,9 +308,12 @@ describe('ReactionView', () => {
     expect(onAbort).toHaveBeenCalledWith('user', 0.25);
   });
 
-  it('Escape does nothing when the step allows no restart: the block plays on (F11)', async () => {
+  it('Escape does nothing when the session screen cannot take the stop at that moment: the block plays on (F11, T-R57)', async () => {
     mockCanvas();
-    const { onAbort, onDone } = renderView(step(), fakeAudio().audio, false);
+    // Asked at the key press, not at render: the screen may be busy with another call.
+    let allowed = true;
+    const { onAbort, onDone } = renderView(step(), fakeAudio().audio, () => allowed);
+    allowed = false;
     await nextTask();
     frames.run(1000);
     let event: KeyboardEvent | null = null;

@@ -100,7 +100,7 @@ export interface DiagnosticResults extends DiagnosticMetrics {
    * Reaction modules whose block stayed timingUnreliable after its one replay (I1). Their values are kept and
    * used by readiness, but every screen marks them «замер ненадёжен». Rows stored before 0.1.0 lack it: read as [].
    */
-  unreliable: ReactionModuleId[];
+  unreliable: readonly ReactionModuleId[];
   /** The modules whose tasks were restarted (F11); rows stored before 0.3.0 lack it: read as {}. */
   restarts: Partial<Record<ModuleId, ModuleRestarts>>;
 }
@@ -108,7 +108,7 @@ export interface DiagnosticResults extends DiagnosticMetrics {
 /** Results with every metric missing, nothing unreliable and no restarts: the base of results built in tests and code. */
 export const EMPTY_RESULTS: Readonly<DiagnosticResults> = Object.freeze({
   ...EMPTY_METRICS,
-  unreliable: Object.freeze([]) as unknown as ReactionModuleId[],
+  unreliable: Object.freeze([]),
   restarts: Object.freeze({}),
 });
 

@@ -12,6 +12,7 @@ import { isBandModule, MODULE_IDS, type ModuleId, type ReactionModuleId, type Se
 import { moduleTitles } from '../modules/registry';
 import { assessModules, meanFamilyRating, type ModuleAssessment } from '../session/assessment';
 import { buildBlockHistory, parseObject, scoreFromCounts } from '../session/blockHistory';
+import type { DiscardReason } from '../session/controller';
 import { pastBlocks, testFormatRunsAt, warmupDays, type PastBlocks } from '../session/pastBlocks';
 import { plural, shownCost } from '../session/steps';
 import { TEST_FORMAT_NAMES, testFormatBest, type TestFormatBest } from '../session/testFormat';
@@ -479,15 +480,17 @@ function dayLabel(day: number): string {
 /** The Monday of the week of a day number (day 0, 1970-01-01, was a Thursday). */
 const mondayOf = (day: number): number => day - ((((day + 3) % 7) + 7) % 7);
 
-const RESTART_REASONS: ReadonlySet<unknown> = new Set(['user', 'focus_lost', 'error']);
+/** Every DiscardReason, listed by a Record so that a new reason cannot be missed. */
+const RESTART_REASONS: Readonly<Record<DiscardReason, true>> = { user: true, focus_lost: true, error: true };
+const isRestartReason = (v: string): v is DiscardReason => Object.hasOwn(RESTART_REASONS, v);
 
 /** The reasons of summaryJson.restarts (F11); a damaged list or entry is none. */
-function restartReasons(summaryJson: string): string[] {
+function restartReasons(summaryJson: string): DiscardReason[] {
   const restarts = parseObject(summaryJson)?.['restarts'];
   if (!Array.isArray(restarts)) return [];
   return (restarts as unknown[]).flatMap((r) => {
     const reason = typeof r === 'object' && r !== null ? (r as Record<string, unknown>)['reason'] : undefined;
-    return typeof reason === 'string' && RESTART_REASONS.has(reason) ? [reason] : [];
+    return typeof reason === 'string' && isRestartReason(reason) ? [reason] : [];
   });
 }
 

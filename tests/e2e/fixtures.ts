@@ -64,8 +64,9 @@ export async function shot(page: Page, name: string, fullPage = false): Promise<
  * Presses Escape until `what` shows: a heading of that name, or the locator. A session screen listens to keys only
  * while no controller call runs, and from the task after it mounted (useKeyDown attaches its listener in a timeout), so
  * an Escape pressed right after a screen came up can be lost. The press is repeated until `what` is visible, so it
- * must be a screen a further press leaves as it is: the pause menu ignores Escape, the diagnostic restart notice comes
- * at once, the hint of a used-up restart only shows again.
+ * must be a screen a further press leaves as it is: the pause menu ignores Escape, the hint of a used-up restart only
+ * shows again. Not for the diagnostic restart notice: Escape on it opens «Пауза» over it, so a repeated press would hide
+ * it (press once in a running reaction block instead, whose own listener is attached while it plays).
  */
 export async function escapeUntil(page: Page, what: string | Locator): Promise<void> {
   const target = typeof what === 'string' ? page.getByRole('heading', { name: what }) : what;

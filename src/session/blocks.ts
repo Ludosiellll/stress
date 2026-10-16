@@ -611,10 +611,11 @@ function spreadOf(hitRts: readonly number[]): [sd: number | null, iqr: number | 
  */
 export function diagnosticResults(parts: readonly DiagnosticPart[], restarts: DiagnosticResults['restarts'] = {}): DiagnosticResults {
   const copied = Object.fromEntries(Object.entries(restarts).map(([m, r]) => [m, { ...r }])) as DiagnosticResults['restarts'];
-  const r: DiagnosticResults = { ...EMPTY_METRICS, unreliable: [], restarts: copied };
+  const unreliable: ReactionModuleId[] = [];
+  const r: DiagnosticResults = { ...EMPTY_METRICS, unreliable, restarts: copied };
   const seconds: Array<number | null> = [];
   for (const p of parts) {
-    if ('summary' in p && p.summary.timingUnreliable) r.unreliable.push(p.module);
+    if ('summary' in p && p.summary.timingUnreliable) unreliable.push(p.module);
     switch (p.module) {
       case 'pzmr':
         r.pzmrMedianRt = p.summary.medianRt;

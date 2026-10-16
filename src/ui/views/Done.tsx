@@ -51,9 +51,16 @@ const ROW_MODULE: Readonly<Record<DiagnosticRowId, ModuleId>> = {
   memory: 'memory',
 };
 
-/** «да» when a task of the row's module was restarted with Esc; restarts after a focus loss do not count (Р22). */
+/**
+ * The restarts of the row's module: «да» for one with Esc (the task's one restart, Р22), «фокус» for those after a focus
+ * loss, which are free («фокус ×2» for more than one, T-R57); «да; фокус» for both, «—» for none.
+ */
 function restartText(d: DiagnosticResults, id: DiagnosticRowId): string {
-  return (d.restarts[ROW_MODULE[id]]?.user ?? 0) >= 1 ? 'да' : NONE;
+  const r = d.restarts[ROW_MODULE[id]];
+  const focus = r?.focus ?? 0;
+  const focusText = focus === 0 ? null : focus === 1 ? 'фокус' : `фокус ×${String(focus)}`;
+  if ((r?.user ?? 0) >= 1) return focusText === null ? 'да' : `да; ${focusText}`;
+  return focusText ?? NONE;
 }
 
 const LABELS: Readonly<Record<DiagnosticRowId, string>> = {

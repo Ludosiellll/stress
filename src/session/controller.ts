@@ -1241,7 +1241,8 @@ export class SessionController {
   }
 }
 
-function isBlockStep(s: Step): s is BlockStep {
+/** A step that plays a block: reaction, table, number series or memory. */
+export function isBlockStep(s: Step): s is BlockStep {
   return s.kind === 'reaction_block' || s.kind === 'table_block' || s.kind === 'numseries_block' || s.kind === 'memory_block';
 }
 

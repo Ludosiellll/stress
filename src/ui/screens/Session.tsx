@@ -3,7 +3,7 @@ import type { Repository } from '../../data/repository';
 import type { SessionPlan } from '../../engine/planner';
 import { moduleTitles } from '../../modules/registry';
 import type { Platform } from '../../platform';
-import { SessionController, type SessionStartOptions } from '../../session/controller';
+import { isBlockStep, SessionController, type SessionStartOptions } from '../../session/controller';
 import { discardText, RESTART_USED_HINT, type BlockSummaryView, type SeriesAnswer, type Step } from '../../session/steps';
 import { e2eHooks } from '../../testing/e2eHooks';
 import { useApp } from '../AppContext';
@@ -236,8 +236,9 @@ function SessionFlow({
       try {
         const o = await (answered === undefined ? c.discardBlock('user', share) : c.discardBlock('user', share, answered));
         if (o.kind === 'refused') setHintStep(s);
-        // A diagnostic's restart notice is the controller's next step.
-        else if (plan.kind !== 'diagnostic') setPause({ text: discardText(o), restartBlock: o.kind === 'restarted' });
+        // A diagnostic's restart notice is the controller's next step. A counted block whose save failed has not moved
+        // the level yet (skipping the save leaves it): the save error speaks, not the pause (T-R57).
+        else if (plan.kind !== 'diagnostic' && c.step.kind !== 'save_error') setPause({ text: discardText(o), restartBlock: o.kind === 'restarted' });
       } finally {
         setDiscarding(null);
       }
@@ -250,8 +251,6 @@ function SessionFlow({
     });
   };
 
-  const isBlock = (s: Step): boolean =>
-    s.kind === 'reaction_block' || s.kind === 'table_block' || s.kind === 'numseries_block' || s.kind === 'memory_block';
   // A running reaction block handles Escape itself, unless its diagnostic restart is used up (the hint is shown from
   // here); a save error must be resolved first.
   const escapeListens =
@@ -266,7 +265,7 @@ function SessionFlow({
       // The block after the notice has not started yet: nothing to discard.
       setNotice(null);
       setPause({ text: '', restartBlock: false });
-    } else if (isBlock(step)) {
+    } else if (isBlockStep(step)) {
       const p = progressOf(step);
       escapeBlock(step, p.share, step.kind === 'numseries_block' ? p.answered : undefined);
     } else setPause({ text: '', restartBlock: false });
@@ -353,7 +352,9 @@ function SessionFlow({
             key={stepId(step)}
             step={step}
             nominalFrameMs={frameMs}
-            escAllowed={escAllowed}
+            // The view stops its runner before this screen decides: it may only when the stop can be handled now, so a
+            // stopped block is always restarted or counted (a refused Esc or a busy screen never leaves it dead, T-R57).
+            canStop={() => phase.c.escAllowed && !busyRef.current}
             onDone={(timeline) => {
               setRenderFailures(0);
               run((c) => c.submitReaction(timeline));

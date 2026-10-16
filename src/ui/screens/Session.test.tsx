@@ -780,12 +780,13 @@ describe('Session: Esc after 30 % and the diagnostic restart (F11)', () => {
   const DIAGNOSTIC: SessionPlan = { ...PLAN, kind: 'diagnostic' };
   const HINT = 'Перезапуск уже использован — доведи задание до конца.';
 
-  it('Esc in a table at 45 % in training: the pause says it counts as 0, «Продолжить» goes on to the next block', async () => {
+  it('Esc in a table at 50 % in training: the pause says it counts as 0, «Продолжить» goes on to the next block', async () => {
     const c = fakeDriver(TABLE);
     const next = { ...TABLE, seed: 2 };
-    c.discardBlock.mockImplementation(() => {
+    // The outcome carries the share the view reported (T-R57).
+    c.discardBlock.mockImplementation((_reason, progress) => {
       c.step = next;
-      return Promise.resolve({ kind: 'counted', progress: 0.45, lBefore: 12.5, lAfter: 10.5, levelMoves: true, series: false });
+      return Promise.resolve({ kind: 'counted', progress, lBefore: 12.5, lAfter: 10.5, levelMoves: true, series: false });
     });
     await renderSession(c);
     frames.run(5000);
@@ -798,12 +799,63 @@ describe('Session: Esc after 30 % and the diagnostic restart (F11)', () => {
     await press('Escape');
     expect(c.discardBlock).toHaveBeenCalledWith('user', 0.5);
     expect(screen.getByRole('heading', { name: 'Пауза' })).toBeTruthy();
-    expect(screen.getByText('Блок прерван на 45 % — засчитан как 0, уровень 12,5 → 10,5.')).toBeTruthy();
+    expect(screen.getByText('Блок прерван на 50 % — засчитан как 0, уровень 12,5 → 10,5.')).toBeTruthy();
     expect(screen.getByText('Уже сохранённые блоки не пропадут.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Продолжить блок заново' })).toBeNull();
     await click('Продолжить');
     expect(screen.getByRole('group', { name: 'Таблица' })).toBeTruthy();
     expect(c.discardBlock).toHaveBeenCalledTimes(1);
+  });
+
+  it('a counted Esc whose save fails shows the save error, not the level change that may never happen (T-R57)', async () => {
+    const c = fakeDriver(TABLE);
+    c.discardBlock.mockImplementation((_reason, progress) => {
+      c.step = { kind: 'save_error', message: 'Не удалось сохранить результаты.', canAbandon: true, what: 'block' };
+      return Promise.resolve({ kind: 'counted', progress, lBefore: 5, lAfter: 3, levelMoves: true, series: false });
+    });
+    await renderSession(c);
+    frames.run(5000);
+    const grid = screen.getByRole('group', { name: 'Таблица' });
+    for (const value of ['1', '2']) {
+      const cell = within(grid).getByText(value);
+      fireEvent(cell, stamped(createEvent.mouseDown(cell, { button: 0 }), 6000));
+    }
+    await press('Escape');
+    expect(c.discardBlock).toHaveBeenCalledWith('user', 0.5);
+    expect(screen.getByText('Не удалось сохранить результаты.')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Пауза' })).toBeNull();
+    expect(screen.queryByText(/засчитан как 0/)).toBeNull();
+  });
+
+  it('Escape while a controller call runs leaves a reaction block running: it is never stopped without a restart (T-R57)', async () => {
+    const c = fakeDriver({ kind: 'summary', view: SUMMARY });
+    let finish: () => void = () => undefined;
+    // The next block is on screen while «Дальше» is still being handled.
+    c.continueAfterSummary.mockImplementation(() => {
+      c.step = REACTION;
+      return new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    });
+    await renderSession(c);
+    await click('Дальше');
+    expect(document.querySelector('canvas')).toBeTruthy();
+    frames.run(1000);
+    await press('Escape');
+    expect(c.discardBlock).not.toHaveBeenCalled();
+    expect(screen.queryByRole('heading', { name: 'Пауза' })).toBeNull();
+    // The block runs on and ends as usual.
+    await act(async () => {
+      finish();
+      await Promise.resolve();
+    });
+    frames.run(1100);
+    fireEvent(window, stamped(createEvent.keyDown(window, { code: 'Space', key: ' ' }), 1300));
+    frames.run(1316);
+    frames.run(1650);
+    await waitFor(() => {
+      expect(c.submitReaction).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('Esc in number series sends the answers given so far', async () => {

@@ -24,8 +24,12 @@ export interface ReactionViewProps {
   onAbort: (reason: AbortReason, progress: number) => void;
   /** Drawing failed; the screen is already cleared. `progress` as for onAbort. */
   onError: (error: unknown, progress: number) => void;
-  /** Escape stops the block; false: a diagnostic task whose restart is used up, the session screen answers Escape (F11). */
-  escAllowed: boolean;
+  /**
+   * Asked when Escape comes: true, the block stops (onAbort 'user'); false, the key goes on to the session screen
+   * untouched — a diagnostic task whose restart is used up, or another controller call still running, when the screen
+   * could not restart the stopped block (F11, T-R57).
+   */
+  canStop: () => boolean;
 }
 
 /** Non-practice trials shown / non-practice trials (F11); 0 for a block of practice trials only. */
@@ -66,16 +70,16 @@ const loopOffsetS = (seed: number): number => (seed % (STRESSOR_LOOP_S * 1000)) 
  * or trial i is `noisy` (W2-R10), the sound when the gate is 'all' or trial i is `noisy`. A block with sound reports
  * whether it played.
  *
- * Escape stops the block only while `escAllowed`; otherwise the key goes on to the session screen untouched (F11). An
- * abort and a failure report the share of the block shown.
+ * Escape stops the block only when `canStop()` says so at that moment; otherwise the key goes on to the session screen
+ * untouched (F11). An abort and a failure report the share of the block shown.
  */
-export default function ReactionView({ step, nominalFrameMs, onDone, onAbort, onError, escAllowed }: ReactionViewProps) {
+export default function ReactionView({ step, nominalFrameMs, onDone, onAbort, onError, canStop }: ReactionViewProps) {
   const { audio } = useApp();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const done = useEffectEvent(onDone);
   const aborted = useEffectEvent(onAbort);
   const failed = useEffectEvent(onError);
-  const escapeStops = useEffectEvent((): boolean => escAllowed);
+  const escapeStops = useEffectEvent((): boolean => canStop());
 
   useEffect(() => {
     const canvas = canvasRef.current;
