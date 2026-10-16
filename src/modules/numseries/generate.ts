@@ -1,9 +1,9 @@
-import { diagnosticSeriesSchedule, diagnosticSeriesSeed } from '../../engine/diagnostic';
+import { SERIES_FORMS, diagnosticSeriesSchedule, diagnosticSeriesSeed, seriesFormOf } from '../../engine/diagnostic';
 import { R0, familyWeights, pickWeighted, targetDifficulty } from '../../engine/elo';
 import { itemTimeLimit, structTarget } from '../../engine/itemLimit';
 import { createRng, deriveSeed, type Rng } from '../../engine/rng';
 import { fitPredictions, isUnique } from './check';
-import { HELD_OUT_FAMILIES, TRAINING_FAMILIES, fitFamily, generateTerms, structDifficulty, type FamilyId } from './families';
+import { HELD_OUT_FAMILIES, MIN_TERMS, TRAINING_FAMILIES, fitFamily, generateTerms, structDifficulty, type FamilyId } from './families';
 
 /**
  * Highest difficulty a candidate of each family reaches under its generation ranges (R36), the new families too: the
@@ -40,6 +40,10 @@ export const HELD_OUT_MIN_D: Readonly<Record<'powstep' | 'twostep' | 'digitsum',
 const HELD_OUT_AIM_ABOVE_MIN = 75;
 /** How many next seeds an item of a form may take before a repeat is given up as impossible. */
 const MAX_FORM_RETRIES = 100;
+/** The last shown terms (4 terms with the answer) of a held-out item no training rule may continue with its answer (T-R74). */
+const TAIL_TERMS = 3;
+/** An item nearly repeats another with the same last NEAR_TERMS shown terms and the same answer (T-R74). */
+const NEAR_TERMS = 3;
 
 const MAX_ABS_TERM = 100000;
 /** Constant and 2-cycle series are unique but trivial (R13). */
@@ -111,7 +115,7 @@ export function candidateItem(family: FamilyId, seed: number, terms: readonly nu
   const shown = terms.slice(0, -1);
   const answer = terms[terms.length - 1] as number;
   if (!fitFamily(family, shown).has(answer) || !isUnique(shown, answer)) return null;
-  if (reducesToTraining(family, shown)) return null;
+  if (reducesToTraining(family, shown, answer)) return null;
   return {
     id: `${family}:${String(seed)}`,
     family,
@@ -126,10 +130,13 @@ export function candidateItem(family: FamilyId, seed: number, terms: readonly nu
  * A held-out item tests transfer (spec §4.8): it must not be solvable by a rule the user trains. So an item of a held-out
  * family is rejected when any training family's rule, with its wide predictor ranges, fits all its shown terms, even
  * with the same answer (T-R70): a digit-sum series over multiples of 9 is a +9 progression, squares of a progression are
- * a second-order series.
+ * a second-order series. Nor may a training rule continue its last terms with its answer (T-R74): the last
+ * TAIL_TERMS shown terms, or as many as the rule needs (MIN_TERMS) — a digit-sum chain that ends in a +18 run.
  */
-function reducesToTraining(family: FamilyId, shown: readonly number[]): boolean {
-  return HELD_OUT_FAMILIES.includes(family) && fitPredictions(shown, TRAINING_FAMILIES).size > 0;
+function reducesToTraining(family: FamilyId, shown: readonly number[], answer: number): boolean {
+  if (!HELD_OUT_FAMILIES.includes(family)) return false;
+  if (fitPredictions(shown, TRAINING_FAMILIES).size > 0) return true;
+  return TRAINING_FAMILIES.some((f) => fitFamily(f, shown.slice(-Math.max(TAIL_TERMS, MIN_TERMS[f]))).has(answer));
 }
 
 /** Attempt `attempt` of generateItem: a fresh candidate from its own rng, or null. Exported for tests. */
@@ -195,37 +202,69 @@ export function diagnosticAim(family: FamilyId, targetD: number): number {
 }
 
 /**
- * The first `count` items of the number-series form of the diagnostic with seed index `seedIndex` (F12): the schedule of
- * spec §4.8, item № from diagnosticSeriesSeed(seedIndex, №), aimed at diagnosticAim. An item whose shown terms repeat
- * those of an earlier item of the form takes the item's next seed (sub-index 1, 2, …; T-R72). Deterministic.
+ * The first `count` items of the number-series form of the diagnostic with seed index `seedIndex` (form (seedIndex − 1)
+ * mod 6, F12): the six forms are built together (sixForms) and their items never change. Deterministic.
  */
 export function diagnosticSeriesItems(seedIndex: number, count: number = diagnosticSeriesSchedule().length): SeriesItem[] {
-  const schedule = diagnosticSeriesSchedule().slice(0, count);
-  return withoutRepeats(schedule.length, (i, retry) => {
-    const e = schedule[i] as (typeof schedule)[number];
-    return generateItem(e.family, diagnosticAim(e.family, e.targetD), diagnosticSeriesSeed(seedIndex, i + 1, retry));
-  });
+  return (sixForms()[seriesFormOf(seedIndex)] as SeriesItem[]).slice(0, count);
 }
 
+let forms: SeriesItem[][] | null = null;
+
 /**
- * `count` items in order, item i the first of item(i, 0), item(i, 1), … whose shown terms no earlier item has (T-R72);
- * an Error after MAX_FORM_RETRIES next seeds. Exported for tests.
+ * The six forms, built once, form 0 to 5, each item in schedule order (T-R72, T-R74): item № of form f from
+ * diagnosticSeriesSeed(f + 1, №, k), aimed at diagnosticAim, with the first k from 0 whose item neither repeats nor nearly
+ * repeats (the same last 3 shown terms and answer) an earlier item of its form, nor, of a held-out family, an earlier
+ * held-out item of any form.
  */
-export function withoutRepeats<T extends { shown: readonly number[] }>(count: number, item: (i: number, retry: number) => T): T[] {
-  const items: T[] = [];
-  const seen = new Set<string>();
-  for (let i = 0; i < count; i++) {
-    let retry = 0;
-    let next = item(i, retry);
-    while (seen.has(next.shown.join(','))) {
-      retry++;
-      if (retry > MAX_FORM_RETRIES) throw new Error(`item ${String(i + 1)} repeats an earlier one after ${String(MAX_FORM_RETRIES)} next seeds`);
-      next = item(i, retry);
-    }
-    seen.add(next.shown.join(','));
-    items.push(next);
+function sixForms(): SeriesItem[][] {
+  if (forms !== null) return forms;
+  const schedule = diagnosticSeriesSchedule();
+  const heldOut = new RepeatGuard();
+  const built: SeriesItem[][] = [];
+  for (let f = 0; f < SERIES_FORMS; f++) {
+    const form = new RepeatGuard();
+    built.push(
+      schedule.map((e, i) => {
+        const held = HELD_OUT_FAMILIES.includes(e.family);
+        const item = firstFresh(
+          (retry) => generateItem(e.family, diagnosticAim(e.family, e.targetD), diagnosticSeriesSeed(f + 1, i + 1, retry)),
+          (it) => form.has(it) || (held && heldOut.has(it)),
+        );
+        form.add(item);
+        if (held) heldOut.add(item);
+        return item;
+      }),
+    );
   }
-  return items;
+  forms = built;
+  return built;
+}
+
+/** The items seen so far, by their shown terms and by their last NEAR_TERMS shown terms with the answer (T-R74). */
+export class RepeatGuard {
+  private readonly keys = new Set<string>();
+
+  private static keysOf(it: { shown: readonly number[]; answer: number }): [string, string] {
+    return [`all:${it.shown.join(',')}`, `near:${it.shown.slice(-NEAR_TERMS).join(',')}→${String(it.answer)}`];
+  }
+
+  has(it: { shown: readonly number[]; answer: number }): boolean {
+    return RepeatGuard.keysOf(it).some((k) => this.keys.has(k));
+  }
+
+  add(it: { shown: readonly number[]; answer: number }): void {
+    for (const k of RepeatGuard.keysOf(it)) this.keys.add(k);
+  }
+}
+
+/** The first of item(0), item(1), … that does not repeat; an Error after MAX_FORM_RETRIES next seeds. Exported for tests. */
+export function firstFresh<T>(item: (retry: number) => T, repeats: (it: T) => boolean): T {
+  for (let retry = 0; retry <= MAX_FORM_RETRIES; retry++) {
+    const next = item(retry);
+    if (!repeats(next)) return next;
+  }
+  throw new Error(`an item repeats an earlier one after ${String(MAX_FORM_RETRIES)} next seeds`);
 }
 
 /**

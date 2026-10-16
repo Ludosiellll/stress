@@ -62,11 +62,21 @@ describe('itemTimeLimit (F12)', () => {
     for (let D = 1000; D <= 1700; D += 100) expect(Math.abs(effectiveDifficulty(structTarget(D, 9999), at(D)) - D)).toBeLessThanOrEqual(5);
   });
 
-  it('structTarget: half of targetD + 417 under the family ceiling', () => {
+  it('structTarget: half of targetD + 417 from targetD 1000, targetD − 83 below it, under the family ceiling', () => {
     expect(structTarget(1000, 9999)).toBe(917);
     expect(structTarget(1300, 9999)).toBe(1067);
-    expect(structTarget(809, 9999)).toBe(821.5);
     expect(structTarget(1300, 950)).toBe(950);
+    // Below 1000 the 30 s base alone adds the 83 (T-R74): R0's target 809 aims at 726, not 821,5.
+    expect(structTarget(809, 9999)).toBe(726);
+    expect(structTarget(999, 9999)).toBe(916);
+    expect(structTarget(900, 800)).toBe(800);
+  });
+
+  it('structTarget is continuous at 1000 and keeps D_eff = targetD below it (T-R74)', () => {
+    expect(structTarget(1000 - 1e-9, 9999)).toBeCloseTo(structTarget(1000, 9999), 6);
+    for (let D = 600; D < 1000; D += 25) {
+      expect(Math.abs(effectiveDifficulty(structTarget(D, 9999), itemTimeLimit(D, structTarget(D, 9999))) - D)).toBeLessThan(0.01);
+    }
   });
 
   it('30 s below targetD 1000, whatever the item', () => {

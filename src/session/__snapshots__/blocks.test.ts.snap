@@ -18565,13 +18565,13 @@ exports[`diagnostic reaction blocks > the six number-series forms are pinned: sh
   "8 primes: 14, 18, 20, 24, 30 → 32",
   "9 twostep: 2, -1, -5, -18, -75 → -378",
   "10 alt: 67, 63, 78, 69, 89, 75, 100 → 81",
-  "11 digitsum: 70, 84, 108, 126, 144 → 162",
+  "11 digitsum: 177, 192, 204, 210, 213 → 219",
   "12 fib: 3, 5, 10, 19, 38, 75 → 150",
   "13 powstep: 209, 505, 993, 1721, 2737 → 4089",
   "14 linrec: 1, -7, 9, -23, 41 → -87",
   "15 twostep: 5, 6, 13, 40, 161 → 806",
   "16 powers: -10, -9, -2, 17, 54 → 115",
-  "17 digitsum: 76, 102, 108, 126, 144 → 162",
+  "17 digitsum: 48, 60, 66, 78, 93 → 105",
   "18 opcycle: 11, 18, 36, 43, 86, 93 → 186",
   "19 powstep: -5, 58, 337, 994, 2191 → 4090",
   "20 twostep: 4, 2, 2, 4, 14 → 68",
@@ -18594,7 +18594,7 @@ exports[`diagnostic reaction blocks > the six number-series forms are pinned: sh
   "12 fib: 2, 5, 3, 4, 3, 3 → 2",
   "13 powstep: 9, 65, 217, 513, 1001 → 1729",
   "14 linrec: 1, -4, 6, -14, 26 → -54",
-  "15 twostep: 3, 5, 12, 38, 154 → 772",
+  "15 twostep: 3, 0, -3, -12, -51 → -258",
   "16 powers: -1, 0, 7, 26, 63 → 124",
   "17 digitsum: 95, 109, 119, 130, 134 → 142",
   "18 opcycle: 5, 10, 20, 40, 50, 100 → 110",
@@ -18607,7 +18607,7 @@ exports[`diagnostic reaction blocks > the six number-series forms are pinned: sh
 [
   "1 arith: 153, 132, 111, 90, 69 → 48",
   "2 letters: 7, 8, 9, 10, 11 → 12",
-  "3 digitsum: 48, 72, 90, 108, 126 → 144",
+  "3 digitsum: 103, 107, 115, 122, 127 → 137",
   "4 geom: 11, -22, 44, -88, 176 → -352",
   "5 addsub: 27, 35, 29, 37, 31, 39 → 33",
   "6 powstep: 14, 70, 222, 518, 1006 → 1734",
@@ -18615,16 +18615,16 @@ exports[`diagnostic reaction blocks > the six number-series forms are pinned: sh
   "8 primes: 15, 19, 21, 25, 31 → 33",
   "9 twostep: 2, 2, 4, 12, 48 → 240",
   "10 alt: 77, 25, 68, 30, 59, 35, 50 → 40",
-  "11 digitsum: 66, 90, 108, 126, 144 → 162",
+  "11 digitsum: 96, 111, 114, 120, 123 → 129",
   "12 fib: 8, 4, 23, 34, 83, 154 → 323",
   "13 powstep: 36, 134, 352, 738, 1340 → 2206",
   "14 linrec: 6, 4, 0, -8, -24 → -56",
   "15 twostep: 2, 2, 4, 14, 68 → 406",
   "16 powers: -4, -3, 0, 5, 12 → 21",
-  "17 digitsum: 26, 42, 54, 72, 90 → 108",
+  "17 digitsum: 76, 89, 106, 113, 118 → 128",
   "18 opcycle: 1, 10, 30, 39, 117, 126 → 378",
   "19 powstep: 4, 121, 508, 1327, 2740 → 4909",
-  "20 twostep: 4, 4, 8, 24, 96 → 480",
+  "20 twostep: 5, 3, 4, 10, 38 → 188",
 ]
 `;
 
@@ -18638,7 +18638,7 @@ exports[`diagnostic reaction blocks > the six number-series forms are pinned: sh
   "6 powstep: 223, 519, 1007, 1735, 2751 → 4103",
   "7 second: 0, -6, -14, -24, -36, -50 → -66",
   "8 primes: 3, 7, 13, 19, 29 → 37",
-  "9 twostep: 2, -1, -5, -18, -75 → -378",
+  "9 twostep: 4, 5, 11, 34, 137 → 686",
   "10 alt: 96, 59, 101, 47, 106, 35, 111 → 23",
   "11 digitsum: 190, 200, 202, 206, 214 → 221",
   "12 fib: 1, 3, 4, 7, 11, 18 → 29",
@@ -18649,7 +18649,7 @@ exports[`diagnostic reaction blocks > the six number-series forms are pinned: sh
   "17 digitsum: 46, 56, 67, 80, 88 → 104",
   "18 opcycle: 14, 28, 42, 84, 98, 196 → 210",
   "19 powstep: 35, 133, 351, 737, 1339 → 2205",
-  "20 twostep: 5, 3, 4, 10, 38 → 188",
+  "20 twostep: 1, -2, -7, -24, -99 → -498",
 ]
 `;
 
@@ -18663,7 +18663,7 @@ exports[`diagnostic reaction blocks > the six number-series forms are pinned: sh
   "6 powstep: 127, 514, 1333, 2746, 4915 → 8002",
   "7 second: 45, 44, 45, 48, 53, 60 → 69",
   "8 primes: 10, 14, 16, 20, 22 → 26",
-  "9 twostep: 2, -1, -5, -18, -75 → -378",
+  "9 twostep: 5, 5, 10, 30, 120 → 600",
   "10 alt: 22, 20, 9, 18, -4, 16, -17 → 14",
   "11 digitsum: 51, 57, 69, 84, 96 → 111",
   "12 fib: 7, 9, 15, 23, 37, 59 → 95",
@@ -18673,8 +18673,8 @@ exports[`diagnostic reaction blocks > the six number-series forms are pinned: sh
   "16 powers: -1, 0, 3, 8, 15 → 24",
   "17 digitsum: 128, 139, 152, 160, 167 → 181",
   "18 opcycle: 15, 45, 51, 153, 159, 477 → 483",
-  "19 powstep: 4, 121, 508, 1327, 2740 → 4909",
-  "20 twostep: 5, 5, 10, 30, 120 → 600",
+  "19 powstep: 58, 337, 994, 2191, 4090 → 6853",
+  "20 twostep: 6, 4, 6, 16, 62 → 308",
 ]
 `;
 

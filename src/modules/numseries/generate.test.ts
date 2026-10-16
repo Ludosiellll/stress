@@ -9,6 +9,7 @@ import {
   ALL_FAMILIES,
   BASE_DIFFICULTY,
   HELD_OUT_FAMILIES,
+  MIN_TERMS,
   PREDICTOR_FAMILIES,
   SHOWN_LENGTH,
   TRAINING_FAMILIES,
@@ -29,7 +30,9 @@ import {
   generateItem,
   generateTrainingItem,
   selectCandidate,
-  withoutRepeats,
+  RepeatGuard,
+  firstFresh,
+  type SeriesItem,
 } from './generate';
 
 const family = fc.constantFrom(...ALL_FAMILIES);
@@ -484,10 +487,11 @@ describe('the new families (F12)', () => {
       const ds = [...(seen.get(f)?.ds ?? [])];
       return [Math.min(...ds), Math.max(...ds)];
     };
-    // powstep loses its squares (about half its candidates); digitsum some series over multiples of 9.
+    // powstep loses its squares (about half its candidates); digitsum its series over multiples of 9 and its chains that
+    // end in a run a trained rule continues (0.591 of 4000; T-R74).
     expect(accepted('powstep')).toBeGreaterThan(0.45);
     expect(accepted('twostep')).toBeGreaterThan(0.95);
-    expect(accepted('digitsum')).toBeGreaterThan(0.85);
+    expect(accepted('digitsum')).toBeGreaterThan(0.55);
     expect(range('powstep')).toEqual([1700, STRUCT_D_MAX.powstep]);
     expect(range('twostep')).toEqual([1500, STRUCT_D_MAX.twostep]);
     expect(range('digitsum')).toEqual([BASE_DIFFICULTY.digitsum, STRUCT_D_MAX.digitsum]);
@@ -517,29 +521,76 @@ describe('the new families (F12)', () => {
     expect(diagnosticAim('letters', 930)).toBe(930);
   });
 
-  it('withoutRepeats takes an item\'s next seed while its shown terms repeat an earlier item, up to 100 (T-R72)', () => {
-    const calls: [number, number][] = [];
-    const items = withoutRepeats(3, (i, retry) => {
-      calls.push([i, retry]);
-      // Items 1 and 2 first repeat item 0; item 2 also its own first retry's terms of item 1.
-      const shown = i === 0 || retry === 0 ? [1, 2, 3] : i === 2 && retry === 1 ? [1, 1, 9] : [i, retry, 9];
-      return { shown };
-    });
-    expect(items.map((it) => it.shown)).toEqual([[1, 2, 3], [1, 1, 9], [2, 2, 9]]);
-    expect(calls).toEqual([[0, 0], [1, 0], [1, 1], [2, 0], [2, 1], [2, 2]]);
-    expect(() => withoutRepeats(2, () => ({ shown: [1, 2, 3] }))).toThrow(/item 2 repeats an earlier one after 100 next seeds/);
+  it('firstFresh takes the next seed while the item repeats, up to 100 (T-R72)', () => {
+    const calls: number[] = [];
+    expect(
+      firstFresh(
+        (retry) => {
+          calls.push(retry);
+          return retry;
+        },
+        (it) => it < 2,
+      ),
+    ).toBe(2);
+    expect(calls).toEqual([0, 1, 2]);
+    expect(() => firstFresh(() => 0, () => true)).toThrow(/repeats an earlier one after 100 next seeds/);
   });
 
-  it('the six diagnostic forms: no repeated item, held-out items across their lower band, means within 40 of each other (T-R72)', () => {
-    // Means of D by form (spec order of forms 0–5): 1382.5, 1392.5, 1377.5, 1380.0, 1380.0, 1370.0 (SD 260–272), average
-    // 1380.4: the largest gap is 12.1, so no rebalancing.
+  it('RepeatGuard: the same shown terms, or the same last 3 shown terms and answer, repeat (T-R74)', () => {
+    const guard = new RepeatGuard();
+    guard.add({ shown: [70, 84, 108, 126, 144], answer: 162 });
+    expect(guard.has({ shown: [70, 84, 108, 126, 144], answer: 162 })).toBe(true);
+    expect(guard.has({ shown: [70, 84, 108, 126, 144], answer: 0 })).toBe(true);
+    // A near repeat: another start, the same end and answer.
+    expect(guard.has({ shown: [76, 102, 108, 126, 144], answer: 162 })).toBe(true);
+    expect(guard.has({ shown: [76, 102, 108, 126, 144], answer: 161 })).toBe(false);
+    expect(guard.has({ shown: [70, 84, 108, 127, 144], answer: 162 })).toBe(false);
+  });
+
+  it('a held-out item whose last terms a training rule continues with its answer is rejected (T-R74)', () => {
+    // The digit-sum chains of the review: each ends in a +18 run that arith continues with the answer.
+    for (const t of [
+      [70, 84, 108, 126, 144, 162],
+      [76, 102, 108, 126, 144, 162],
+      [48, 72, 90, 108, 126, 144],
+      [66, 90, 108, 126, 144, 162],
+      [26, 42, 54, 72, 90, 108],
+    ]) {
+      expect(fitFamily('digitsum', t.slice(0, -1)).has(t.at(-1) as number), t.join(',')).toBe(true);
+      expect(fitPredictions(t.slice(0, -1), TRAINING_FAMILIES), t.join(',')).toEqual(new Map());
+      expect(candidateItem('digitsum', 1, t), t.join(',')).toBeNull();
+    }
+    // A tail a training rule continues with another answer does not count: 19, 29, 40, 44, 52 → 59 stays.
+    expect(candidateItem('digitsum', 1, [19, 29, 40, 44, 52, 59])?.answer).toBe(59);
+    // Any accepted held-out candidate: no training rule continues its last 3 shown terms (or as many as it needs) with
+    // its answer.
+    for (const f of HELD_OUT_FAMILIES) {
+      fc.assert(
+        fc.property(fc.integer({ min: 0, max: 2 ** 31 - 1 }), fc.integer({ min: 0, max: 199 }), (seed, attempt) => {
+          const item = attemptItem(f, seed, attempt);
+          if (item === null) return;
+          for (const t of TRAINING_FAMILIES) {
+            const tail = item.shown.slice(-Math.max(3, MIN_TERMS[t]));
+            expect(fitFamily(t, tail).has(item.answer), `${item.id} ${t}`).toBe(false);
+          }
+        }),
+        { numRuns: 1000 },
+      );
+    }
+  }, 120_000);
+
+  it('the six diagnostic forms: no repeat within a form or of a held-out item across forms, held-out items across their lower band, means within 40 (T-R72, T-R74)', () => {
+    // Mean D by form 0–5: 1382.5, 1387.5, 1380.0, 1375.0, 1380.0, 1367.5 (SD 259–270), average 1378.8: the largest gap is
+    // 11.3, so no rebalancing.
     const forms = Array.from({ length: SERIES_FORMS }, (_, i) => diagnosticSeriesItems(i + 1));
     const schedule = diagnosticSeriesSchedule();
     const means = forms.map((items) => items.reduce((sum, it) => sum + it.difficulty, 0) / items.length);
     const average = means.reduce((sum, m) => sum + m, 0) / means.length;
+    const near = (it: SeriesItem): string => `${it.shown.slice(-3).join(',')}→${String(it.answer)}`;
     for (const [f, items] of forms.entries()) {
       expect(items.map((it) => it.family), `form ${String(f)}`).toEqual(schedule.map((e) => e.family));
       expect(new Set(items.map((it) => it.shown.join(','))).size, `form ${String(f)}`).toBe(items.length);
+      expect(new Set(items.map(near)).size, `form ${String(f)}`).toBe(items.length);
       expect(Math.abs((means[f] as number) - average), `form ${String(f)}`).toBeLessThanOrEqual(40);
       for (const it of items) {
         if (!HELD_OUT_FAMILIES.includes(it.family)) continue;
@@ -548,19 +599,25 @@ describe('the new families (F12)', () => {
         expect(it.difficulty - lowest, it.id).toBeLessThanOrEqual(225);
       }
     }
+    // No held-out item, nor its near repeat, comes in two forms.
+    const held = forms.flat().filter((it) => HELD_OUT_FAMILIES.includes(it.family));
+    expect(held).toHaveLength(54);
+    expect(new Set(held.map((it) => it.shown.join(','))).size).toBe(54);
+    expect(new Set(held.map(near)).size).toBe(54);
     // The held-out items vary within their band: no single D takes every powstep or twostep item.
     for (const f of ['powstep', 'twostep'] as const) {
-      expect(new Set(forms.flat().filter((it) => it.family === f).map((it) => it.difficulty)).size, f).toBeGreaterThan(1);
+      expect(new Set(held.filter((it) => it.family === f).map((it) => it.difficulty)).size, f).toBeGreaterThan(1);
     }
     // The first items of a form are the form's first items (the e2e scale plays 3).
     expect(diagnosticSeriesItems(4, 3)).toEqual(forms[3]?.slice(0, 3));
-    // Diagnostic 7 plays form 0 again.
+    // Seed index 7 plays form 0 again.
     expect(diagnosticSeriesItems(7)).toEqual(forms[0]);
   }, 60_000);
 
   it('held-out families never appear in training', () => {
-    // Which families come up depends on the weights only. Ratings that put each family's structural target 50 above its
-    // base keep the targets reachable: from R0 most families would search all 200 attempts for each item (120 s on CI).
+    // Which families come up depends on the weights only. Ratings that put each family's structural target near its base
+    // (50 above; arith, whose target is under 1000, 17 below) keep the targets reachable: from R0 most families would
+    // search all 200 attempts for each item (120 s on CI).
     const reachable = new Map<FamilyId, number>(TRAINING_FAMILIES.map((f) => [f, 2 * (BASE_DIFFICULTY[f] + 50 - 417) + targetGap]));
     const items = generateBlockItems(reachable, 10_000, createRng(20));
     expect(items).toHaveLength(10_000);

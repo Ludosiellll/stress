@@ -14,9 +14,11 @@ const D_PER_HALVING = 200;
 const LIMIT_STEP_MS = 100;
 /** From this targetD on the limit shrinks below 30 s (spec §4.8). */
 const SHRINK_FROM_D = 1000;
+/** What the 30 s base itself adds to D_eff: 200·log2(40/30) ≈ 83 (spec §4.8). */
+const BASE_LIMIT_GAIN = 83;
 /**
- * The structural target rises by half of targetD: 0,5·targetD + 417 = targetD − 83 − 0,5·(targetD − 1000), where
- * 83 = 200·log2(40/30) is what the 30 s base itself adds to D_eff (spec §4.8).
+ * From targetD 1000 the structural target rises by half of targetD: 0,5·targetD + 417 = targetD − 83 − 0,5·(targetD −
+ * 1000) (spec §4.8); below 1000 it is targetD − 83 (T-R74), the same at 1000.
  */
 const STRUCT_SLOPE = 0.5;
 const STRUCT_OFFSET = 417;
@@ -43,10 +45,14 @@ export function itemEffectiveDifficulty(item: { readonly difficulty: number; rea
   return effectiveDifficulty(item.difficulty, itemLimitMs(item));
 }
 
-/** The D_struct a training item is generated near: min(familyMaxD, 0,5·targetD + 417) (F12). */
+/**
+ * The D_struct a training item is generated near: min(familyMaxD, 0,5·targetD + 417) from targetD 1000 (F12); below it
+ * min(familyMaxD, targetD − 83), so that with its 30 s D_eff is the targetD (T-R74).
+ */
 export function structTarget(targetD: number, familyMaxD: number): number {
   checkFinite('structTarget', targetD, familyMaxD);
-  return Math.min(familyMaxD, STRUCT_SLOPE * targetD + STRUCT_OFFSET);
+  const target = targetD < SHRINK_FROM_D ? targetD - BASE_LIMIT_GAIN : STRUCT_SLOPE * targetD + STRUCT_OFFSET;
+  return Math.min(familyMaxD, target);
 }
 
 /**

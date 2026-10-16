@@ -77,7 +77,7 @@ describe('number series time-limit lever (R36, F12) simulation', () => {
     const plain = windows(false);
 
     // Rating: past 1500 with the lever, and clearly above the same player without it (W2-R17). Seeds 1–10: 1617 against
-    // 1525, the lowest seed 1545; success 0.82 (aimed at arith's ceiling of 950, any item of 800–950 is taken and the
+    // 1525, the lowest seed 1551; success 0.82 (aimed at arith's ceiling of 950, any item of 800–950 is taken and the
     // limit stops at 8 s).
     const leverR = overSeeds(lever, rating);
     expect(leverR).toBeGreaterThanOrEqual(1500);

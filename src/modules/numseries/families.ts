@@ -70,7 +70,7 @@ export const BASE_DIFFICULTY: Readonly<Record<FamilyId, number>> = {
 };
 
 /** Fewest terms a fit accepts: enough to find the parameters plus at least one check. */
-const MIN_TERMS: Readonly<Record<FamilyId, number>> = {
+export const MIN_TERMS: Readonly<Record<FamilyId, number>> = {
   arith: 3,
   geom: 3,
   second: 4,
