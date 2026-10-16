@@ -147,9 +147,11 @@ describe('memory modes and texts', () => {
       'На карточке 5 цифр. Запомни их по строкам, слева направо. Потом набери и нажми Enter. Стратегия: читай строки как трёхзначные числа.',
     );
     expect(memoryInstruction('card3x3', memoryParams(9, 'card3x3'))).toContain('На карточке 8 цифр.');
-    // The instruction of the Справочник, with sound too: the strategy ends every card instruction.
+    // With sound the card announces it like the other sound blocks (T-R66).
+    expect(memoryParams(21, 'card3x3').sound).toBe(true);
     expect(memoryInstruction('card3x3', memoryParams(21, 'card3x3'))).toBe(
-      'На карточке 9 цифр. Запомни их по строкам, слева направо. Потом набери и нажми Enter. Стратегия: читай строки как трёхзначные числа.',
+      'На карточке 9 цифр. Запомни их по строкам, слева направо. Потом набери и нажми Enter. Стратегия: читай строки как трёхзначные числа. ' +
+        'Пока карточка на экране, будут звуковые помехи. Надень наушники.',
     );
     const card = memoryParams(0, 'card3x3');
     expect(memoryInstruction('card3x3', { ...card, length: 21 })).toContain('На карточке 21 цифра.');

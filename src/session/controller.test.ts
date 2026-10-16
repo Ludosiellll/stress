@@ -1961,6 +1961,36 @@ describe('SessionController — the layout of the day (F9)', () => {
     expect(first.keysHint).toBe('Пробел');
   });
 
+  it('a warm-up on a mouse day plays the primary layout; the day line opens the first reaction block after it (T-R65)', async () => {
+    const warmup: Segment = { module: 'pzmr', budgetMs: 2 * MIN, purpose: 'warmup' };
+    const plan: SessionPlan = { kind: 'training', seed: 3, phase: 'development', layout: 'mouse', segments: [warmup, { module: 'gonogo', budgetMs: 5 * MIN, purpose: 'reaction' }] };
+    const h = await begin(plan, { layout: 'keyboard' });
+    const first = expectStep(h.c, 'instruction');
+    expect(first.text).not.toContain('Сегодня раскладка');
+    expect(first.keysHint).toBe('Пробел');
+    h.c.ackInstruction();
+    do {
+      expect(expectStep(h.c, 'reaction_block')).toMatchObject({ keys: ['Space'], layout: 'keyboard' });
+      await h.c.submitReaction(playTimeline(expectStep(h.c, 'reaction_block').specs, perfectPlayer));
+      h.clock.advance(30_000);
+      await h.c.continueAfterSummary();
+    } while (h.c.step.kind === 'reaction_block');
+    const warmups = await storedLayouts(h);
+    expect(warmups.length).toBeGreaterThan(0);
+    expect(new Set(warmups)).toEqual(new Set(['keyboard']));
+    // The warm-up was on the keyboard: the first block on the mouse names the day.
+    const next = expectStep(h.c, 'instruction');
+    expect(next.module).toBe('gonogo');
+    expect(next.text.startsWith('Сегодня раскладка: мышь. Основная — клавиатура. ')).toBe(true);
+    h.c.ackInstruction();
+    expect(expectStep(h.c, 'reaction_block')).toMatchObject({ keys: ['MouseLeft'], layout: 'mouse' });
+  });
+
+  it('tables do not use the layout: a free Горбов session on a remote-control day has no day line (T-R65)', async () => {
+    const h = await begin(free('gorbov', 'pult'), { layout: 'keyboard' });
+    expect(expectStep(h.c, 'instruction').text).not.toContain('Сегодня раскладка');
+  });
+
   it('a diagnostic on the user’s mouse names its layout for the results table (T-R23)', async () => {
     const plan = planDiagnostic(1, 1);
     const h = await begin({ ...plan, segments: plan.segments.slice(0, 1) }, { layout: 'mouse' });
@@ -2713,6 +2743,30 @@ describe('SessionController — tables', () => {
     await h.c.continueAfterSummary();
     if (h.c.step.kind === 'instruction') h.c.ackInstruction();
     expect(expectStep(h.c, 'table_block').params.reshuffleEvery).toBeNull();
+  });
+
+  it('«what changed» after series block 2 describes the next block, an own table that may reshuffle (T-R65)', async () => {
+    const repo = await calibratedRepo(stateWith('gorbov', { lSaved: 15, lastTrainedAt: T0, lifetimeBlocks: 10 }));
+    const h = await begin(planFree('gorbov', 4), { repo });
+    const views: BlockSummaryView[] = [];
+    for (let k = 0; k < 3; k++) {
+      if (h.c.step.kind === 'instruction') h.c.ackInstruction();
+      const step = expectStep(h.c, 'table_block');
+      expect(step.params.reshuffleEvery).toBeNull();
+      await h.c.submitTable(perfectTableRun(step));
+      views.push(expectStep(h.c, 'summary').view);
+      await h.c.continueAfterSummary();
+    }
+    const [, second, third] = views;
+    // Block 1 → block 2: both of the series, no reshuffle on either side.
+    expect(second?.changes.map((ch) => ch.label)).toEqual(['Лимит времени']);
+    // Block 2 → block 3: block 3 deals its own table and reshuffles from L 15.
+    expect(third?.lAfter).toBeGreaterThanOrEqual(15);
+    const after = gorbovParams(third?.lAfter ?? 0, 'alternate');
+    expect(after.reshuffleEvery).not.toBeNull();
+    expect(third?.changes.map((ch) => ch.label)).toEqual(['Лимит времени', 'Перемешивание']);
+    if (h.c.step.kind === 'instruction') h.c.ackInstruction();
+    expect(expectStep(h.c, 'table_block').params.reshuffleEvery).not.toBeNull();
   });
 
   it('a run of another task or time limit is rejected', async () => {

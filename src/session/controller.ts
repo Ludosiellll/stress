@@ -909,18 +909,19 @@ export class SessionController {
   }
 
   /**
-   * The layout a block of `segment` plays (F9): the user's own in a diagnostic and a test-format run, else the plan's
-   * layout of the day (the user's own when the plan names none).
+   * The layout a block of `segment` plays (F9): the user's own in a diagnostic, a test-format run and a warm-up (the
+   * form of the day compares warm-ups day to day, T-R65), else the plan's layout of the day (the user's own when the
+   * plan names none).
    */
   private blockLayout(segment: Segment): LayoutId {
-    if (!this.counted || segment.purpose === 'test_format') return this.layout;
+    if (!this.counted || segment.purpose === 'test_format' || segment.purpose === 'warmup') return this.layout;
     return this.plan.layout ?? this.layout;
   }
 
   /**
    * Instruction first if the segment just started, for every Gorbov run, or when the rules changed. The first one of a
-   * block on the layout of the day, when that is not the user's own, opens with dayLayoutLine (F9); the day line is no
-   * change of rules. Before the first 3×3 card ever the strategy lesson comes, then the card's instruction (F13).
+   * reaction block on the layout of the day, when that is not the user's own, opens with dayLayoutLine (F9); tables,
+   * memory and number series do not use the layout (T-R65). The day line is no change of rules. Before the first 3×3 card ever the strategy lesson comes, then the card's instruction (F13).
    */
   private presentNext(): void {
     const seg = this.segment();
@@ -932,7 +933,7 @@ export class SessionController {
     if (lesson || seg.segment.module === 'gorbov' || instruction !== seg.lastInstruction) {
       this.next = { plan, instruction };
       let shown = text;
-      if (this.dayLineDue && layout !== this.layout) {
+      if (this.dayLineDue && plan.kind === 'reaction' && layout !== this.layout) {
         shown = `${dayLayoutLine(layout, this.layout)} ${text}`;
         this.dayLineDue = false;
       }

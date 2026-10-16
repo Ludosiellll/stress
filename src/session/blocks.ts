@@ -380,7 +380,7 @@ function bandBlock(module: BandModuleId, L: number, overload: boolean, ctx: Plan
  * and a band module's window is the one its blocks play (the floor of the band when that is larger, F3): at lBefore
  * the window the block played (ctx.floors), at lAfter the one the next block plays, on `floorsAfter`, the floors with
  * the block just played (T-R50). `played` is the block's plan: a table's task, a memory block's mode (F13), and a normal
- * block of a Горбов series never reshuffles, at either level (F10, T-R62).
+ * block of a Горбов series never reshuffles (F10, T-R62); after the last one the next block is an own table (T-R65).
  */
 export function levelChanges(
   module: ModuleId,
@@ -392,7 +392,9 @@ export function levelChanges(
 ): ParamChange[] {
   if (played.kind === 'table' && played.module === 'gorbov' && played.table === 'series' && !played.overload) {
     const series = (L: number): TableParams => ({ ...gorbovParams(L, played.task), reshuffleEvery: null });
-    return describeTableChanges(series(lBefore), series(lAfter));
+    // After the last block of the series the next one deals its own table, which may reshuffle (T-R65).
+    const last = played.task === gorbovTaskForRun(GORBOV_SERIES_BLOCKS - 1);
+    return describeTableChanges(series(lBefore), last ? gorbovParams(lAfter, played.task) : series(lAfter));
   }
   if (!isBandModule(module)) {
     const task = played.kind === 'table' ? played.task : played.kind === 'memory' ? played.mode : undefined;

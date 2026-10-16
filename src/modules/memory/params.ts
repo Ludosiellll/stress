@@ -122,6 +122,8 @@ function digitCount(n: number): string {
 
 /** The end of every card instruction, after the lesson (Справочник F13). */
 const CARD_STRATEGY = ' Стратегия: читай строки как трёхзначные числа.';
+/** After the strategy of a card with sound, like the other sound blocks (T-R66). */
+const CARD_SOUND = ' Пока карточка на экране, будут звуковые помехи. Надень наушники.';
 
 export function memoryInstruction(mode: MemoryMode, p: MemoryParams): string {
   switch (mode) {
@@ -136,7 +138,9 @@ export function memoryInstruction(mode: MemoryMode, p: MemoryParams): string {
       return 'Клетки загораются по одной. Потом щёлкни по ним мышью в том же порядке и нажми Enter.';
     case 'card3x3':
       return (
-        `На карточке ${digitCount(p.length)}. Запомни их по строкам, слева направо. Потом набери и нажми Enter.` + CARD_STRATEGY
+        `На карточке ${digitCount(p.length)}. Запомни их по строкам, слева направо. Потом набери и нажми Enter.` +
+        CARD_STRATEGY +
+        (p.sound ? CARD_SOUND : '')
       );
   }
 }
