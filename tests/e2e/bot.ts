@@ -3,6 +3,7 @@ import { expect, type Page } from '@playwright/test';
 import { exportBundle } from '../../src/data/export';
 import { MemoryRepository } from '../../src/data/memoryRepository';
 import type { BlockRow } from '../../src/data/rows';
+import { LETTER_KEY_CODES } from '../../src/modules/numseries/letters';
 import type { StimulusEvent } from '../../src/testing/e2eHooks';
 
 /**
@@ -217,18 +218,32 @@ export async function playTable(page: Page): Promise<void> {
   }
 }
 
-/** Answers every item of the number-series block on screen with the exposed answer. */
+/**
+ * Answers every item of the number-series block on screen with the exposed answer: a number typed, a letter item
+ * (`data-answer-kind="letter"`) by the key event of the letter's ЙЦУКЕН key (F12).
+ */
 export async function playSeries(page: Page): Promise<void> {
   const input = page.getByRole('textbox', { name: 'Ответ' });
   for (;;) {
     const item = await page.evaluate(() => {
       const el = document.querySelector('.series-item');
       if (el === null) return null;
-      return { answer: el.getAttribute('data-e2e-answer'), counter: document.querySelector('.series .muted')?.textContent ?? '' };
+      return {
+        answer: el.getAttribute('data-e2e-answer'),
+        kind: el.getAttribute('data-answer-kind'),
+        counter: document.querySelector('.series .muted')?.textContent ?? '',
+      };
     });
     if (item === null) return;
     expect(item.answer, 'number series exposes data-e2e-answer in e2e mode').not.toBeNull();
-    await input.fill(item.answer ?? '');
+    const answer = item.answer ?? '';
+    if (item.kind === 'letter') {
+      await input.focus();
+      await pressLetterKeys(page, [answer]);
+      await expect(input).toHaveValue(answer);
+    } else {
+      await input.fill(answer);
+    }
     await input.press('Enter');
     await page.waitForFunction(
       (counter) => document.querySelector('.series-item') === null || document.querySelector('.series .muted')?.textContent !== counter,
@@ -237,26 +252,38 @@ export async function playSeries(page: Page): Promise<void> {
   }
 }
 
-/**
- * The physical keys of the memory letters on a ЙЦУКЕН keyboard, with what an English layout prints on them:
- * the bot types like a user who never switched the layout (Review focus 1).
- */
-const LETTER_KEYS: Readonly<Record<string, { code: string; key: string }>> = {
-  Б: { code: 'Comma', key: ',' },
-  В: { code: 'KeyD', key: 'd' },
-  Г: { code: 'KeyU', key: 'u' },
-  Д: { code: 'KeyL', key: 'l' },
-  Ж: { code: 'Semicolon', key: ';' },
-  З: { code: 'KeyP', key: 'p' },
-  К: { code: 'KeyR', key: 'r' },
-  Л: { code: 'KeyK', key: 'k' },
-  М: { code: 'KeyV', key: 'v' },
-  Н: { code: 'KeyY', key: 'y' },
-  П: { code: 'KeyG', key: 'g' },
-  Р: { code: 'KeyH', key: 'h' },
-  С: { code: 'KeyC', key: 'c' },
-  Т: { code: 'KeyN', key: 'n' },
+/** What an English layout prints on the ЙЦУКЕН letter keys that are not letter keys there. */
+const ENGLISH_PUNCTUATION: Readonly<Record<string, string>> = {
+  BracketLeft: '[',
+  BracketRight: ']',
+  Semicolon: ';',
+  Quote: "'",
+  Comma: ',',
+  Period: '.',
 };
+
+/**
+ * The physical key of a letter on a ЙЦУКЕН keyboard (src/modules/numseries/letters.ts, the one letters source), with
+ * what an English layout prints on it: the bot types like a user who never switched the layout (Review focus 1).
+ */
+function letterKey(letter: string): { code: string; key: string } | null {
+  const code = LETTER_KEY_CODES[letter];
+  if (code === undefined) return null;
+  return { code, key: ENGLISH_PUNCTUATION[code] ?? code.replace(/^Key/, '').toLowerCase() };
+}
+
+/** Key events of the letters' keys on the focused element: `keyboard.type` sends no keydown for Cyrillic. */
+async function pressLetterKeys(page: Page, letters: readonly string[]): Promise<void> {
+  const keys = letters.flatMap((x) => letterKey(x) ?? []);
+  expect(keys, `letters ${letters.join(',')} have keys`).toHaveLength(letters.length);
+  await page.evaluate((events) => {
+    for (const init of events) {
+      const target = document.activeElement ?? document.body;
+      target.dispatchEvent(new KeyboardEvent('keydown', { ...init, bubbles: true, cancelable: true }));
+      target.dispatchEvent(new KeyboardEvent('keyup', { ...init, bubbles: true, cancelable: true }));
+    }
+  }, keys);
+}
 
 /**
  * Plays the memory block on screen: waits for each response screen, reproduces the exposed row (digits and the 3×3
@@ -286,15 +313,7 @@ export async function playMemory(page: Page): Promise<void> {
     if (trial.mode === 'positions') {
       for (const cell of items) await page.locator(`.memory-cell[data-cell="${cell}"]`).click();
     } else if (trial.mode === 'letters') {
-      const keys = items.flatMap((x) => LETTER_KEYS[x] ?? []);
-      expect(keys, `letters ${trial.answer} are in the set`).toHaveLength(items.length);
-      await page.evaluate((events) => {
-        for (const init of events) {
-          const target = document.activeElement ?? document.body;
-          target.dispatchEvent(new KeyboardEvent('keydown', { ...init, bubbles: true, cancelable: true }));
-          target.dispatchEvent(new KeyboardEvent('keyup', { ...init, bubbles: true, cancelable: true }));
-        }
-      }, keys);
+      await pressLetterKeys(page, items);
     } else {
       await page.keyboard.type(items.join(''));
     }

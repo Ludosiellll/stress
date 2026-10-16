@@ -21,6 +21,8 @@ import {
   rdoSpeedNote,
   reactionLines,
   RESTART_USED_HINT,
+  SERIES_INSTRUCTION_TRAINING,
+  SERIES_LETTER_HINT,
   seriesDiagnosticInstruction,
   seriesLines,
   spanLines,
@@ -448,14 +450,22 @@ describe('Russian plurals and the series diagnostic instruction', () => {
     ]);
   });
 
+  const SKIP = ' Пробел — пропустить задачу (засчитается как неверная).';
+
+  it('both instructions name the skip key; a letter item has its hint (Справочник F12)', () => {
+    expect(SERIES_INSTRUCTION_TRAINING.endsWith(SKIP)).toBe(true);
+    expect(seriesDiagnosticInstruction(20, 600_000).endsWith(SKIP)).toBe(true);
+    expect(SERIES_LETTER_HINT).toBe('Ответ — буква. Алфавит без Ё. Раскладку переключать не нужно.');
+  });
+
   it('built from the item count and the total limit', () => {
-    expect(seriesDiagnosticInstruction(20, 600_000)).toBe('20 задач, общее время — 10 минут. Найди закономерность и введи следующее число.');
-    expect(seriesDiagnosticInstruction(3, 12_000)).toBe('3 задачи, общее время — 12 секунд. Найди закономерность и введи следующее число.');
-    expect(seriesDiagnosticInstruction(21, 60_000)).toBe('21 задача, общее время — 1 минута. Найди закономерность и введи следующее число.');
-    expect(seriesDiagnosticInstruction(2, 122_000)).toBe('2 задачи, общее время — 122 секунды. Найди закономерность и введи следующее число.');
-    expect(seriesDiagnosticInstruction(5, 180_000)).toBe('5 задач, общее время — 3 минуты. Найди закономерность и введи следующее число.');
-    expect(seriesDiagnosticInstruction(1, 1000)).toBe('1 задача, общее время — 1 секунда. Найди закономерность и введи следующее число.');
-    expect(seriesDiagnosticInstruction(4, null)).toBe('4 задачи. Найди закономерность и введи следующее число.');
+    expect(seriesDiagnosticInstruction(20, 600_000)).toBe('20 задач, общее время — 10 минут. Найди закономерность и введи следующее число.' + SKIP);
+    expect(seriesDiagnosticInstruction(3, 12_000)).toBe('3 задачи, общее время — 12 секунд. Найди закономерность и введи следующее число.' + SKIP);
+    expect(seriesDiagnosticInstruction(21, 60_000)).toBe('21 задача, общее время — 1 минута. Найди закономерность и введи следующее число.' + SKIP);
+    expect(seriesDiagnosticInstruction(2, 122_000)).toBe('2 задачи, общее время — 122 секунды. Найди закономерность и введи следующее число.' + SKIP);
+    expect(seriesDiagnosticInstruction(5, 180_000)).toBe('5 задач, общее время — 3 минуты. Найди закономерность и введи следующее число.' + SKIP);
+    expect(seriesDiagnosticInstruction(1, 1000)).toBe('1 задача, общее время — 1 секунда. Найди закономерность и введи следующее число.' + SKIP);
+    expect(seriesDiagnosticInstruction(4, null)).toBe('4 задачи. Найди закономерность и введи следующее число.' + SKIP);
   });
 });
 

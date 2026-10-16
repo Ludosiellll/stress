@@ -1,6 +1,7 @@
 import { useEffect, useEffectEvent, useRef, useState, type KeyboardEvent } from 'react';
+import { ALPHABET, letterFromKey, letterPosition } from '../../modules/numseries/letters';
 import { parseAnswer } from '../../modules/numseries/parse';
-import type { SeriesAnswer, StepOf } from '../../session/steps';
+import { SERIES_LETTER_HINT, type SeriesAnswer, type StepOf } from '../../session/steps';
 
 export interface NumSeriesViewProps {
   step: StepOf<'numseries_block'>;
@@ -16,16 +17,21 @@ export interface NumSeriesViewProps {
 const MAX_INPUT = 12;
 const TICK_MS = 250;
 
-/** «2, 5, −11, ?» with a real minus sign. */
-function seriesText(shown: readonly number[]): string {
-  return [...shown.map((n) => (n < 0 ? `−${String(-n)}` : String(n))), '?'].join(', ');
+/** The letter at a position 1…32. */
+const letterAt = (position: number): string => ALPHABET[position - 1] ?? '?';
+
+/** «2, 5, −11, ?» with a real minus sign; a letter item «В, Д, Ж, ?». */
+function seriesText(shown: readonly number[], letters: boolean): string {
+  const term = (n: number): string => (letters ? letterAt(n) : n < 0 ? `−${String(-n)}` : String(n));
+  return [...shown.map(term), '?'].join(', ');
 }
 
 /**
- * Number series one item at a time. Enter takes the answer if it is a whole number; otherwise the hint
- * asks for one and the item stays. The item's own limit (training, R36) or the total limit (diagnostic) is
- * shown as a bar with the seconds left; when it runs out the item gets no answer (and with the total limit,
- * so do the items not reached). After the last item the answers go to `onSubmit`.
+ * Number series one item at a time. Enter takes the answer if it is a whole number (a letter item: a letter, typed by
+ * its key on any layout, stored as its position, F12); otherwise the hint asks for one and the item stays. Space skips
+ * the item: no answer, `skipped`, a wrong one (F12). The item's own limit (training, R36) or the total limit
+ * (diagnostic) is shown as a bar with the seconds left; when it runs out the item gets no answer (and with the total
+ * limit, so do the items not reached). After the last item the answers go to `onSubmit`.
  */
 export default function NumSeriesView({ step, exposeAnswer, busy, onProgress, onSubmit }: NumSeriesViewProps) {
   const { items, totalLimitMs } = step;
@@ -49,13 +55,16 @@ export default function NumSeriesView({ step, exposeAnswer, busy, onProgress, on
     if (!busy) input.current?.focus();
   }, [busy, index]);
 
-  /** Records the current item and moves on; `totalExpired` ends the block (the items not reached get null). */
-  const record = (given: number | null, totalExpired: boolean): void => {
+  /**
+   * Records the current item and moves on; `totalExpired` ends the block (the items not reached get null), `skipped`
+   * marks a Space.
+   */
+  const record = (given: number | null, totalExpired: boolean, skipped = false): void => {
     if (finished.current) return;
     const item = items[index];
     if (item === undefined) return;
     const now = performance.now();
-    answers.current.push({ itemId: item.id, given, timeMs: now - itemStart.current });
+    answers.current.push({ itemId: item.id, given, timeMs: now - itemStart.current, ...(skipped ? { skipped } : {}) });
     if (totalExpired) {
       for (const rest of items.slice(index + 1)) answers.current.push({ itemId: rest.id, given: null, timeMs: 0 });
     }
@@ -92,10 +101,25 @@ export default function NumSeriesView({ step, exposeAnswer, busy, onProgress, on
     };
   }, [index, itemLimitMs, totalLimitMs]);
 
+  const letters = items[index]?.family === 'letters';
+
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>): void => {
+    if (e.code === 'Space' || e.key === ' ') {
+      e.preventDefault();
+      if (!e.repeat) record(null, false, true);
+      return;
+    }
+    if (letters && e.key !== 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const letter = letterFromKey(e);
+      if (letter !== null) {
+        e.preventDefault();
+        setText(letter);
+      }
+      return;
+    }
     if (e.key !== 'Enter' || e.repeat) return;
     e.preventDefault();
-    const given = parseAnswer(text);
+    const given = letters ? letterPosition(text.trim()) : parseAnswer(text);
     if (given === null) {
       setHint(true);
       return;
@@ -111,12 +135,17 @@ export default function NumSeriesView({ step, exposeAnswer, busy, onProgress, on
       <p className="muted">
         Задача {index + 1} из {items.length}
       </p>
-      <div className="series-item" data-e2e-answer={exposeAnswer ? String(item.answer) : undefined}>
-        <p className="series-text">{seriesText(item.shown)}</p>
+      <div
+        className="series-item"
+        data-answer-kind={letters ? 'letter' : 'number'}
+        data-e2e-answer={exposeAnswer ? (letters ? letterAt(item.answer) : String(item.answer)) : undefined}
+      >
+        <p className="series-text">{seriesText(item.shown, letters)}</p>
       </div>
+      {letters && <p className="muted">{SERIES_LETTER_HINT}</p>}
       <input
         type="text"
-        inputMode="numeric"
+        inputMode={letters ? 'text' : 'numeric'}
         aria-label="Ответ"
         className="series-input"
         ref={input}
@@ -131,7 +160,7 @@ export default function NumSeriesView({ step, exposeAnswer, busy, onProgress, on
       />
       {hint && (
         <p role="alert" className="warning">
-          Введи целое число
+          {letters ? 'Введи букву' : 'Введи целое число'}
         </p>
       )}
       {limitMs !== null && leftMs !== null && (

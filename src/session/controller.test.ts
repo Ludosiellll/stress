@@ -27,7 +27,7 @@ import { describeChanges } from '../modules/describe';
 import { generateMemoryTrials, spanProtocolTrials, type MemoryTrial } from '../modules/memory/generate';
 import { CARD_AUDIO, CARD_LESSON, memoryInstruction, memoryParams } from '../modules/memory/params';
 import { spanProtocolStops, type MemoryAnswer } from '../modules/memory/score';
-import { FAMILIES } from '../modules/numseries/families';
+import { ALL_FAMILIES, TRAINING_FAMILIES } from '../modules/numseries/families';
 import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
 import { pomeh } from '../modules/reaction/pomeh';
 import { isSwappedSegment } from '../modules/reaction/gonogo';
@@ -442,13 +442,15 @@ describe('SessionController — flow', () => {
     expect(expectStep(ns.c, 'instruction')).toEqual({
       kind: 'instruction',
       module: 'numseries',
-      text: 'Найди закономерность и введи следующее число. На задачу до 40 секунд, на трудных уровнях меньше: остаток времени показывает полоса.',
+      text:
+        'Найди закономерность и введи следующее число. На задачу до 40 секунд, на трудных уровнях меньше: остаток времени показывает полоса. ' +
+        'Пробел — пропустить задачу (засчитается как неверная).',
       keysHint: 'Цифры и Enter',
     });
 
     const dg = await begin({ ...planDiagnostic(1), segments: [planDiagnostic(1).segments[5] as SessionPlan['segments'][number]] });
     expect(expectStep(dg.c, 'instruction')).toMatchObject({
-      text: '20 задач, общее время — 10 минут. Найди закономерность и введи следующее число.',
+      text: '20 задач, общее время — 10 минут. Найди закономерность и введи следующее число. Пробел — пропустить задачу (засчитается как неверная).',
     });
   });
 
@@ -3029,9 +3031,37 @@ describe('SessionController — number series', () => {
     expect((await h.repo.getModuleStates()).numseries.lifetimeBlocks).toBe(1);
   });
 
+  it('a skipped item (Space, F12) is stored as skipped and moves its family rating as a failure', async () => {
+    const h = await begin(planFree('numseries', 21));
+    h.c.ackInstruction();
+    const block = expectStep(h.c, 'numseries_block');
+    const answers = perfectSeriesAnswers(block.items);
+    const skipped = block.items[3];
+    answers[3] = { itemId: skipped?.id ?? '', given: null, timeMs: 6500, skipped: true };
+    await h.c.submitNumSeries(answers);
+
+    expect(expectStep(h.c, 'summary').view.lines[0]).toBe('Верно: 9 из 10');
+    const [row] = await h.repo.listBlocks();
+    const summary = JSON.parse(row?.summaryJson ?? '{}') as { correct: number; items: { skipped?: boolean; given: unknown; timeMs: number }[] };
+    expect(summary.correct).toBe(9);
+    expect(summary.items.map((it) => it.skipped)).toEqual([undefined, undefined, undefined, true, undefined, undefined, undefined, undefined, undefined, undefined]);
+    expect(summary.items[3]).toMatchObject({ given: null, timeMs: 6500 });
+    const items = await h.repo.listLogicItems();
+    expect(items[3]).toMatchObject({ given: null, correct: false, timeMs: 6500 });
+    // The family of the skipped item moved as on a failure: the same as a wrong answer at the same time.
+    const ratings = await h.repo.getRatings();
+    expect(ratings).toEqual(deriveRatings(items));
+    const wrong = perfectSeriesAnswers(block.items);
+    wrong[3] = { itemId: skipped?.id ?? '', given: (skipped?.answer ?? 0) + 1, timeMs: 6500 };
+    const other = await begin(planFree('numseries', 21));
+    other.c.ackInstruction();
+    await other.c.submitNumSeries(wrong);
+    expect(await other.repo.getRatings()).toEqual(ratings);
+  });
+
   it('numseries stores per-item limits and names the shortest', async () => {
     const repo = new MemoryRepository();
-    await repo.saveRatings(new Map(FAMILIES.map((f) => [f, { rating: 1900, n: 60 }])));
+    await repo.saveRatings(new Map(TRAINING_FAMILIES.map((f) => [f, { rating: 1900, n: 60 }])));
     const h = await begin(planFree('numseries', 21), { repo });
     h.c.ackInstruction();
     const block = expectStep(h.c, 'numseries_block');
@@ -3675,8 +3705,8 @@ describe('SessionController — diagnostics', () => {
     await expect(begin(plan)).rejects.toThrow(/diagnosticNumber/);
   });
 
-  it('family order of the series diagnostic matches FAMILIES (R16)', () => {
-    expect(diagnosticSeriesSchedule().slice(0, 8).map((e) => e.family)).toEqual(FAMILIES);
+  it('family order of the series diagnostic matches the 8 old families (R16; the v2 forms come with Task 21)', () => {
+    expect(diagnosticSeriesSchedule().slice(0, 8).map((e) => e.family)).toEqual(ALL_FAMILIES.slice(0, 8));
   });
 });
 
@@ -3696,7 +3726,9 @@ describe('SessionController — scale (e2e)', () => {
 
     const series: SessionPlan = { ...planDiagnostic(1), segments: [planDiagnostic(1).segments[5] as Segment] };
     const ds = await begin(series, { scale: 0.02 });
-    expect(expectStep(ds.c, 'instruction').text).toBe('3 задачи, общее время — 12 секунд. Найди закономерность и введи следующее число.');
+    expect(expectStep(ds.c, 'instruction').text).toBe(
+      '3 задачи, общее время — 12 секунд. Найди закономерность и введи следующее число. Пробел — пропустить задачу (засчитается как неверная).',
+    );
     ds.c.ackInstruction();
     expect(expectStep(ds.c, 'numseries_block')).toMatchObject({ totalLimitMs: 12_000 });
     expect(expectStep(ds.c, 'numseries_block').items).toHaveLength(3);

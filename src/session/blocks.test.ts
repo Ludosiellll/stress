@@ -23,7 +23,7 @@ import { createRng, deriveSeed } from '../engine/rng';
 import { sdTrimmed } from '../engine/stats';
 import { generateMemoryTrials, SPAN_PROTOCOL_PARAMS, spanProtocolTrials } from '../modules/memory/generate';
 import { CARD_AUDIO, memoryModeForBlock, memoryParams } from '../modules/memory/params';
-import { FAMILIES } from '../modules/numseries/families';
+import { TRAINING_FAMILIES } from '../modules/numseries/families';
 import { generateItem, type TimedSeriesItem } from '../modules/numseries/generate';
 import { NO_STRESSORS, bandIndex } from '../modules/reaction/common';
 import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
@@ -1210,6 +1210,20 @@ describe('number series', () => {
     ]);
   });
 
+  it('Space skips an item (F12): wrong in training and in a diagnostic, and its time counts toward the total limit', () => {
+    const skip = { itemId: 'arith:1', given: null, timeMs: 2500, skipped: true };
+    const rest = [
+      { itemId: 'arith:2', given: 4, timeMs: 5000 },
+      { itemId: 'arith:3', given: 4, timeMs: 3000 },
+    ];
+    expect(scoreSeries(step([40_000, 40_000, 40_000], null), [skip, ...rest]).map((o) => [o.correct, o.success])).toEqual([
+      [false, false],
+      [true, true],
+      [true, true],
+    ]);
+    expect(scoreSeries(step([null, null, null], 10_000), [skip, ...rest]).map((o) => o.success)).toEqual([false, true, false]);
+  });
+
   it('total limit (diagnostic): cumulative time', () => {
     expect(scoreSeries(step([null, null, null], 31_000), answers).map((o) => o.success)).toEqual([true, false, false]);
     expect(scoreSeries(step([null, null, null], null), answers).map((o) => o.success)).toEqual([true, false, true]);
@@ -1235,7 +1249,7 @@ describe('number series', () => {
 
   it('ratings updated live equal deriveRatings over the stored rows, for limits under 40 s (R36)', () => {
     const item = fc.record({
-      family: fc.constantFrom(...FAMILIES),
+      family: fc.constantFrom(...TRAINING_FAMILIES),
       difficulty: fc.integer({ min: 500, max: 1800 }),
       timeLimitMs: fc.integer({ min: 80, max: 399 }).map((x) => x * 100),
       correct: fc.boolean(),

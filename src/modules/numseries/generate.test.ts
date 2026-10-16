@@ -4,7 +4,17 @@ import { R0, targetDifficulty } from '../../engine/elo';
 import { itemTimeLimit } from '../../engine/itemLimit';
 import { createRng, deriveSeed } from '../../engine/rng';
 import { fitPredictions, isUnique } from './check';
-import { BASE_DIFFICULTY, FAMILIES, SHOWN_LENGTH, generateTerms, type FamilyId } from './families';
+import {
+  ALL_FAMILIES,
+  BASE_DIFFICULTY,
+  HELD_OUT_FAMILIES,
+  PREDICTOR_FAMILIES,
+  SHOWN_LENGTH,
+  TRAINING_FAMILIES,
+  fitFamily,
+  generateTerms,
+  type FamilyId,
+} from './families';
 import {
   STRUCT_D_MAX,
   attemptItem,
@@ -16,7 +26,9 @@ import {
   selectCandidate,
 } from './generate';
 
-const family = fc.constantFrom(...FAMILIES);
+const family = fc.constantFrom(...ALL_FAMILIES);
+/** The 8 families of 0.1.0 and their predictors. */
+const OLD_FAMILIES: readonly FamilyId[] = ALL_FAMILIES.slice(0, 8);
 
 describe('difficultyOf', () => {
   it('is the base difficulty for small non-negative numbers', () => {
@@ -92,9 +104,9 @@ describe('generateItem', () => {
           expect(item.family).toBe(f);
           expect(item.seed).toBe(seed);
           expect(item.id).toBe(`${f}:${String(seed)}`);
-          expect(item.shown).toHaveLength(SHOWN_LENGTH[f]);
+          expect(SHOWN_LENGTH[f]).toContain(item.shown.length);
           expect(isUnique(item.shown, item.answer)).toBe(true);
-          expect(fitPredictions(item.shown).get(f)?.has(item.answer)).toBe(true);
+          expect(fitFamily(f, item.shown).has(item.answer)).toBe(true);
           for (const x of [...item.shown, item.answer]) {
             expect(Number.isInteger(x)).toBe(true);
             expect(Math.abs(x)).toBeLessThanOrEqual(100000);
@@ -122,14 +134,15 @@ describe('generateItem', () => {
   });
 
   it('varies with the seed', () => {
-    for (const f of FAMILIES) {
-      const series = new Set(Array.from({ length: 20 }, (_, seed) => generateItem(f, 1000, seed).shown.join(',')));
+    for (const f of ALL_FAMILIES) {
+      const target = Math.max(1000, BASE_DIFFICULTY[f] + 200);
+      const series = new Set(Array.from({ length: 20 }, (_, seed) => generateItem(f, target, seed).shown.join(',')));
       expect(series.size, f).toBeGreaterThan(10);
     }
   });
 
   it('hits the base difficulty of every family whenever asked for it', () => {
-    for (const f of FAMILIES) {
+    for (const f of ALL_FAMILIES) {
       for (let seed = 0; seed < 50; seed++) {
         expect(generateItem(f, BASE_DIFFICULTY[f], seed).difficulty, f).toBeLessThanOrEqual(BASE_DIFFICULTY[f] + 150);
       }
@@ -150,12 +163,12 @@ describe('generateItem', () => {
 
   it('accepts most attempts in every family, so 200 attempts never run dry', () => {
     const rates: Record<string, number> = {};
-    for (const f of FAMILIES) {
+    for (const f of ALL_FAMILIES) {
       let accepted = 0;
       for (let seed = 0; seed < 2000; seed++) if (attemptItem(f, seed, 0) !== null) accepted++;
       rates[f] = accepted / 2000;
     }
-    for (const f of FAMILIES) expect(rates[f], f).toBeGreaterThan(0.5);
+    for (const f of ALL_FAMILIES) expect(rates[f], f).toBeGreaterThan(0.5);
   });
 });
 
@@ -185,9 +198,9 @@ describe('candidateItem', () => {
   });
 
   it('rejects a series its own family does not continue with the answer', () => {
-    // Unique (geom, linrec and fib give 32), but not arithmetic.
-    expect(isUnique([1, 2, 4, 8, 16], 32)).toBe(true);
-    expect(candidateItem('arith', 1, [1, 2, 4, 8, 16, 32])).toBeNull();
+    // Unique (geom, linrec and fib give 96), but not arithmetic.
+    expect(isUnique([3, 6, 12, 24, 48], 96)).toBe(true);
+    expect(candidateItem('arith', 1, [3, 6, 12, 24, 48, 96])).toBeNull();
   });
 
   it('rejects a series with two justified answers', () => {
@@ -228,13 +241,13 @@ describe('attemptItem', () => {
 
 describe('generateBlockItems', () => {
   const others = (rating: number, overrides: Partial<Record<FamilyId, number>>) =>
-    new Map<FamilyId, number>(FAMILIES.map((f) => [f, overrides[f] ?? rating]));
+    new Map<FamilyId, number>(TRAINING_FAMILIES.map((f) => [f, overrides[f] ?? rating]));
 
   it('gives the strongest family less than its share', () => {
     const items = generateBlockItems(others(1000, { arith: 1400 }), 1000, createRng(7));
     expect(items).toHaveLength(1000);
     const arith = items.filter((it) => it.family === 'arith').length;
-    expect(arith).toBeLessThan(1000 / FAMILIES.length);
+    expect(arith).toBeLessThan(1000 / TRAINING_FAMILIES.length);
   }, 60_000);
 
   it('aims each item at the family rating', () => {
@@ -280,10 +293,14 @@ describe('generateBlockItems', () => {
 });
 
 describe('STRUCT_D_MAX', () => {
-  it('bounds every generated candidate', () => {
+  it('pins the ceilings of the new families (Справочник F12)', () => {
+    expect(STRUCT_D_MAX).toMatchObject({ letters: 1400, addsub: 1450, primes: 1500, powstep: 1700, twostep: 1800, digitsum: 1700 });
+  });
+
+  it('bounds every generated candidate of a training family', () => {
     fc.assert(
       fc.property(
-        family,
+        fc.constantFrom(...TRAINING_FAMILIES),
         fc.integer({ min: 0, max: 2 ** 31 - 1 }),
         fc.integer({ min: 0, max: 199 }),
         (f, seed, attempt) => {
@@ -294,8 +311,8 @@ describe('STRUCT_D_MAX', () => {
     );
   });
 
-  it('is reached', () => {
-    for (const f of FAMILIES) {
+  it('is reached by the old families', () => {
+    for (const f of OLD_FAMILIES) {
       const reached = Array.from({ length: 50 }, (_, seed) => seed).some(
         (seed) => generateItem(f, 5000, seed).difficulty === STRUCT_D_MAX[f],
       );
@@ -333,4 +350,65 @@ describe('generateTrainingItem', () => {
       { numRuns: 1000 },
     );
   }, 60_000);
+});
+
+describe('the new families (F12)', () => {
+  it('a candidate of any family is unique over the 13 numeric predictors; terms stay within ±100 000; letter positions within 1…32', () => {
+    for (const f of ALL_FAMILIES) {
+      fc.assert(
+        fc.property(fc.integer({ min: 0, max: 2 ** 31 - 1 }), fc.integer({ min: 0, max: 199 }), (seed, attempt) => {
+          const item = attemptItem(f, seed, attempt);
+          if (item === null) return;
+          expect(SHOWN_LENGTH[f]).toContain(item.shown.length);
+          expect(isUnique(item.shown, item.answer, PREDICTOR_FAMILIES)).toBe(true);
+          expect(fitFamily(f, item.shown).has(item.answer)).toBe(true);
+          const terms = [...item.shown, item.answer];
+          for (const x of terms) expect(Math.abs(x)).toBeLessThanOrEqual(100000);
+          if (f === 'letters') for (const x of terms) expect(x >= 1 && x <= 32, terms.join(',')).toBe(true);
+        }),
+        { numRuns: 1000 },
+      );
+    }
+  }, 120_000);
+
+  it('a letter series is checked by its positions against every numeric predictor', () => {
+    // 1, 2, 4, 7 is second order (→ 11) and Fibonacci-like (k = 1, c = 1 → 12): two answers.
+    expect(fitFamily('letters', [1, 2, 4, 7])).toEqual(new Set([11]));
+    expect(fitPredictions([1, 2, 4, 7]).get('fib')).toEqual(new Set([12]));
+    expect(candidateItem('letters', 1, [1, 2, 4, 7, 11])).toBeNull();
+    // Positions outside 1…32 are no letters.
+    expect(candidateItem('letters', 1, [20, 23, 26, 29, 32, 35])).toBeNull();
+    expect(candidateItem('letters', 1, [2, 5, 8, 11, 14, 17])).toEqual({
+      id: 'letters:1',
+      family: 'letters',
+      seed: 1,
+      shown: [2, 5, 8, 11, 14],
+      answer: 17,
+      difficulty: 1100,
+    });
+  });
+
+  it('the acceptance of the old families drops by at most 1 point', () => {
+    for (const f of OLD_FAMILIES) {
+      let old = 0;
+      let now = 0;
+      for (let seed = 0; seed < 5000; seed++) {
+        const terms = generateTerms(f, createRng(deriveSeed(seed, 'attempt:0')));
+        if (candidateItem(f, seed, terms) !== null) now++;
+        const shown = terms.slice(0, -1);
+        const answer = terms[terms.length - 1] as number;
+        const basic = terms.every((x) => Math.abs(x) <= 100000) && new Set(terms).size >= 3 && fitFamily(f, shown).has(answer);
+        if (basic && isUnique(shown, answer, OLD_FAMILIES)) old++;
+      }
+      expect(now / 5000, f).toBeGreaterThanOrEqual(old / 5000 - 0.01);
+    }
+  }, 120_000);
+
+  it('held-out families never appear in training', () => {
+    const items = generateBlockItems(new Map(), 10_000, createRng(20));
+    expect(items).toHaveLength(10_000);
+    const families = new Set(items.map((it) => it.family));
+    for (const f of HELD_OUT_FAMILIES) expect(families.has(f), f).toBe(false);
+    expect([...families].sort()).toEqual([...TRAINING_FAMILIES].sort());
+  }, 120_000);
 });

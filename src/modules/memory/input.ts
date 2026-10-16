@@ -1,22 +1,8 @@
+import { LETTER_KEY_CODES } from '../numseries/letters';
 import { MEMORY_LETTERS } from './params';
 
-/** The key of each letter on a ЙЦУКЕН keyboard (KeyboardEvent.code names the physical key, whatever the layout). */
-const LETTER_BY_CODE: Readonly<Record<string, string>> = {
-  Comma: 'Б',
-  KeyD: 'В',
-  KeyU: 'Г',
-  KeyL: 'Д',
-  Semicolon: 'Ж',
-  KeyP: 'З',
-  KeyR: 'К',
-  KeyK: 'Л',
-  KeyV: 'М',
-  KeyY: 'Н',
-  KeyG: 'П',
-  KeyH: 'Р',
-  KeyC: 'С',
-  KeyN: 'Т',
-};
+/** The ЙЦУКЕН key of each letter of the set, from the one letters source (T-R19). */
+const LETTER_BY_CODE: ReadonlyMap<string, string> = new Map(MEMORY_LETTERS.map((letter) => [LETTER_KEY_CODES[letter] as string, letter]));
 
 const DIGIT_CODE = /^(?:Digit|Numpad)([0-9])$/;
 
@@ -28,7 +14,7 @@ const DIGIT_CODE = /^(?:Digit|Numpad)([0-9])$/;
 export function letterFromKey(e: { key: string; code: string }): string | null {
   const upper = e.key.toUpperCase();
   if (MEMORY_LETTERS.includes(upper)) return upper;
-  return LETTER_BY_CODE[e.code] ?? null;
+  return LETTER_BY_CODE.get(e.code) ?? null;
 }
 
 /** The digit of the top row or the numeric keypad (also with Num Lock off or Shift held), or null. */

@@ -2,11 +2,11 @@ import { R0, familyWeights, pickWeighted, targetDifficulty } from '../../engine/
 import { itemTimeLimit } from '../../engine/itemLimit';
 import { createRng, deriveSeed, type Rng } from '../../engine/rng';
 import { isUnique } from './check';
-import { BASE_DIFFICULTY, FAMILIES, fitFamily, generateTerms, type FamilyId } from './families';
+import { TRAINING_FAMILIES, fitFamily, generateTerms, structDifficulty, type FamilyId } from './families';
 
 /**
- * Highest difficulty a candidate of each family reaches under its generation ranges (R36).
- * Above it, only a shorter time limit makes items harder.
+ * Highest difficulty a candidate of each family reaches under its generation ranges (R36); for the new families the
+ * ceiling of the table of spec §4.8 (Справочник F12). Above it, only a shorter time limit makes items harder.
  */
 export const STRUCT_D_MAX: Readonly<Record<FamilyId, number>> = {
   arith: 950,
@@ -17,6 +17,12 @@ export const STRUCT_D_MAX: Readonly<Record<FamilyId, number>> = {
   linrec: 1650,
   powers: 1500,
   opcycle: 1700,
+  letters: 1400,
+  addsub: 1450,
+  primes: 1500,
+  powstep: 1700,
+  twostep: 1800,
+  digitsum: 1700,
 };
 
 const MAX_ABS_TERM = 100000;
@@ -47,12 +53,15 @@ export interface TrainingSeriesItem extends TimedSeriesItem {
   timeLimitMs: number;
 }
 
-/** D = base + 100·[max|t| > 100] + 200·[max|t| > 1000] + 50·[any t < 0] over the shown terms and the answer. */
+/**
+ * D = D_struct (the base, plus the rule terms of a new family, spec §4.8) + 100·[max|t| > 100] + 200·[max|t| > 1000] +
+ * 50·[any t < 0] over the shown terms and the answer. Letter positions (1…32) add no size terms.
+ */
 export function difficultyOf(family: FamilyId, shown: readonly number[], answer: number): number {
   const terms = [...shown, answer];
   const maxAbs = Math.max(...terms.map((x) => Math.abs(x)));
   return (
-    BASE_DIFFICULTY[family] +
+    structDifficulty(family, terms) +
     (maxAbs > 100 ? 100 : 0) +
     (maxAbs > 1000 ? 200 : 0) +
     (terms.some((x) => x < 0) ? 50 : 0)
@@ -62,7 +71,8 @@ export function difficultyOf(family: FamilyId, shown: readonly number[], answer:
 /**
  * The item for `terms` (the shown terms, then the answer), or null when it is rejected:
  * a term beyond ±100000, fewer than 3 distinct values (R13), its own family does not continue
- * the shown terms with the answer, or some family justifies another answer. Exported for tests.
+ * the shown terms with the answer (a letter series: within positions 1…32), or one of the 13 numeric
+ * predictors justifies another answer. Exported for tests.
  */
 export function candidateItem(family: FamilyId, seed: number, terms: readonly number[]): SeriesItem | null {
   if (terms.some((x) => Math.abs(x) > MAX_ABS_TERM)) return null;
@@ -129,15 +139,18 @@ export function generateTrainingItem(family: FamilyId, targetD: number, seed: nu
   return { ...item, timeLimitMs: itemTimeLimit(targetD, item.difficulty, STRUCT_D_MAX[family]) };
 }
 
-/** `count` training items; weaker families come up more often, each aimed at P ≈ 0.75 for its rating. */
+/**
+ * `count` training items of the 11 training families (the held-out ones never, spec §4.8); weaker families come up
+ * more often, each aimed at P ≈ 0.75 for its rating.
+ */
 export function generateBlockItems(ratings: ReadonlyMap<FamilyId, number>, count: number, rng: Rng): TrainingSeriesItem[] {
   if (!Number.isInteger(count) || count < 0) {
     throw new RangeError(`count must be a non-negative integer, got ${String(count)}`);
   }
-  const weights = familyWeights(FAMILIES.map((f) => ratings.get(f) ?? R0));
+  const weights = familyWeights(TRAINING_FAMILIES.map((f) => ratings.get(f) ?? R0));
   const items: TrainingSeriesItem[] = [];
   for (let i = 0; i < count; i++) {
-    const family = pickWeighted(FAMILIES, weights, rng);
+    const family = pickWeighted(TRAINING_FAMILIES, weights, rng);
     const targetD = targetDifficulty(ratings.get(family) ?? R0);
     const seed = rng.int(0, 0x7fffffff);
     items.push(generateTrainingItem(family, targetD, seed));

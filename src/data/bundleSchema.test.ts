@@ -242,6 +242,22 @@ describe('parseExportBundle: errors (the first one found)', () => {
     expect((await restored.getModuleStates()).memory.sessionEndLevels).toEqual([14.89]);
   });
 
+  it('reads items of the new number-series families: a letter item stores positions (F12)', () => {
+    const b = parsed(
+      variant((x) => {
+        rows(x, 'logicItems').push(
+          { ...item('i2', 'b2', '2026-10-01T08:07:00.000Z'), family: 'digitsum', answer: 162, given: null },
+          { ...item('i3', 'b2', '2026-10-01T08:08:00.000Z'), family: 'letters', answer: 32, given: 31 },
+        );
+      }),
+    );
+    expect(b.logicItems.map((i) => [i.family, i.answer, i.given])).toEqual([
+      ['arith', -12, -12],
+      ['digitsum', 162, null],
+      ['letters', 32, 31],
+    ]);
+  });
+
   it('unknown module, kind and family; flags outside BlockFlag; mood outside 1…5', () => {
     expect(errorOf(variant((b) => Object.assign(rows(b, 'blocks')[0] ?? {}, { module: 'tetris' })))).toBe(
       'Запись blocks[0]: поле module должно быть одним из: pzmr, szmr, gonogo, rdo, gorbov, schulte, stroop, taskswitch, pomeh, memory, numseries.',
@@ -255,8 +271,9 @@ describe('parseExportBundle: errors (the first one found)', () => {
     expect(errorOf(variant((b) => Object.assign(rows(b, 'sessions')[0] ?? {}, { kind: 'cloud' })))).toBe(
       'Запись sessions[0]: поле kind должно быть одним из: training, diagnostic, free.',
     );
-    expect(errorOf(variant((b) => Object.assign(rows(b, 'logicItems')[0] ?? {}, { family: 'primes' })))).toBe(
-      'Запись logicItems[0]: поле family должно быть одним из: arith, geom, second, alt, fib, linrec, powers, opcycle.',
+    expect(errorOf(variant((b) => Object.assign(rows(b, 'logicItems')[0] ?? {}, { family: 'squares' })))).toBe(
+      'Запись logicItems[0]: поле family должно быть одним из: arith, geom, second, alt, fib, linrec, powers, opcycle, ' +
+        'letters, addsub, primes, powstep, twostep, digitsum.',
     );
     for (const mood of [7, 0, 2.5, '3']) {
       expect(errorOf(variant((b) => Object.assign(rows(b, 'wellbeing')[0] ?? {}, { mood })))).toBe(

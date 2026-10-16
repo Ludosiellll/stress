@@ -182,7 +182,7 @@ export function parseResults(row: { readonly resultsJson: string }): DiagnosticR
   return { ...metrics, unreliable, restarts: restartsOf(r['restarts']), gorbovOneTable: r['gorbovOneTable'] === true };
 }
 
-/** Family order of the number-series diagnostic; mirrors the module's FAMILIES (engine must not import src/modules). */
+/** Family order of the number-series diagnostic: the first 8 of the module's ALL_FAMILIES (engine must not import src/modules). */
 const SERIES_FAMILIES: readonly FamilyId[] = ['arith', 'geom', 'second', 'alt', 'fib', 'linrec', 'powers', 'opcycle'];
 const SERIES_ITEMS = 20;
 

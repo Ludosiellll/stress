@@ -48,4 +48,19 @@ export type InputKey = string;
  */
 export type BlockFlag = 'fatigued' | 'timing_unreliable' | 'calibration' | 'overload' | 'warmup' | 'test_format' | 'discarded';
 export type SessionKind = 'training' | 'diagnostic' | 'free';
-export type FamilyId = 'arith' | 'geom' | 'second' | 'alt' | 'fib' | 'linrec' | 'powers' | 'opcycle';
+/** Number-series families: the 8 of 0.1.0 and the 6 of F12 (letters, addsub and primes train; the last 3 are held out). */
+export type FamilyId =
+  | 'arith'
+  | 'geom'
+  | 'second'
+  | 'alt'
+  | 'fib'
+  | 'linrec'
+  | 'powers'
+  | 'opcycle'
+  | 'letters'
+  | 'addsub'
+  | 'primes'
+  | 'powstep'
+  | 'twostep'
+  | 'digitsum';

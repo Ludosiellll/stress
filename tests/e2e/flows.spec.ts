@@ -317,6 +317,20 @@ test('free training of Память reaches 100 %', async ({ page }) => {
   await expect(page.getByRole('list', { name: 'Итог по модулям' })).toContainText('Память: блоков');
 });
 
+test('number series: a skipped item counts as wrong', async ({ page }) => {
+  // The e2e scale: 3 items a block. Space skips the first; the bot answers the other two.
+  await openApp(page, E2E_URL);
+  await page.getByRole('button', { name: 'Свободная тренировка' }).click();
+  await page.getByRole('button', { name: 'Числовые ряды' }).click();
+  await playSession(page, { stopAt: 'series' });
+  const counter = page.locator('.series .muted').first();
+  await expect(counter).toHaveText('Задача 1 из 3');
+  await page.getByRole('textbox', { name: 'Ответ' }).press('Space');
+  await expect(counter).toHaveText('Задача 2 из 3');
+  await playSession(page, { stopAt: 'summary' });
+  await expect(page.locator('.summary')).toContainText('Верно: 2 из 3');
+});
+
 test('settings layout pult changes key hints to arrows', async ({ page }) => {
   await openApp(page, E2E_URL);
   await page.getByRole('button', { name: 'Настройки' }).click();

@@ -4,7 +4,8 @@ import type { BlockRow } from '../data/rows';
 import { defaultModuleState } from '../engine/derive';
 import { NORM_HINTS } from '../engine/norms';
 import type { ModuleState } from '../engine/planner';
-import { MODULE_IDS, type ModuleId } from '../engine/types';
+import type { Rating } from '../engine/elo';
+import { MODULE_IDS, type FamilyId, type ModuleId } from '../engine/types';
 import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
 import { szmr } from '../modules/reaction/szmr';
 import { gorbovParams } from '../modules/tables/gorbov';
@@ -381,9 +382,30 @@ describe('assessBlock of a band module (F3, Р29)', () => {
 });
 
 describe('meanFamilyRating', () => {
-  it('averages the 8 families, R0 for a family without a rating', () => {
+  it('averages the training families with 10 items or more; R0 without them (spec §6.1)', () => {
     expect(meanFamilyRating(new Map())).toBe(1000);
-    expect(meanFamilyRating(new Map([['arith', { rating: 1400, n: 30 }]]))).toBe(1050);
+    expect(meanFamilyRating(new Map([['arith', { rating: 1400, n: 30 }]]))).toBe(1400);
+    expect(meanFamilyRating(new Map([['arith', { rating: 1400, n: 9 }]]))).toBe(1000);
+  });
+
+  it('new families with fewer than 10 items leave the step alone on the day of the update', () => {
+    const old = new Map<FamilyId, Rating>([
+      ['arith', { rating: 1300, n: 40 }],
+      ['geom', { rating: 1100, n: 12 }],
+      ['second', { rating: 1150, n: 10 }],
+    ]);
+    const updated = new Map<FamilyId, Rating>([
+      ...old,
+      ['letters', { rating: 980, n: 3 }],
+      ['addsub', { rating: 1000, n: 0 }],
+      ['primes', { rating: 990, n: 9 }],
+    ]);
+    expect(meanFamilyRating(old)).toBe(1183.3333333333333);
+    expect(meanFamilyRating(updated)).toBe(meanFamilyRating(old));
+    // With 10 items a new family counts like any other.
+    expect(meanFamilyRating(new Map([...updated, ['letters', { rating: 1250, n: 10 }]]))).toBe(1200);
+    // A held-out family never counts (it has no rating in training; a damaged row must not move the step).
+    expect(meanFamilyRating(new Map([...old, ['powstep', { rating: 2000, n: 50 }]]))).toBe(meanFamilyRating(old));
   });
 });
 

@@ -34,12 +34,28 @@ describe('fitPredictions (brief examples)', () => {
     expect(isUnique([1, 4, 9, 16, 25], 36)).toBe(true);
   });
 
-  it('[1,2,4,8,16] → geom, linrec and fib (k=2) all predict 32; unique', () => {
+  it('[3,6,12,24,48] → geom, linrec and fib (k=2) all predict 96; unique', () => {
+    const p = fitPredictions([3, 6, 12, 24, 48]);
+    expect(p.get('geom')).toEqual(set(96));
+    expect(p.get('linrec')).toEqual(set(96));
+    expect(p.get('fib')).toEqual(set(96));
+    expect(isUnique([3, 6, 12, 24, 48], 96)).toBe(true);
+  });
+
+  it('[1,2,4,8,16] → 32 by doubling, 23 by adding the digit sum (F12); not unique', () => {
     const p = fitPredictions([1, 2, 4, 8, 16]);
     expect(p.get('geom')).toEqual(set(32));
-    expect(p.get('linrec')).toEqual(set(32));
-    expect(p.get('fib')).toEqual(set(32));
-    expect(isUnique([1, 2, 4, 8, 16], 32)).toBe(true);
+    expect(p.get('digitsum')).toEqual(set(23));
+    expect(isUnique([1, 2, 4, 8, 16], 32)).toBe(false);
+    // The 8 old predictors alone see one answer.
+    expect(isUnique([1, 2, 4, 8, 16], 32, ['arith', 'geom', 'second', 'alt', 'fib', 'linrec', 'powers', 'opcycle'])).toBe(true);
+  });
+
+  it('[10,15,12,17,14] → only the cycle +5, −3 of addsub (F12): unique by the 13 predictors', () => {
+    expect([...fitPredictions([10, 15, 12, 17, 14]).entries()]).toEqual([['addsub', set(19)]]);
+    expect(isUnique([10, 15, 12, 17, 14], 19)).toBe(true);
+    expect(fitPredictions([10, 15, 12, 17, 14], ['arith', 'geom', 'second', 'fib', 'linrec']).size).toBe(0);
+    expect(isUnique([10, 15, 12, 17, 14], 19, ['arith', 'geom'])).toBe(false);
   });
 
   it('[1,2,4,7] → second {11} conflicts with fib (k=1, c=1) {12}; not unique', () => {

@@ -7,7 +7,7 @@ import { L_NORM, type ModuleState } from '../engine/planner';
 import { MODULE_IDS, isBandModule, type FamilyId, type ModuleId, type SessionKind } from '../engine/types';
 import { changeText, describeChanges, type DescribeContext, type ParamChange } from '../modules/describe';
 import { isMemoryMode } from '../modules/memory/params';
-import { FAMILIES } from '../modules/numseries/families';
+import { TRAINING_FAMILIES } from '../modules/numseries/families';
 import { moduleTitles } from '../modules/registry';
 import {
   entersHistory,
@@ -71,9 +71,19 @@ const HINTS: ReadonlyMap<VariantKey, string> = new Map([
   ['schulte:5', NORM_HINTS.schulte5],
 ]);
 
-/** The mean of the 8 family ratings; a family without a rating counts as R0. */
+/** Items a family needs before its rating counts in the mean (spec §6.1). */
+const MIN_RATED_ITEMS = 10;
+
+/**
+ * The mean rating of the training families with at least 10 items; R0 when none has (spec §6.1). New families at R0
+ * would otherwise lower the step on the day of the update; the held-out ones have no rating.
+ */
 export function meanFamilyRating(ratings: ReadonlyMap<FamilyId, Rating>): number {
-  return FAMILIES.reduce((sum, f) => sum + (ratings.get(f)?.rating ?? R0), 0) / FAMILIES.length;
+  const rated = TRAINING_FAMILIES.flatMap((f) => {
+    const r = ratings.get(f);
+    return r !== undefined && r.n >= MIN_RATED_ITEMS ? [r.rating] : [];
+  });
+  return rated.length === 0 ? R0 : rated.reduce((sum, x) => sum + x, 0) / rated.length;
 }
 
 /** A level as shown: «12», «13,5». */

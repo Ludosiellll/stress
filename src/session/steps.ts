@@ -147,12 +147,15 @@ export interface BlockSummaryView {
   assessment?: BlockAssessment;
 }
 
-/** One number-series answer; `given` null = no valid answer (time ran out, or skipped). */
+/**
+ * One number-series answer; `given` null = no valid answer (time ran out, or skipped). A letter item's `given` is the
+ * position of the letter, 1…32 (F12).
+ */
 export interface SeriesAnswer {
   itemId: string;
   given: number | null;
   timeMs: number;
-  /** Skipped (F11: not reached before a counted Esc): a wrong answer, whatever `given` says. */
+  /** Skipped (F12: Space; F11: not reached before a counted Esc): a wrong answer, whatever `given` says. */
   skipped?: boolean;
 }
 
@@ -200,8 +203,13 @@ export const DIAGNOSTIC_RESTART_NOTICE = 'Блок перезапущен. В д
 export const RESTART_USED_HINT = 'Перезапуск уже использован — доведи задание до конца.';
 /** Summary line of a block that had sound which did not play (no device, a blocked context, volume 0). */
 export const AUDIO_NOT_PLAYED = 'Звук не воспроизводился: проверь устройство вывода и громкость помех в настройках.';
+/** The end of both number-series instructions (Справочник F12). */
+const SERIES_SKIP_NOTE = ' Пробел — пропустить задачу (засчитается как неверная).';
 export const SERIES_INSTRUCTION_TRAINING =
-  'Найди закономерность и введи следующее число. На задачу до 40 секунд, на трудных уровнях меньше: остаток времени показывает полоса.';
+  'Найди закономерность и введи следующее число. На задачу до 40 секунд, на трудных уровнях меньше: остаток времени показывает полоса.' +
+  SERIES_SKIP_NOTE;
+/** Under a letter item (Справочник F12). */
+export const SERIES_LETTER_HINT = 'Ответ — буква. Алфавит без Ё. Раскладку переключать не нужно.';
 /** The span protocol of the diagnostic (digits only; its rows grow every two trials). */
 export const MEMORY_SPAN_INSTRUCTION =
   'Запомни цифры по порядку. Потом набери их и нажми Enter. Сначала ряд из 3 цифр, после каждых двух проб он удлиняется ' +
@@ -235,7 +243,7 @@ function durationText(ms: number): string {
 export function seriesDiagnosticInstruction(count: number, totalLimitMs: number | null): string {
   const tasks = `${String(count)} ${plural(count, 'задача', 'задачи', 'задач')}`;
   const head = totalLimitMs === null ? `${tasks}.` : `${tasks}, общее время — ${durationText(totalLimitMs)}.`;
-  return `${head} Найди закономерность и введи следующее число.`;
+  return `${head} Найди закономерность и введи следующее число.${SERIES_SKIP_NOTE}`;
 }
 
 /** Rounded to a whole number; never «-0». */

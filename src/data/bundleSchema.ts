@@ -1,6 +1,6 @@
 import { localDayNumber } from '../engine/dates';
 import { MODULE_IDS, type BlockFlag, type LayoutId, type SessionKind } from '../engine/types';
-import { FAMILIES } from '../modules/numseries/families';
+import { ALL_FAMILIES } from '../modules/numseries/families';
 import type { BlockRow, DiagnosticRow, LogicItemRow, SessionRow, TrialRow, WellbeingRow } from './rows';
 
 /**
@@ -207,7 +207,7 @@ const readTrial = (f: Fields): TrialRow => ({
 const readLogicItem = (f: Fields): LogicItemRow => ({
   id: f.string('id'),
   blockId: f.string('blockId'),
-  family: f.oneOf('family', FAMILIES),
+  family: f.oneOf('family', ALL_FAMILIES),
   seed: f.number('seed'),
   difficulty: f.number('difficulty'),
   answer: f.number('answer'),
