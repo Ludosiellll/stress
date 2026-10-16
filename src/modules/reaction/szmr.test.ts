@@ -1,9 +1,10 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { layoutKeys } from '../../engine/layouts';
+import { keyLabel, layoutKeys } from '../../engine/layouts';
 import { createRng } from '../../engine/rng';
 import type { ColorId, TrialSpec } from '../../engine/reaction/types';
 import type { LayoutId } from '../../engine/types';
+import { COLOR_NAMES } from './common';
 import { szmr, type SzmrParams } from './szmr';
 
 const levelPair = fc
@@ -263,5 +264,107 @@ describe('szmr texts', () => {
       { label: 'Окно ответа', value: '160 мс' },
       { label: 'Нагрузка', value: '6 цветов на 6 клавиш, форма, инверсия' },
     ]);
+  });
+});
+
+describe('the segment mapping (F9)', () => {
+  const withMapping = (p: SzmrParams, seed: number): SzmrParams => {
+    if (szmr.withMapping === undefined) throw new Error('СЗМР maps its keys');
+    return szmr.withMapping(p, seed);
+  };
+  const range = (n: number): number[] => Array.from({ length: n }, (_, i) => i);
+  const seeds = fc.integer({ min: 0, max: 2 ** 32 - 1 });
+  /** The levels of every colours-and-keys band: 2 on 2, 3 on 2, 4 on 4, 5 on 5, 6 on 6, 6 on 6 with inversion. */
+  const LEVELS = [0, 8, 12, 20, 24, 28] as const;
+
+  it('params(L) plays the canonical mapping (Р26)', () => {
+    for (const L of LEVELS) expect(szmr.params(L).mapping).toBeNull();
+  });
+
+  it('a segment mapping is a permutation, or one of the 6 groupings of 3 colours on 2 keys', () => {
+    fc.assert(
+      fc.property(seeds, fc.constantFrom(...LEVELS), (seed, L) => {
+        const p = szmr.params(L);
+        const { mapping } = withMapping(p, seed);
+        if (mapping === null) throw new Error('a segment mapping');
+        if (p.nColors === p.nKeys) {
+          expect(mapping).toEqual(createRng(seed).shuffle(range(p.nKeys)));
+          expect([...mapping].sort((a, b) => a - b)).toEqual(range(p.nKeys));
+        } else {
+          // rng.int(0, 2): the colour alone on its key; rng.int(0, 1): the key the other two share.
+          const rng = createRng(seed);
+          const alone = rng.int(0, 2);
+          const shared = rng.int(0, 1);
+          expect(mapping).toEqual(range(3).map((c) => (c === alone ? 1 - shared : shared)));
+        }
+      }),
+      { numRuns: 1000 },
+    );
+    const seen = new Set(range(1000).map((seed) => withMapping(szmr.params(8), seed).mapping?.join(',')));
+    expect(seen).toEqual(new Set(['1,0,0', '0,1,1', '0,1,0', '1,0,1', '0,0,1', '1,1,0']));
+  });
+
+  it('the mapping of a new band in the same segment comes from the same seed', () => {
+    // 3 colours on 2 keys → 4 on 4 inside one segment: each band's mapping is a function of the seed alone.
+    for (const seed of [1, 77, 4242]) {
+      const threeOnTwo = withMapping(szmr.params(8), seed).mapping;
+      const fourOnFour = withMapping(szmr.params(12), seed).mapping;
+      expect(withMapping(szmr.params(11), seed).mapping).toEqual(threeOnTwo);
+      expect(withMapping(szmr.params(15), seed).mapping).toEqual(fourOnFour);
+      expect(fourOnFour).toEqual(createRng(seed).shuffle([0, 1, 2, 3]));
+    }
+  });
+
+  it('a mapping changes the keys only: the same draws give the same trials', () => {
+    for (const L of LEVELS) {
+      const p = szmr.params(L);
+      const mapped = szmr.generateBlock(withMapping(p, 9), createRng(L + 3), 'keyboard', 60);
+      const canonical = szmr.generateBlock(p, createRng(L + 3), 'keyboard', 60);
+      expect(mapped.map((t) => ({ ...t, expected: undefined }))).toEqual(canonical.map((t) => ({ ...t, expected: undefined })));
+    }
+  });
+
+  it('the trials take the keys of the mapping; inversion flips the segment mapping', () => {
+    for (const L of LEVELS) {
+      for (const seed of [3, 30, 300]) {
+        const p = withMapping(szmr.params(L), seed);
+        const keys = layoutKeys('keyboard', p.nKeys).keys;
+        for (const t of szmr.generateBlock(p, createRng(seed), 'keyboard', 120)) {
+          const s = shape(t);
+          const k = p.mapping?.[COLORS.indexOf(s.color)] as number;
+          expect(key(t)).toBe(keys[s.frame === 'white' ? p.nKeys - 1 - k : k]);
+        }
+      }
+    }
+  });
+
+  it('the instruction names the key every trial expects', () => {
+    for (const layout of ['keyboard', 'pult', 'mouse'] as const) {
+      for (const L of [0, 8, 12, 20, 24]) {
+        for (const seed of [5, 50, 500, 5000]) {
+          const p = withMapping(szmr.params(L), seed);
+          const text = szmr.instruction(layout, p);
+          for (const t of szmr.generateBlock(p, createRng(seed), layout, 60)) {
+            const { color } = shape(t);
+            // A key two colours share is named once, for the pair in colour order: «красный и жёлтый — F».
+            const sharing = COLORS.slice(0, p.nColors).filter((_, c) => p.mapping?.[c] === p.mapping?.[COLORS.indexOf(color)]);
+            expect(text, `${layout} L ${String(L)} seed ${String(seed)}`).toContain(
+              `${sharing.map((c) => COLOR_NAMES[c]).join(' и ')} — ${keyLabel(key(t))}`,
+            );
+          }
+        }
+      }
+    }
+    // The canonical grouping, as the diagnostic and the old blocks say it.
+    expect(szmr.instruction('keyboard', szmr.params(8))).toContain('красный и жёлтый — F');
+  });
+
+  it('an example: 3 colours on 2 keys with green and yellow sharing J', () => {
+    const p = { ...szmr.params(8), mapping: [0, 1, 1] };
+    expect(szmr.instruction('keyboard', p)).toBe('Нажимай клавишу по цвету: красный — F, зелёный и жёлтый — J. Отвечай как можно быстрее.');
+    const p4 = { ...szmr.params(12), mapping: [2, 0, 3, 1] };
+    expect(szmr.instruction('keyboard', p4)).toBe(
+      'Каждому цвету соответствует своя клавиша: зелёный — D, синий — F, красный — J, жёлтый — K. Нажимай нужную как можно быстрее.',
+    );
   });
 });

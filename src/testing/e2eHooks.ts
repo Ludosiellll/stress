@@ -111,8 +111,9 @@ export function e2eHooks(): E2eHooks {
 
 /**
  * In e2e mode wraps the block's clock and renderer so that every `show` is followed by a stimulus event
- * with that frame's timestamp (the onset the runner records) and the trial's condition; `hide`, `tick`, `cue`,
- * `beginFrame`, `frame`, `mark` and `clearMark` pass through unchanged.
+ * with that frame's timestamp (the onset the runner records), the trial's expected answer (its own key, whatever the
+ * segment's key mapping, F9) and its condition; `show` and `cue` pass the jitter on, and `hide`, `tick`, `beginFrame`,
+ * `frame`, `mark` and `clearMark` pass through unchanged.
  * Otherwise returns them unchanged.
  */
 export function instrumentBlock(
@@ -135,8 +136,8 @@ export function instrumentBlock(
     },
   };
   const renderer: StimulusRenderer = {
-    show(s) {
-      base.renderer.show(s);
+    show(s, jitter) {
+      base.renderer.show(s, jitter);
       const spec = specs[shown++];
       if (spec === undefined) return;
       const event: StimulusEvent = { module, expected: spec.expected, onset: frameTs };
@@ -149,8 +150,8 @@ export function instrumentBlock(
     tick(ms) {
       base.renderer.tick(ms);
     },
-    cue(s) {
-      base.renderer.cue?.(s);
+    cue(s, jitter) {
+      base.renderer.cue?.(s, jitter);
     },
     beginFrame(ts) {
       base.renderer.beginFrame?.(ts);

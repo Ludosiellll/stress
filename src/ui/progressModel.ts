@@ -2,7 +2,7 @@ import type { Repository } from '../data/repository';
 import type { BlockRow, DiagnosticRow, SessionRow } from '../data/rows';
 import { localDayIso, localDayNumber } from '../engine/dates';
 import type { FormDay } from '../engine/dayForm';
-import { sessionEndPoints, type LevelPoint } from '../engine/derive';
+import { isCountedSession, movesLevel, sessionEndPoints, type LevelPoint } from '../engine/derive';
 import { parseResults, type DiagnosticMetrics, type DiagnosticResults } from '../engine/diagnostic';
 import { L_NORM, OLD_L_NORM, TEST_FORMAT_ORDER, type TestFormatId } from '../engine/planner';
 import { readinessOfLatest } from '../engine/readiness';
@@ -14,7 +14,7 @@ import { moduleTitles } from '../modules/registry';
 import { assessModules, meanFamilyRating, type ModuleAssessment } from '../session/assessment';
 import { buildBlockHistory, parseObject, scoreFromCounts } from '../session/blockHistory';
 import type { DiscardReason } from '../session/controller';
-import { pastBlocks, testFormatRunsAt, warmupDays, type PastBlocks } from '../session/pastBlocks';
+import { pastBlocks, readCleanHits, testFormatRunsAt, warmupDays, type PastBlocks } from '../session/pastBlocks';
 import { plural, shownCost } from '../session/steps';
 import { TEST_FORMAT_NAMES, testFormatBest, type TestFormatBest } from '../session/testFormat';
 import type { ChartDomain, ChartPoint, ChartSeries } from './charts/LineChart';
@@ -84,6 +84,17 @@ export interface RdoBias {
   blocks: number;
 }
 
+/** The cost of re-adapting after a change of keys, layout or Go/No-Go colours (F9), of one module over OVERLOAD_DAYS days. */
+export interface ReadaptCost {
+  module: ModuleId;
+  /** The segments it averages: READAPT_MIN_SEGMENTS or more. */
+  segments: number;
+  /** s of the segment's first block minus the mean s of its other blocks, averaged over the segments. */
+  scoreDelta: number;
+  /** The median RT of the first block minus that of the other blocks together, ms, averaged over the segments. */
+  rtDelta: number;
+}
+
 /** The runs of one test format (F4): a point per run (x «дд.мм»), its best and how many runs there were. */
 export interface TestFormatProgress {
   format: TestFormatId;
@@ -134,6 +145,8 @@ export interface ProgressModel {
   overload28d: OverloadMean | null;
   /** «РДО: смещение по скоростям за 28 дней» (F14): one per speed, in RDO_PERIODS order. */
   rdoBias: RdoBias[];
+  /** «… — после смены клавиш» (F9): the modules with READAPT_MIN_SEGMENTS segments or more in 28 days, in MODULE_IDS order. */
+  readapt: ReadaptCost[];
   /** «Прерванные блоки по неделям» (F11): DISCARD_WEEKS weeks, newest first. */
   discards: DiscardWeek[];
   /** Newest first, at most SESSION_LINES. */
@@ -147,6 +160,8 @@ export const FORM_CHART_DAYS = 30;
 
 /** The window of overload28d: [now − 28 days, now]. */
 export const OVERLOAD_DAYS = 28;
+/** The re-adaptation line of a module needs this many segments in OVERLOAD_DAYS days (F9). */
+export const READAPT_MIN_SEGMENTS = 3;
 /** «Прерванные блоки по неделям» covers this week and the 7 before it. */
 export const DISCARD_WEEKS = 8;
 const DAY_MS = 86_400_000;
@@ -539,6 +554,48 @@ export function rdoBias(blocks: readonly Pick<BlockRow, 'module' | 'flags' | 'st
   });
 }
 
+/** Blocks that measured nothing to compare a segment by: counted as 0 after Esc (F11), or with dropped frames. */
+const COST_OUT: readonly BlockFlag[] = ['discarded', 'timing_unreliable'];
+
+/**
+ * The cost of re-adapting (F9, spec §4.6): over the blocks of training and free sessions marked summaryJson.readapt
+ * (the first level-moving block of a segment after a change of its setup) started in [now − OVERLOAD_DAYS days, now].
+ * A segment is that block and the blocks that follow it in its session while the module stays the same; its other
+ * blocks are those that move the level, without COST_OUT. It counts with 2 or more of them and clean hit RTs on both
+ * sides: s(first) − mean s(others), and the median of the first's cleanHitRts minus that of the others' together. A
+ * first block in COST_OUT measured nothing. Per module, the means over its segments, from READAPT_MIN_SEGMENTS on.
+ */
+export function readaptCosts(past: PastBlocks, now: Date): ReadaptCost[] {
+  const end = now.getTime();
+  const start = end - OVERLOAD_DAYS * DAY_MS;
+  const { blocks } = past;
+  const costs = new Map<ModuleId, { score: number[]; rt: number[] }>();
+  blocks.forEach((first, i) => {
+    const t = Date.parse(first.startedAt);
+    const kind = past.kinds.get(first.sessionId);
+    if (!(t >= start && t <= end) || kind === undefined || !isCountedSession(kind)) return;
+    if (parseObject(first.summaryJson)?.['readapt'] !== true || first.flags.some((f) => COST_OUT.includes(f))) return;
+    const others: BlockRow[] = [];
+    for (let j = i + 1; j < blocks.length; j++) {
+      const next = blocks[j] as BlockRow;
+      if (next.sessionId !== first.sessionId || next.module !== first.module) break;
+      if (movesLevel(next.flags) && !next.flags.some((f) => COST_OUT.includes(f))) others.push(next);
+    }
+    const firstRts = readCleanHits(first.summaryJson) ?? [];
+    const otherRts = others.flatMap((b) => readCleanHits(b.summaryJson) ?? []);
+    if (others.length < 2 || firstRts.length === 0 || otherRts.length === 0) return;
+    const cost = costs.get(first.module) ?? { score: [], rt: [] };
+    cost.score.push(first.score - mean(others.map((b) => b.score)));
+    cost.rt.push(median(firstRts) - median(otherRts));
+    costs.set(first.module, cost);
+  });
+  return MODULE_IDS.flatMap((module) => {
+    const cost = costs.get(module);
+    if (cost === undefined || cost.score.length < READAPT_MIN_SEGMENTS) return [];
+    return [{ module, segments: cost.score.length, scoreDelta: mean(cost.score), rtDelta: mean(cost.rt) }];
+  });
+}
+
 /** «дд.мм» of a day number (localDayNumber). */
 function dayLabel(day: number): string {
   const iso = new Date(day * DAY_MS).toISOString();
@@ -627,6 +684,7 @@ export async function loadProgressModel(repo: Repository, now: Date = new Date()
     levels: LEVEL_MODULES.map((module) => levelChart(module, points[module])),
     overload28d: overload28d(blocks, now),
     rdoBias: rdoBias(blocks, now),
+    readapt: readaptCosts(past, now),
     discards: discardWeeks(blocks, now),
     sessions: sessionLines(sessions, blocksBySession),
     sessionCount: sessions.length,

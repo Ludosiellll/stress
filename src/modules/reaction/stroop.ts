@@ -3,6 +3,7 @@ import { keyLabel } from '../../engine/layouts';
 import type { VisualNoiseParams } from '../../engine/noise';
 import { L_NORM } from '../../engine/planner';
 import type { StroopColor, TrialSpec } from '../../engine/reaction/types';
+import { createRng } from '../../engine/rng';
 import type { InputKey, LayoutId } from '../../engine/types';
 import {
   COLOR_NAMES,
@@ -13,6 +14,7 @@ import {
   fallbackNote,
   farNoise,
   framedRuns,
+  keyNumbers,
   keysFor,
   ladder,
   loadBandOf,
@@ -24,7 +26,7 @@ import {
   type ReactionModule,
 } from './common';
 
-/** Colours in key order: colour i → key i. */
+/** Colours in the order of the canonical mapping: colour i → key i (Р26). */
 export const STROOP_COLORS: readonly ['red', 'green', 'blue', 'yellow'] = ['red', 'green', 'blue', 'yellow'];
 
 export interface StroopParams {
@@ -46,6 +48,11 @@ export interface StroopParams {
   noise: VisualNoiseParams | null;
   /** Sound on every trial; null: none. */
   audio: AudioStressorParams | null;
+  /**
+   * The key of each active colour, in STROOP_COLORS order (Р26); null: canonical, colour i → key i. A training or free
+   * segment draws its own (withMapping, F9).
+   */
+  mapping: number[] | null;
 }
 
 /** W2-R5: 20 trials (spec §6.2: 10–20). */
@@ -70,18 +77,23 @@ const BANDS = ladder([
 /** Far noise takes no ink colour and no circle (Р12): the words keep their colours to themselves. */
 const INKS = STROOP_COLORS.map((color) => ({ shape: 'circle', color }) as const);
 
-/** The active colours with their keys, in key order. */
-function colorKeys(layout: LayoutId, nColors: number): { color: StroopColor; key: InputKey }[] {
-  const keys = keysFor(layout, nColors);
-  return STROOP_COLORS.slice(0, nColors).map((color, i) => ({ color, key: keys[i] as InputKey }));
+/** The active colours in STROOP_COLORS order with their keys and the keys' numbers (the mapping, Р26). */
+function colorKeys(layout: LayoutId, p: Pick<StroopParams, 'nColors' | 'mapping'>): { color: StroopColor; key: InputKey; k: number }[] {
+  const keys = keysFor(layout, p.nColors);
+  return STROOP_COLORS.slice(0, p.nColors).map((color, i) => {
+    const k = p.mapping?.[i] ?? i;
+    return { color, key: keys[k] as InputKey, k };
+  });
 }
 
 /** Trials of a block of n whose word is not its ink: round(ratio · n), the rest congruent. */
 const incongruentCount = (p: StroopParams, n: number): number => Math.round(p.incongruentRatio * n);
 
-/** «красный — F», «зелёный — J», … */
-const pairs = (layout: LayoutId, nColors: number): string[] =>
-  colorKeys(layout, nColors).map(({ color, key }) => `${COLOR_NAMES[color]} — ${keyLabel(key)}`);
+/** «красный — F», «зелёный — J», … in the order the keys lie. */
+const pairs = (layout: LayoutId, p: StroopParams): string[] =>
+  colorKeys(layout, p)
+    .sort((a, b) => a.k - b.k)
+    .map(({ color, key }) => `${COLOR_NAMES[color]} — ${keyLabel(key)}`);
 
 /**
  * Струп: a colour word printed in a colour; answer by the ink, not by the word. With the reverse rule (F3) words in a
@@ -109,6 +121,7 @@ export const stroop: ReactionModule<StroopParams> = {
       reverse: b >= 4,
       noise: b >= 6 ? farNoise(INKS) : null,
       audio: b >= 5 ? bandSound() : null,
+      mapping: null,
     };
   },
 
@@ -122,7 +135,8 @@ export const stroop: ReactionModule<StroopParams> = {
    */
   generateBlock(p, rng, layout, size) {
     const n = blockLength(size, p.trials);
-    const active = colorKeys(layout, p.nColors);
+    // In colour order whatever the mapping: the draws pick the same colours, only the keys follow the mapping.
+    const active = colorKeys(layout, p);
     const framed = p.reverse ? framedRuns(n, rng) : Array<boolean>(n).fill(false);
     const nFramed = framed.filter(Boolean).length;
     const count = incongruentCount(p, n);
@@ -150,6 +164,9 @@ export const stroop: ReactionModule<StroopParams> = {
 
   keyCount: (p) => p.nColors,
 
+  /** rng.shuffle of the key numbers of the active colours (F9). */
+  withMapping: (p, seed) => ({ ...p, mapping: createRng(seed).shuffle(keyNumbers(p.nColors)) }),
+
   stressors: everyTrial,
 
   /** Worst case: the most framed trials a block can get (maxFramed), filled with mismatched words first. */
@@ -160,10 +177,10 @@ export const stroop: ReactionModule<StroopParams> = {
     return Math.min(incongruent - framedIncongruent, size - incongruent - (framed - framedIncongruent));
   },
 
-  legend: (layout, p) => (p.legend ? pairs(layout, p.nColors).join(' · ') : null),
+  legend: (layout, p) => (p.legend ? pairs(layout, p).join(' · ') : null),
 
   instruction: (layout, p, overload = false) =>
-    `Отвечай по цвету букв, а не по слову: ${pairs(layout, p.nColors).join(', ')}.` +
+    `Отвечай по цвету букв, а не по слову: ${pairs(layout, p).join(', ')}.` +
     (p.reverse ? ' Слово в белой рамке — наоборот: отвечай по слову.' : '') +
     (p.legend ? ' Подсказка клавиш — внизу экрана.' : '') +
     stressorNotes(p, overload) +

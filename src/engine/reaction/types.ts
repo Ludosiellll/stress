@@ -63,6 +63,11 @@ export interface TrialSpec {
    * warm-ups, test-format runs, РДО, phases without marks).
    */
   feedback?: boolean;
+  /**
+   * Where and how large the stimulus (and its cue) is drawn (F9), in shares of the canvas's shorter side: the centre
+   * moved by (dx, dy), the size × scale. Absent: centred, as is (diagnostics, warm-ups, test-format runs, РДО).
+   */
+  jitter?: { dx: number; dy: number; scale: number };
 }
 
 export interface Press {

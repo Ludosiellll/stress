@@ -37,6 +37,13 @@ export interface ReactionModule<P> {
    */
   cvMax: number | null;
   generateBlock(p: P, rng: Rng, layout: LayoutId, size?: number): TrialSpec[];
+  /**
+   * The parameters with the key mapping of a training or free segment (F9, Справочник): a function of `seed` (one per
+   * segment) and of the colours and keys these parameters play, so the overload block and a new band inside the segment
+   * take theirs from the same seed. The trials then differ from the canonical ones (mapping null, Р26) by their keys
+   * only. Absent: the module maps no keys.
+   */
+  withMapping?(p: P, seed: number): P;
   /** Keys a block at these parameters needs (layoutKeys(layout, keyCount(p))). */
   keyCount(p: P): number;
   /** Key hint shown under the stimulus during the block, e.g. «красный — F · зелёный — J»; null or absent: none. */
@@ -212,6 +219,11 @@ export function fallbackNote(layout: LayoutId, n: number): string {
   const { keys, effectiveLayout } = layoutKeys(layout, n);
   if (effectiveLayout === layout) return '';
   return ` Для этого уровня нужны клавиши: ${keys.map(keyLabel).join(', ')}.`;
+}
+
+/** The key numbers 0 … n − 1, in order: the canonical mapping a segment's mapping shuffles (F9). */
+export function keyNumbers(n: number): number[] {
+  return Array.from({ length: n }, (_, k) => k);
 }
 
 export const ms = (v: number): string => `${String(v)} мс`;

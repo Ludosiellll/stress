@@ -3,7 +3,7 @@ import { localDayIso } from '../engine/dates';
 import type { FormDay } from '../engine/dayForm';
 import { isCountedSession, storedBand } from '../engine/derive';
 import type { TestFormatId } from '../engine/planner';
-import type { BlockFlag, ReactionModuleId, SessionKind } from '../engine/types';
+import type { BlockFlag, LayoutId, ReactionModuleId, SessionKind } from '../engine/types';
 import { FLOOR_HITS } from '../engine/windowFloor';
 import { bandIndex } from '../modules/reaction/common';
 import { pzmr } from '../modules/reaction/pzmr';
@@ -103,6 +103,68 @@ export function testFormatRunsAt(past: PastBlocks, module: TestFormatId): Stored
 /** The metrics of the stored runs of a format, the source of its personal best (testFormatRunsAt). */
 export function testFormatRuns(past: PastBlocks, module: TestFormatId): TestFormatMetrics[] {
   return testFormatRunsAt(past, module).map((r) => r.metrics);
+}
+
+/**
+ * What the hands and eyes of a reaction segment get used to (F9): its key mapping (null: canonical, Р26), the layout it
+ * played and the Go/No-Go colour swap (false in the other modules).
+ */
+export interface SegmentSetup {
+  mapping: number[] | null;
+  layout: LayoutId;
+  swapped: boolean;
+}
+
+const LAYOUTS: readonly string[] = ['keyboard', 'pult', 'mouse'] satisfies readonly LayoutId[];
+
+const isLayout = (v: unknown): v is LayoutId => typeof v === 'string' && LAYOUTS.includes(v);
+
+/** A key number: a whole number from 0. */
+const isKeyNumber = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
+
+/**
+ * The setup a reaction block's paramsJson records (F9): `layout`, `mapping` (a list of key numbers; anything else reads
+ * as canonical, null) and `swapped === true`. null without a known layout: a row from before F9, or a damaged one.
+ */
+export function setupOf(paramsJson: string): SegmentSetup | null {
+  const params = parseObject(paramsJson);
+  const layout = params?.['layout'];
+  if (params === null || !isLayout(layout)) return null;
+  const mapping: unknown = params['mapping'];
+  return {
+    mapping: Array.isArray(mapping) && mapping.every(isKeyNumber) ? mapping : null,
+    layout,
+    swapped: params['swapped'] === true,
+  };
+}
+
+/** Two setups are the same when their layouts, their swaps and every key of their mappings are. */
+export function sameSetup(a: SegmentSetup, b: SegmentSetup): boolean {
+  const sameMapping =
+    a.mapping === null || b.mapping === null
+      ? a.mapping === b.mapping
+      : a.mapping.length === b.mapping.length && a.mapping.every((k, c) => k === b.mapping?.[c]);
+  return sameMapping && a.layout === b.layout && a.swapped === b.swapped;
+}
+
+/** Blocks that say nothing of the last segment's setup (Р26): a run and a warm-up play the canonical one, a counted Esc little. */
+const NOT_SETUP_FLAGS: readonly BlockFlag[] = ['test_format', 'discarded', 'warmup'];
+
+/**
+ * The setup of the module's last segment (Р26): that of its latest block of a training or free session without
+ * NOT_SETUP_FLAGS whose paramsJson names a layout (an overload block counts: it plays the segment's mapping); null
+ * without one. The first level-moving block of a segment whose setup differs is marked readapt (F9).
+ */
+export function lastSetup(past: PastBlocks, module: ReactionModuleId): SegmentSetup | null {
+  for (let i = past.blocks.length - 1; i >= 0; i--) {
+    const row = past.blocks[i] as BlockRow;
+    if (row.module !== module || row.flags.some((f) => NOT_SETUP_FLAGS.includes(f))) continue;
+    const kind = past.kinds.get(row.sessionId);
+    if (kind === undefined || !isCountedSession(kind)) continue;
+    const setup = setupOf(row.paramsJson);
+    if (setup !== null) return setup;
+  }
+  return null;
 }
 
 /**

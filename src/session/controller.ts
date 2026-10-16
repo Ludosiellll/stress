@@ -42,7 +42,18 @@ import {
   type SeriesOutcome,
   type WindowFloors,
 } from './blocks';
-import { appendPast, pastBlocks, rdoCycleCount, testFormatRuns, warmupDays, withBlock, type PastBlocks } from './pastBlocks';
+import {
+  appendPast,
+  lastSetup,
+  pastBlocks,
+  rdoCycleCount,
+  sameSetup,
+  setupOf,
+  testFormatRuns,
+  warmupDays,
+  withBlock,
+  type PastBlocks,
+} from './pastBlocks';
 import { blockRow, errorLogRow, logicItemRows, sessionRow, trialRows, wellbeingRow } from './rowsBuild';
 import { SaveQueue, type SaveOutcome, type Write } from './saveQueue';
 import { TEST_FORMAT_NAMES, testFormatBest, testFormatLines, testFormatMetrics, type TestFormatMetrics } from './testFormat';
@@ -138,6 +149,11 @@ interface SegmentRun {
    * not move the level, and a timing_unreliable one measured nothing (T-R35): none of them counts.
    */
   levelBlockStored: boolean;
+  /**
+   * A level-moving block of the segment is stored, whatever it measured: the next one is not the first for the
+   * re-adaptation mark (F9).
+   */
+  levelMoved: boolean;
   /** Discards of the current block. */
   attempt: number;
   /** Diagnostics: the current block was already replayed once for timingUnreliable (I1). */
@@ -784,6 +800,7 @@ export class SessionController {
       clockStart: null,
       blocksDone: 0,
       levelBlockStored: false,
+      levelMoved: false,
       attempt: 0,
       unreliableReplayed: false,
       lastInstruction: null,
@@ -989,6 +1006,8 @@ export class SessionController {
     if (b.discardedAt !== undefined) summary = { ...summary, discarded: { reason: 'user', progress: b.discardedAt } };
     // The free restarts since the segment's last stored block (F11).
     if (seg.restarts.length > 0) summary = { ...summary, restarts: [...seg.restarts] };
+    // The segment's first level-moving block after a change of keys, layout or Go/No-Go colours (F9).
+    if (this.isReadapt(b.module, active.paramsJson, !overload && !fixedLevel && !seg.levelMoved)) summary = { ...summary, readapt: true };
     const flags: BlockFlag[] = [];
     if (calibration) flags.push('calibration');
     if (b.level?.timingUnreliable === true) flags.push('timing_unreliable');
@@ -1155,6 +1174,7 @@ export class SessionController {
     this.sessionBlocks.push(b);
     if (moving || seg.segment.overload === 'finisher') seg.L = lAfter;
     if (moving && !b.flags.includes('timing_unreliable')) seg.levelBlockStored = true;
+    if (moving) seg.levelMoved = true;
     seg.blocksDone++;
     seg.attempt = 0;
     seg.unreliableReplayed = false;
@@ -1166,6 +1186,18 @@ export class SessionController {
       const clean = this.sessionBlocks.filter((x) => x.module === b.module && isCleanBlock(x.flags) && !x.flags.includes('discarded'));
       if (detectFatigue(clean)) this.fatigueDetected.add(b.module);
     }
+  }
+
+  /**
+   * Whether the segment's first level-moving block (`first`) of a training or free session is marked
+   * summaryJson.readapt (F9): its setup (key mapping, layout, Go/No-Go swap) is not that of the module's last segment
+   * (lastSetup, Р26). Never without the history (Р18) or an earlier block that names its layout.
+   */
+  private isReadapt(module: ModuleId, paramsJson: string, first: boolean): boolean {
+    if (!this.counted || this.past === null || !first || !isReactionModule(module)) return false;
+    const setup = setupOf(paramsJson);
+    const last = lastSetup(this.past, module);
+    return setup !== null && last !== null && !sameSetup(setup, last);
   }
 
   /**

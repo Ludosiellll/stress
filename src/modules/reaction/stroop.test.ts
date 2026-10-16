@@ -1,10 +1,11 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { layoutKeys } from '../../engine/layouts';
+import { keyLabel, layoutKeys } from '../../engine/layouts';
 import { createRng } from '../../engine/rng';
 import { COLOR_WORDS, type TrialSpec } from '../../engine/reaction/types';
 import type { LayoutId } from '../../engine/types';
-import { STROOP_COLORS, stroop } from './stroop';
+import { COLOR_NAMES } from './common';
+import { STROOP_COLORS, stroop, type StroopParams } from './stroop';
 
 const levelPair = fc
   .tuple(fc.double({ min: 0, max: 1000, noNaN: true }), fc.double({ min: 0, max: 1000, noNaN: true }))
@@ -51,6 +52,7 @@ describe('stroop.params', () => {
       reverse: false,
       noise: null,
       audio: null,
+      mapping: null,
     });
     const p8 = stroop.params(8);
     expect(p8).toMatchObject({ windowMs: 1099, nColors: 4, legend: false });
@@ -318,5 +320,69 @@ describe('stroop keys and texts', () => {
       { label: 'Нагрузка', value: '4 цвета, интервал 0,3–1,2 с, обратное правило в рамке' },
       { label: 'Доля несовпадений', value: '75 %' },
     ]);
+  });
+});
+
+describe('the segment mapping (F9)', () => {
+  const withMapping = (p: StroopParams, seed: number): StroopParams => {
+    if (stroop.withMapping === undefined) throw new Error('Струп maps its keys');
+    return stroop.withMapping(p, seed);
+  };
+  const range = (n: number): number[] => Array.from({ length: n }, (_, i) => i);
+  /** 2, 3 and 4 colours, with and without the key hint, with the reverse rule. */
+  const LEVELS = [0, 4, 8, 12, 16] as const;
+
+  it('params(L) plays the canonical mapping: colour i → key i (Р26)', () => {
+    for (const L of LEVELS) expect(stroop.params(L).mapping).toBeNull();
+  });
+
+  it('a segment mapping is a permutation of the active colours\' keys, from the seed alone', () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 0, max: 2 ** 32 - 1 }), fc.constantFrom(...LEVELS), (seed, L) => {
+        const p = stroop.params(L);
+        expect(withMapping(p, seed).mapping).toEqual(createRng(seed).shuffle(range(p.nColors)));
+      }),
+      { numRuns: 1000 },
+    );
+  });
+
+  it('a mapping changes the keys only: the same draws give the same trials', () => {
+    for (const L of LEVELS) {
+      const p = stroop.params(L);
+      const mapped = stroop.generateBlock(withMapping(p, 4), createRng(L + 1), 'keyboard', 60);
+      const canonical = stroop.generateBlock(p, createRng(L + 1), 'keyboard', 60);
+      expect(mapped.map((t) => ({ ...t, expected: undefined }))).toEqual(canonical.map((t) => ({ ...t, expected: undefined })));
+    }
+  });
+
+  it('every trial expects the key the instruction and the key hint name for its colour', () => {
+    for (const layout of ['keyboard', 'pult', 'mouse'] as const) {
+      for (const L of LEVELS) {
+        for (const seed of [2, 20, 200, 2000]) {
+          const p = withMapping(stroop.params(L), seed);
+          const text = stroop.instruction(layout, p);
+          const legend = stroop.legend?.(layout, p) ?? null;
+          for (const t of stroop.generateBlock(p, createRng(seed), layout, 60)) {
+            const s = word(t);
+            // By the ink; a word in a white ring by the word (the reverse rule).
+            const pair = `${COLOR_NAMES[s.frame === 'white' ? s.word : s.ink]} — ${keyLabel(key(t))}`;
+            expect(text, `${layout} L ${String(L)} seed ${String(seed)}`).toContain(pair);
+            if (legend !== null) expect(legend).toContain(pair);
+          }
+        }
+      }
+    }
+  });
+
+  it('the pairs go in key order, as the keys lie', () => {
+    const p = { ...stroop.params(0), mapping: [1, 0] };
+    expect(stroop.legend?.('keyboard', p)).toBe('зелёный — F · красный — J');
+    expect(stroop.instruction('keyboard', p)).toBe(
+      'Отвечай по цвету букв, а не по слову: зелёный — F, красный — J. Подсказка клавиш — внизу экрана.',
+    );
+    const four = { ...stroop.params(12), mapping: [3, 1, 0, 2] };
+    expect(stroop.instruction('keyboard', four)).toBe(
+      'Отвечай по цвету букв, а не по слову: синий — D, зелёный — F, жёлтый — J, красный — K.',
+    );
   });
 });

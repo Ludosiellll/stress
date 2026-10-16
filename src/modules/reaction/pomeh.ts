@@ -3,7 +3,7 @@ import { keyLabel } from '../../engine/layouts';
 import type { VisualNoiseParams } from '../../engine/noise';
 import { L_NORM } from '../../engine/planner';
 import type { TrialCond, TrialSpec } from '../../engine/reaction/types';
-import type { Rng } from '../../engine/rng';
+import { createRng, type Rng } from '../../engine/rng';
 import type { InputKey } from '../../engine/types';
 import {
   ISI_MAX,
@@ -25,7 +25,7 @@ export interface PomehParams {
   bandLabel: string;
   windowMs: number;
   trials: number;
-  /** simple: a red circle, one key; choice (band 3 on): red circle → key 0, green circle → key 1. */
+  /** simple: a red circle, one key; choice (band 3 on): a red and a green circle, a key each (`mapping`). */
   mode: 'simple' | 'choice';
   isiMin: number;
   isiMax: number;
@@ -33,6 +33,11 @@ export interface PomehParams {
   noise: VisualNoiseParams;
   /** Sound on the same trials from band 2; null below. */
   audio: AudioStressorParams | null;
+  /**
+   * Choice mode: the keys of the red and the green circle (Р26); null: canonical, red → key 0, green → key 1. A training
+   * or free segment swaps them in half the segments (withMapping, F9); simple mode has one key and keeps null.
+   */
+  mapping: [red: number, green: number] | null;
 }
 
 const BLOCK_SIZE = 20;
@@ -94,6 +99,9 @@ function fewestPerCond(n: number): number {
 /** One or two keys: every layout has them, the mouse too (no keyboard fallback). */
 const keyCount = (p: PomehParams): number => (p.mode === 'choice' ? 2 : 1);
 
+/** The key numbers of the red and the green circle. */
+const keysOfCircles = (p: PomehParams): [red: number, green: number] => p.mapping ?? [0, 1];
+
 /** Помехоустойчивость: simple or choice reaction to a circle in the centre while figures, flicker and sound distract. */
 export const pomeh: ReactionModule<PomehParams> = {
   id: 'pomeh',
@@ -119,6 +127,7 @@ export const pomeh: ReactionModule<PomehParams> = {
         forbidden: choice ? [{ ...RED_CIRCLE }, { ...GREEN_CIRCLE }] : [{ ...RED_CIRCLE }],
       },
       audio: soundAt(b),
+      mapping: null,
     };
   },
 
@@ -129,6 +138,7 @@ export const pomeh: ReactionModule<PomehParams> = {
   generateBlock(p, rng, layout, size) {
     const n = blockLength(size, p.trials);
     const keys = keysFor(layout, keyCount(p));
+    const [redKey, greenKey] = keysOfCircles(p);
     return conditionRuns(n, rng).map((cond): TrialSpec => {
       const isiMs = rng.int(p.isiMin, p.isiMax);
       const green = p.mode === 'choice' && rng.int(0, 1) === 1;
@@ -136,7 +146,7 @@ export const pomeh: ReactionModule<PomehParams> = {
         isiMs,
         windowMs: p.windowMs,
         stimulus: { kind: 'shape', shape: 'circle', color: green ? 'green' : 'red' },
-        expected: { kind: 'press', key: keys[green ? 1 : 0] as InputKey },
+        expected: { kind: 'press', key: keys[green ? greenKey : redKey] as InputKey },
         cond,
       };
     });
@@ -144,15 +154,19 @@ export const pomeh: ReactionModule<PomehParams> = {
 
   keyCount,
 
+  /** Choice mode: createRng(seed).next() < 0.5 swaps the two keys (F9). Simple mode: one key, nothing to map. */
+  withMapping: (p, seed) => (p.mode === 'simple' ? p : { ...p, mapping: createRng(seed).next() < 0.5 ? [1, 0] : [0, 1] }),
+
   minCondTrials: (_p, size) => fewestPerCond(size),
 
   stressors: (p) => ({ noise: p.noise, audio: p.audio, gate: 'noisy', noiseGate: 'noisy' }),
 
   instruction(layout, p, overload = false) {
     const keys = keysFor(layout, keyCount(p));
+    const [redKey, greenKey] = keysOfCircles(p);
     const rule =
       p.mode === 'choice'
-        ? `Красный круг в центре — ${keyLabel(keys[0] as InputKey)}, зелёный круг — ${keyLabel(keys[1] as InputKey)}. ` +
+        ? `Красный круг в центре — ${keyLabel(keys[redKey] as InputKey)}, зелёный круг — ${keyLabel(keys[greenKey] as InputKey)}. ` +
           'На остальные фигуры не реагируй.'
         : `Когда в центре появится красный круг, нажми ${singleKeyLabel(layout)}. ` +
           'Иногда вокруг будут появляться другие фигуры, на них не реагируй.';

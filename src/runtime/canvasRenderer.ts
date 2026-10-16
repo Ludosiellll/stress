@@ -1,5 +1,5 @@
 import { flickerOn, noiseFrame, noiseSlots, type Distractor, type VisualNoiseParams } from '../engine/noise';
-import { COLOR_WORDS, RULE_WORDS, type ColorId, type ShapeId, type Stimulus, type SwitchRule } from '../engine/reaction/types';
+import { COLOR_WORDS, RULE_WORDS, type ColorId, type ShapeId, type Stimulus, type SwitchRule, type TrialSpec } from '../engine/reaction/types';
 import type { FeedbackMark, StimulusRenderer } from './reactionRunner';
 
 export const BACKGROUND = '#2b2b2b';
@@ -38,10 +38,15 @@ const SWITCH_SIZE = { large: 0.18, small: 0.09 } as const;
 const RULE_WORD_SIZE = 0.07;
 const RULE_WORD_RISE = 0.22;
 
-/** The mark after a trial (F15, Р23): its colour, its height as a share of the shorter side, its centre at h · MARK_RISE. */
+/**
+ * The mark after a trial (F15, Р23): its colour, its height as a share of the shorter side, its centre at h · MARK_Y,
+ * in the lower third. It shares a frame with no stimulus (T-R59), only with the task-switching cue (a press during the
+ * cue lead), and the jittered cue (F9) reaches 0.43 of the side above the centre: it would cover a mark at h/6. Below
+ * the centre a jittered stimulus ends 0.25 of the side away; the cue stays above it.
+ */
 export const MARK_COLOR = '#bdbdbd';
 const MARK_TEXT_SIZE = 0.06;
-const MARK_RISE = 1 / 6;
+const MARK_Y = 5 / 6;
 
 /** RDO dial radius as a share of the shorter side. */
 const RDO_RADIUS = 0.35;
@@ -189,13 +194,22 @@ function drawDistractor(ctx: CanvasRenderingContext2D, d: Distractor, cx: number
   ctx.fill();
 }
 
-/** The mark, centred across the top third of the screen. */
+/** The mark, centred across the lower third of the screen. */
 function drawMark(ctx: CanvasRenderingContext2D, text: FeedbackMark, w: number, h: number, side: number): void {
   ctx.font = `bold ${String(Math.round(MARK_TEXT_SIZE * side))}px ${WORD_FONT}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = MARK_COLOR;
-  ctx.fillText(text, w / 2, h * MARK_RISE);
+  ctx.fillText(text, w / 2, h * MARK_Y);
+}
+
+/** Where and how large a stimulus is drawn (F9, TrialSpec.jitter); NO_JITTER: centred, as is. */
+type Placement = NonNullable<TrialSpec['jitter']>;
+const NO_JITTER: Placement = Object.freeze({ dx: 0, dy: 0, scale: 1 });
+
+/** c, moved if need be so that `ext` either side of it stays within [0, len]; the middle when that cannot be. */
+function inside(c: number, ext: number, len: number): number {
+  return len >= 2 * ext ? Math.min(Math.max(c, ext), len - ext) : len / 2;
 }
 
 function drawRdo(
@@ -268,7 +282,8 @@ function sameLook(a: NoiseLook | null, b: NoiseLook | null): boolean {
 /**
  * Draws stimuli on a canvas, outside React. The backing store follows the canvas's CSS size × devicePixelRatio
  * (checked on every draw); drawing coordinates are CSS pixels. Each draw paints the whole frame: the background
- * (flickering while the noise is on), the noise figures, the stimulus or the cue, then the mark after a trial (F15).
+ * (flickering while the noise is on), the noise figures, the stimulus or the cue at the trial's jitter (F9), then the
+ * mark after a trial (F15).
  */
 export function createCanvasRenderer(canvas: HTMLCanvasElement, o: CanvasRendererOptions = {}): CanvasRenderer {
   const ctx = canvas.getContext('2d');
@@ -286,6 +301,8 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement, o: CanvasRendere
   let drawnLook: NoiseLook | null = null;
   /** The mark after a trial on screen (F15); hiding a stimulus keeps it, showing one takes it away (T-R59). */
   let markText: FeedbackMark | null = null;
+  /** The jitter of the trial whose cue or stimulus is on screen (F9). */
+  let place: Placement = NO_JITTER;
 
   const setNoiseTime = (ts: number): void => {
     noiseStart ??= ts;
@@ -317,32 +334,43 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement, o: CanvasRendere
     if (markText !== null) drawMark(ctx, markText, w, h, side);
   };
 
+  /**
+   * The cue or the stimulus at its place (F9): the centre moved by (dx, dy) shorter sides, everything it draws scaled
+   * (the frame keeps its pixels). A framed word whose ring would leave the canvas is pulled in, the word with it.
+   */
   const drawStimulus = (w: number, h: number, side: number): void => {
+    const size = side * place.scale;
+    const cx = w / 2 + place.dx * side;
+    const cy = h / 2 + place.dy * side;
     if (current === null) {
-      if (cueRule !== null) drawRule(ctx, cueRule, w / 2, h / 2, side);
+      if (cueRule !== null) drawRule(ctx, cueRule, cx, cy, size);
       return;
     }
     switch (current.kind) {
       case 'shape':
-        drawShape(ctx, current, w / 2, h / 2, side);
+        drawShape(ctx, current, cx, cy, size);
         return;
-      case 'word':
-        drawWord(ctx, current, w / 2, h / 2, side);
+      case 'word': {
+        const ext = current.frame === undefined ? 0 : WORD_RING_RADIUS * size + FRAME_WIDTH_PX / 2;
+        drawWord(ctx, current, inside(cx, ext, w), inside(cy, ext, h), size);
         return;
+      }
       case 'switch':
-        drawSwitch(ctx, current, w / 2, h / 2, side);
+        drawSwitch(ctx, current, cx, cy, size);
         return;
       case 'rdo':
-        drawRdo(ctx, current, elapsedMs, w / 2, h / 2, side);
+        // РДО trials carry no jitter (F9).
+        drawRdo(ctx, current, elapsedMs, cx, cy, size);
         return;
     }
   };
 
   draw();
   return {
-    show(s) {
+    show(s, jitter) {
       current = s;
       cueRule = null;
+      place = jitter ?? NO_JITTER;
       elapsedMs = 0;
       // A mark never shares a frame with a stimulus: it goes in this draw (T-R59).
       markText = null;
@@ -353,10 +381,11 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement, o: CanvasRendere
       cueRule = null;
       draw();
     },
-    cue(s) {
+    cue(s, jitter) {
       if (s.kind !== 'switch' || s.hideRule === true) return;
       current = null;
       cueRule = s.rule;
+      place = jitter ?? NO_JITTER;
       draw();
     },
     tick(ms) {

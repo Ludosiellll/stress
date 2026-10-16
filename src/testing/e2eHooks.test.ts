@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Stimulus, TrialResult, TrialSpec } from '../engine/reaction/types';
+import { createRng } from '../engine/rng';
+import type { Expected, Stimulus, TrialResult, TrialSpec } from '../engine/reaction/types';
+import { szmr } from '../modules/reaction/szmr';
 import type { FrameClock } from '../runtime/frameClock';
 import type { StimulusRenderer } from '../runtime/reactionRunner';
 import { e2eHooks, installE2eHooks, instrumentBlock, type E2eHost } from './e2eHooks';
@@ -159,10 +161,41 @@ describe('instrumentBlock', () => {
     const stimulus: Stimulus = { kind: 'switch', rule: 'color', color: 'red', shape: 'circle', size: 'large' };
     const out = instrumentBlock(hooks, 'taskswitch', [spec('KeyF')], { clock: b.clock, renderer: { ...b.renderer, cue } });
     out.renderer.cue?.(stimulus);
-    expect(cue).toHaveBeenCalledWith(stimulus);
+    // Without a jitter (F9) the forward passes none.
+    expect(cue).toHaveBeenCalledWith(stimulus, undefined);
     expect(seen).toEqual([]);
     // A renderer without cue: forwarding is a no-op.
     expect(() => instrumentBlock(hooks, 'pzmr', [spec('Space')], b).renderer.cue?.(stimulus)).not.toThrow();
+  });
+
+  it('show and cue pass the trial\'s jitter on (F9)', () => {
+    const b = base();
+    const cue = vi.fn<NonNullable<StimulusRenderer['cue']>>();
+    const hooks = installE2eHooks(host('?e2e=1'));
+    const stimulus: Stimulus = { kind: 'switch', rule: 'color', color: 'red', shape: 'circle', size: 'large' };
+    const jitter = { dx: 0.1, dy: -0.05, scale: 1.1 };
+    const out = instrumentBlock(hooks, 'taskswitch', [{ ...spec('KeyF'), stimulus, jitter }], { clock: b.clock, renderer: { ...b.renderer, cue } });
+    out.renderer.cue?.(stimulus, jitter);
+    out.renderer.show(stimulus, jitter);
+    expect(cue).toHaveBeenCalledWith(stimulus, jitter);
+    expect(b.show).toHaveBeenCalledWith(stimulus, jitter);
+  });
+
+  it('the stimulus event carries the trial\'s expected key under a shuffled mapping (F9)', () => {
+    // A СЗМР block of a training segment, 4 colours on 4 keys in the segment's order: the bot presses what it is told.
+    const p = { ...szmr.params(12), mapping: [3, 2, 1, 0] };
+    const specs = szmr.generateBlock(p, createRng(7), 'keyboard', 40);
+    const b = base();
+    const h = host('?e2e=1');
+    const hooks = installE2eHooks(h);
+    const seen: Expected[] = [];
+    h.__trainer?.onStimulus((e) => seen.push(e.expected));
+    const out = instrumentBlock(hooks, 'szmr', specs, b);
+    for (const t of specs) out.renderer.show(t.stimulus, t.jitter);
+    expect(seen).toEqual(specs.map((t) => t.expected));
+    // Red is the fourth key here, K, not the canonical D.
+    const red = specs.find((t) => t.stimulus.kind === 'shape' && t.stimulus.color === 'red');
+    expect(red?.expected).toEqual({ kind: 'press', key: 'KeyK' });
   });
 
   it('instrumentBlock forwards mark and clearMark (F15)', () => {

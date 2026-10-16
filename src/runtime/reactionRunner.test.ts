@@ -11,12 +11,14 @@ import {
   type RunnerEnd,
   type StimulusRenderer,
 } from './reactionRunner';
+import { createRng } from '../engine/rng';
+import { szmr } from '../modules/reaction/szmr';
 import { FakeClock, FRAME } from '../testing/fakeClock';
 
 
 type Call =
-  | { op: 'cue'; at: number; stimulus: Stimulus }
-  | { op: 'show'; at: number; stimulus: Stimulus }
+  | { op: 'cue'; at: number; stimulus: Stimulus; jitter?: TrialSpec['jitter'] }
+  | { op: 'show'; at: number; stimulus: Stimulus; jitter?: TrialSpec['jitter'] }
   | { op: 'hide'; at: number }
   | { op: 'tick'; at: number; elapsed: number }
   | { op: 'mark'; at: number; text: FeedbackMark }
@@ -73,11 +75,11 @@ function setup(
   const clock = new FakeClock(opts.frameMs);
   const calls: Call[] = [];
   const renderer: StimulusRenderer = {
-    cue(stimulus) {
-      calls.push({ op: 'cue', at: clock.now, stimulus });
+    cue(stimulus, jitter) {
+      calls.push({ op: 'cue', at: clock.now, stimulus, ...(jitter === undefined ? {} : { jitter }) });
     },
-    show(stimulus) {
-      calls.push({ op: 'show', at: clock.now, stimulus });
+    show(stimulus, jitter) {
+      calls.push({ op: 'show', at: clock.now, stimulus, ...(jitter === undefined ? {} : { jitter }) });
       opts.onShow?.(clock.now);
     },
     hide() {
@@ -713,6 +715,22 @@ describe('ReactionBlockRunner: the mark after a trial (F15)', () => {
     expect(withMarks.clock.frames).toEqual(plain.clock.frames);
   });
 
+  it('«ошибка» goes by the block\'s own expected key: a СЗМР segment with its keys swapped (F9)', async () => {
+    // Red is J and green F in this segment; the canonical keys (red F, green J) are wrong on every trial.
+    const p = { ...szmr.params(0), mapping: [1, 0] };
+    const specs = szmr.generateBlock(p, createRng(4), 'keyboard', 6).map(marked);
+    const canonical = (t: TrialSpec): string => (t.stimulus.kind === 'shape' && t.stimulus.color === 'red' ? 'KeyF' : 'KeyJ');
+    const own = (t: TrialSpec): string => (t.expected.kind === 'press' ? t.expected.key : '');
+    const wrong = pressesAfterOnsets(specs, specs.map((t): [number, string][] => [[300, canonical(t)]]));
+    wrong.clock.runOut();
+    expect(await outcomes(wrong, specs)).toEqual(specs.map(() => 'wrong'));
+    expect(marksOf(wrong)).toEqual(specs.map(() => 'ошибка'));
+    const right = pressesAfterOnsets(specs, specs.map((t): [number, string][] => [[300, own(t)]]));
+    right.clock.runOut();
+    expect(await outcomes(right, specs)).toEqual(specs.map(() => 'hit'));
+    expect(marksOf(right)).toEqual([]);
+  });
+
   it('a mark lives 150 ms or until the next onset frame', async () => {
     // A wrong key 200 ms after the onset; the next trial is due 1000 ms after it.
     const h = pressesAfterOnsets([marked(pressTrial(500, 1000)), pressTrial(1000, 1000)], [[[200, 'KeyF']]]);
@@ -985,6 +1003,21 @@ describe('ReactionBlockRunner: rdo', () => {
     const hideAt = h.at('hide')[0] as number;
     expect(hideAt).toBe(h.clock.firstFrameAtOrAfter((tl.onsets[0] as number) + 500));
     expect(Math.max(...h.at('tick'))).toBeLessThan(hideAt);
+  });
+});
+
+describe('ReactionBlockRunner: jitter (F9)', () => {
+  it('the cue and the stimulus of a trial are drawn with its jitter; a trial without one gets none', async () => {
+    const jitter = { dx: 0.1, dy: -0.05, scale: 1.1 };
+    const h = setup([{ ...cuedTrial(500, 200), jitter }, pressTrial(500)]);
+    h.clock.runOut();
+    await timelineOf(h);
+    const drawn = h.calls.flatMap((c) => (c.op === 'cue' || c.op === 'show' ? [[c.op, c.jitter]] : []));
+    expect(drawn).toEqual([
+      ['cue', jitter],
+      ['show', jitter],
+      ['show', undefined],
+    ]);
   });
 });
 

@@ -6,7 +6,7 @@ import { DIAGNOSTIC_PARAMS } from './diagnosticParams';
 describe('DIAGNOSTIC_PARAMS', () => {
   it('the diagnostic parameters are those of 0.2.0 (spec §2.0)', () => {
     // F3 fields at the values that keep the block of 0.2.0: the band of the format, the 0.2.0 block size, no new noise
-    // or sound, no reverse rule, no runs.
+    // or sound, no reverse rule, no runs. F9: the canonical key mapping (null) in СЗМР, Струп and Помехоустойчивость.
     expect(DIAGNOSTIC_PARAMS.pzmr).toEqual({
       windowMs: 1000,
       isiMin: 500,
@@ -28,6 +28,7 @@ describe('DIAGNOSTIC_PARAMS', () => {
       trials: 20,
       noise: null,
       audio: null,
+      mapping: null,
     });
     // F8 fields at their 0.2.0 values: the ISI of 0.2.0, colours never swapped.
     expect(DIAGNOSTIC_PARAMS.gonogo).toEqual({
@@ -54,6 +55,7 @@ describe('DIAGNOSTIC_PARAMS', () => {
       band: 0,
       bandLabel: 'простая реакция, помехи далеко',
       trials: 20,
+      mapping: null,
     });
     expect(DIAGNOSTIC_PARAMS.stroop).toEqual({
       windowMs: 1099,
@@ -68,6 +70,7 @@ describe('DIAGNOSTIC_PARAMS', () => {
       noise: null,
       audio: null,
       reverse: false,
+      mapping: null,
     });
     expect(DIAGNOSTIC_PARAMS.taskswitch).toEqual({
       windowMs: 1369,

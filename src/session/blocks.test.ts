@@ -10,7 +10,15 @@ import { noiseFrame } from '../engine/noise';
 import { OVERLOAD_LEVEL_STEP, TEST_FORMAT_ORDER, type Segment, type TestFormatId } from '../engine/planner';
 import { MIN_COND_RTS, condPairOf, type CondPair } from '../engine/reaction/conditions';
 import type { Outcome, ReactionSummary, Stimulus, TrialSpec } from '../engine/reaction/types';
-import { BAND_MODULES, REACTION_MODULE_IDS, isReactionModule, type FamilyId, type ModuleId, type ReactionModuleId } from '../engine/types';
+import {
+  BAND_MODULES,
+  REACTION_MODULE_IDS,
+  isReactionModule,
+  type FamilyId,
+  type LayoutId,
+  type ModuleId,
+  type ReactionModuleId,
+} from '../engine/types';
 import { createRng, deriveSeed } from '../engine/rng';
 import { sdTrimmed } from '../engine/stats';
 import { generateMemoryTrials, SPAN_PROTOCOL_PARAMS, spanProtocolTrials } from '../modules/memory/generate';
@@ -23,7 +31,7 @@ import { gonogo, isSwappedSegment } from '../modules/reaction/gonogo';
 import { pomeh } from '../modules/reaction/pomeh';
 import { pzmr } from '../modules/reaction/pzmr';
 import { RDO_PERIODS, rdo, rdoCyclePeriod, rdoPeriod } from '../modules/reaction/rdo';
-import { szmr } from '../modules/reaction/szmr';
+import { szmr, type SzmrParams } from '../modules/reaction/szmr';
 import { bandModules, reactionModules } from '../modules/registry';
 import { generateGorbovTable, gorbovMetrics, gorbovParams, tableInstruction } from '../modules/tables/gorbov';
 import { generateSchulteTable } from '../modules/tables/schulte';
@@ -747,7 +755,7 @@ describe('the personal window floor and the overload band (F3)', () => {
     const { step, paramsJson } = buildBlock(plan, 5, 'keyboard', new Map());
     if (step.kind !== 'reaction_block') throw new Error('expected a reaction block');
     expect(step.specs.map((t) => t.windowMs)).toEqual(Array<number>(15).fill(412));
-    expect(JSON.parse(paramsJson)).toEqual({ ...pzmr.params(12), windowMs: 412, nominalWindowMs: 233, floorMs: 412 });
+    expect(JSON.parse(paramsJson)).toEqual({ ...pzmr.params(12), windowMs: 412, layout: 'keyboard', nominalWindowMs: 233, floorMs: 412 });
 
     const low = reactionPlan(freeSegment('pzmr'), 12, { ...ctx, floors: () => 200 });
     expect(low.params).toEqual(pzmr.params(12));
@@ -775,7 +783,9 @@ describe('the personal window floor and the overload band (F3)', () => {
     if (plan.kind !== 'reaction') throw new Error('expected a reaction plan');
     expect(asked).toEqual([['szmr', 2]]);
     expect(plan).toMatchObject({ L: 9, overload: true, keys: ['KeyD', 'KeyF', 'KeyJ', 'KeyK'], size: 20 });
-    expect(plan.params).toEqual({ ...szmr.params(9, 3), windowMs: 700 });
+    // The segment's key mapping for the four colours it plays (F9).
+    const { mapping } = szmr.withMapping?.(szmr.params(9, 3), deriveSeed(ctx.planSeed, 'map:' + String(ctx.segmentIndex))) ?? szmr.params(9, 3);
+    expect(plan.params).toEqual({ ...szmr.params(9, 3), windowMs: 700, mapping });
     expect(plan.params).toMatchObject({ nColors: 4, nKeys: 4, band: 3 });
     expect(plan.load).toEqual({
       band: 2,
@@ -787,6 +797,8 @@ describe('the personal window floor and the overload band (F3)', () => {
     });
     expect(JSON.parse(buildBlock(plan, 5, 'keyboard', new Map()).paramsJson)).toEqual({
       ...szmr.params(9, 3),
+      mapping,
+      layout: 'keyboard',
       band: 2,
       bandLabel: '3 цвета на 2 клавиши',
       loadBand: 3,
@@ -801,13 +813,15 @@ describe('the personal window floor and the overload band (F3)', () => {
     expect(planBlock(finisher, 9, 0, { ...ctx, floors: own })).toEqual(plan);
     // The instruction: the overload prefix with the load it plays, the module text, the load line.
     expect(blockInstruction(plan, 'keyboard').text).toBe(
-      overloadBandPrefix('4 цвета на 4 клавиши') + szmr.instruction('keyboard', szmr.params(9, 3), true) + ' Нагрузка: 4 цвета на 4 клавиши.',
+      overloadBandPrefix('4 цвета на 4 клавиши') + szmr.instruction('keyboard', plan.params as SzmrParams, true) + ' Нагрузка: 4 цвета на 4 клавиши.',
     );
   });
 
   it('the instruction of a band module ends with the load line; РДО and a diagnostic have none', () => {
     const at = (module: ReactionModuleId, L: number, c: PlanContext = ctx): string => blockInstruction(reactionPlan(freeSegment(module), L, c), 'keyboard').text;
-    expect(at('szmr', 0)).toBe(szmr.instruction('keyboard', szmr.params(0)) + ' Нагрузка: 2 цвета на 2 клавиши.');
+    // The module's text for the block's own parameters (the segment's key mapping, F9).
+    const szmrParams = reactionPlan(freeSegment('szmr'), 0, ctx).params as SzmrParams;
+    expect(at('szmr', 0)).toBe(szmr.instruction('keyboard', szmrParams) + ' Нагрузка: 2 цвета на 2 клавиши.');
     expect(at('szmr', 0).endsWith('Нажимай нужную как можно быстрее. Нагрузка: 2 цвета на 2 клавиши.')).toBe(true);
     expect(at('pzmr', 12)).toBe(pzmr.instruction('keyboard', pzmr.params(12)) + ' Нагрузка: интервал 0,3–3 с, помехи.');
     expect(at('rdo', 5)).toBe(`${rdo.instruction('keyboard', rdo.params(5))} ${rdoSpeedNote(rdoPeriod(ctx.planSeed, ctx.segmentIndex, 0))}`);
@@ -933,6 +947,143 @@ describe('the mark after a trial (F15)', () => {
     }
     expect(reactionPlan(training('szmr'), 6, ctx).feedback).toBe('every');
     expect(reactionPlan(training('rdo'), 6, ctx).feedback).toBe('none');
+  });
+});
+
+describe('the key mapping of a segment (F9)', () => {
+  const ctx: PlanContext = { layout: 'keyboard', scale: 1, diagnostic: false, ...PLAIN };
+  const mapSeed = (c: PlanContext): number => deriveSeed(c.planSeed, 'map:' + String(c.segmentIndex));
+  const mappingOf = (plan: BlockPlan): unknown => (plan.kind === 'reaction' ? (plan.params as { mapping?: unknown }).mapping : undefined);
+  const withMapping = <P,>(module: ReactionModuleId, p: P, seed: number): P => {
+    const mod = reactionModules[module];
+    if (mod.withMapping === undefined) throw new Error(`${module} maps its keys`);
+    return mod.withMapping(p, seed) as P;
+  };
+
+  it('one mapping for the whole segment, its overload block and a band change inside it included', () => {
+    // СЗМР at L 9 is band 2 (3 colours on 2 keys); the overload block of the mix plays band 3 (4 on 4).
+    const mix: Segment = { module: 'szmr', budgetMs: 300_000, purpose: 'reaction', overload: 'mix' };
+    const seed = mapSeed(ctx);
+    expect(mappingOf(planBlock(mix, 9, 0, ctx))).toEqual(withMapping('szmr', szmr.params(9), seed).mapping);
+    expect(mappingOf(planBlock(mix, 9, 1, ctx))).toEqual(withMapping('szmr', szmr.params(9, 3), seed).mapping);
+    expect(mappingOf(planBlock(mix, 9, 2, ctx))).toEqual(mappingOf(planBlock(mix, 9, 0, ctx)));
+    // The level reaches band 3 in the segment: its mapping comes from the same seed (the overload block's one).
+    expect(mappingOf(planBlock(mix, 12, 4, ctx))).toEqual(mappingOf(planBlock(mix, 9, 1, ctx)));
+    for (const [module, L] of [['stroop', 4], ['pomeh', 12], ['szmr', 24]] as const) {
+      const p = reactionModules[module].params(L);
+      expect(mappingOf(planBlock(freeSegment(module), L, 3, ctx)), module).toEqual((withMapping(module, p, seed) as { mapping: unknown }).mapping);
+    }
+    // Each segment draws its own: over a few segments the mappings differ.
+    const segments = [0, 1, 2, 3, 4, 5].map((segmentIndex) => JSON.stringify(mappingOf(planBlock(freeSegment('szmr'), 24, 0, { ...ctx, segmentIndex }))));
+    expect(new Set(segments).size).toBeGreaterThan(1);
+  });
+
+  it('the trials take the keys of the mapping', () => {
+    const plan = reactionPlan(freeSegment('szmr'), 12, ctx);
+    const { step } = buildBlock(plan, 8, 'keyboard', new Map());
+    if (step.kind !== 'reaction_block') throw new Error('expected a reaction block');
+    const mapping = (plan.params as { mapping: number[] }).mapping;
+    for (const t of step.specs) {
+      if (t.stimulus.kind !== 'shape' || t.expected.kind !== 'press') throw new Error('a СЗМР trial');
+      expect(t.expected.key).toBe(plan.keys[mapping[['red', 'green', 'yellow', 'blue'].indexOf(t.stimulus.color)] as number]);
+    }
+  });
+
+  it('the diagnostic, a test-format run and a warm-up keep the canonical mapping', () => {
+    for (const module of ['szmr', 'stroop', 'pomeh'] as const) {
+      const diagnosticSeg = planDiagnostic(1).segments.find((s) => s.module === module) as Segment;
+      expect(mappingOf(planBlock(diagnosticSeg, diagnosticSeg.fixedL ?? 0, 0, { ...ctx, diagnostic: true })), module).toBeNull();
+    }
+    expect(mappingOf(planBlock(runSegment('szmr'), 20, 0, ctx))).toBeNull();
+    // A warm-up of a module with a mapping keeps the canonical one too (the planner warms up ПЗМР only).
+    expect(mappingOf(planBlock({ module: 'szmr', budgetMs: 120_000, purpose: 'warmup' }, 20, 0, ctx))).toBeNull();
+  });
+
+  it('Go/No-Go, ПЗМР, Переключение and РДО map no keys; the Go/No-Go swap stays its own draw (F8)', () => {
+    for (const module of ['gonogo', 'pzmr', 'taskswitch', 'rdo'] as const) expect('withMapping' in reactionModules[module], module).toBe(false);
+    expect(reactionPlan(freeSegment('gonogo'), 12, { ...ctx, ...SWAPPING }).params).toEqual({ ...gonogo.params(12), swapped: true });
+    expect(reactionPlan(freeSegment('gonogo'), 12, ctx).params).toEqual(gonogo.params(12));
+  });
+
+  it('paramsJson names the layout the block played and its mapping', () => {
+    const stored = (plan: BlockPlan, layout: LayoutId = 'keyboard'): Record<string, unknown> =>
+      JSON.parse(buildBlock(plan, 5, layout, new Map()).paramsJson) as Record<string, unknown>;
+    const free = reactionPlan(freeSegment('szmr'), 0, ctx);
+    expect(stored(free)).toMatchObject({ layout: 'keyboard', mapping: (free.params as { mapping: unknown }).mapping });
+    // The mouse serves two keys; four go to the keyboard: the layout the block played.
+    expect(stored(reactionPlan(freeSegment('szmr'), 0, { ...ctx, layout: 'mouse' }), 'mouse')).toMatchObject({ layout: 'mouse' });
+    expect(stored(reactionPlan(freeSegment('szmr'), 12, { ...ctx, layout: 'mouse' }), 'mouse')).toMatchObject({ layout: 'keyboard' });
+    expect(stored(reactionPlan(freeSegment('rdo'), 0, { ...ctx, layout: 'pult' }), 'pult')).toMatchObject({ layout: 'pult' });
+    const diagnosticSeg = planDiagnostic(1).segments.find((s) => s.module === 'szmr') as Segment;
+    expect(stored(reactionPlan(diagnosticSeg, 0, { ...ctx, diagnostic: true }))).toMatchObject({ layout: 'keyboard', mapping: null });
+  });
+});
+
+describe('stimulus jitter (F9)', () => {
+  const ctx: PlanContext = { layout: 'keyboard', scale: 1, diagnostic: false, ...PLAIN };
+  /** A training segment with 3 practice trials: the jitter covers them too. */
+  const practiced = (module: ReactionModuleId): Segment => ({ module, budgetMs: 300_000, purpose: 'reaction', practiceTrials: 3 });
+  const specsOf = (plan: BlockPlan, seed: number): TrialSpec[] => {
+    const { step } = buildBlock(plan, seed, 'keyboard', new Map());
+    if (step.kind !== 'reaction_block') throw new Error('expected a reaction block');
+    return step.specs;
+  };
+  /** The jitter stream of a block seed (Справочник F9). */
+  const stream = (seed: number, n: number): { dx: number; dy: number; scale: number }[] => {
+    const rng = createRng(deriveSeed(seed, 'jitter'));
+    return Array.from({ length: n }, () => {
+      const dx = (2 * rng.next() - 1) * 0.15;
+      const dy = (2 * rng.next() - 1) * 0.15;
+      return { dx, dy, scale: 0.9 + 0.2 * rng.next() };
+    });
+  };
+  const POSITION_MODULES = ['pzmr', 'szmr', 'gonogo', 'stroop', 'taskswitch'] as const;
+
+  it('jitter stays within ±0.15 and 0.9–1.1 and depends only on the block seed', () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 0, max: 2 ** 32 - 1 }), fc.constantFrom(...POSITION_MODULES), fc.integer({ min: 0, max: 40 }), (seed, module, L) => {
+        const specs = specsOf(planBlock(practiced(module), L, 0, ctx), seed);
+        const jitter = specs.map((t) => t.jitter);
+        expect(jitter).toEqual(stream(seed, specs.length));
+        for (const j of jitter) {
+          if (j === undefined) throw new Error('every trial jittered');
+          expect(Math.abs(j.dx)).toBeLessThanOrEqual(0.15);
+          expect(Math.abs(j.dy)).toBeLessThanOrEqual(0.15);
+          expect(j.scale).toBeGreaterThanOrEqual(0.9);
+          expect(j.scale).toBeLessThanOrEqual(1.1);
+        }
+      }),
+      { numRuns: 1000 },
+    );
+  });
+
+  it('Помехоустойчивость: the size only (dx = dy = 0), its figures stand around the centre', () => {
+    for (const L of [0, 12, 30]) {
+      const specs = specsOf(planBlock(practiced('pomeh'), L, 0, ctx), 11);
+      expect(specs.map((t) => t.jitter)).toEqual(stream(11, specs.length).map(({ scale }) => ({ dx: 0, dy: 0, scale })));
+    }
+  });
+
+  it('none in РДО, a warm-up, a test-format run or a diagnostic', () => {
+    const none = (plan: BlockPlan): void => {
+      expect(plan.kind === 'reaction' && plan.jitter).toBe('none');
+      expect(specsOf(plan, 4).every((t) => !('jitter' in t))).toBe(true);
+    };
+    none(planBlock(practiced('rdo'), 5, 0, ctx));
+    none(planBlock({ module: 'pzmr', budgetMs: 120_000, purpose: 'warmup' }, 5, 0, ctx));
+    none(planBlock(runSegment('szmr'), 9, 0, ctx));
+    for (const seg of planDiagnostic(1).segments) {
+      if (isReactionModule(seg.module)) none(planBlock(seg, seg.fixedL ?? 0, 0, { ...ctx, diagnostic: true }));
+    }
+  });
+
+  it('jitter changes nothing else: the trials are those of the module with the block seed', () => {
+    for (const module of [...POSITION_MODULES, 'pomeh'] as const) {
+      const plan = reactionPlan(freeSegment(module), 10, ctx);
+      // toEqual leaves out undefined fields.
+      const specs = specsOf(plan, 21).map((t) => ({ ...t, jitter: undefined }));
+      expect(specs).toEqual(reactionModules[module].generateBlock(plan.params, createRng(21), 'keyboard', plan.size));
+    }
   });
 });
 

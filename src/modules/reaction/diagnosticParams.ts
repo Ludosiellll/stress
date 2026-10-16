@@ -41,7 +41,7 @@ function deepFreeze<T>(v: T): DeepReadonly<T> {
  */
 export const DIAGNOSTIC_PARAMS: DeepReadonly<DiagnosticParams> = deepFreeze<DiagnosticParams>({
   // F3 fields: the band of the format and its label, the 0.2.0 block size, no noise or sound of their own (Помехо-
-  // устойчивость keeps its 0.2.0 ones), no reverse rule, no runs.
+  // устойчивость keeps its 0.2.0 ones), no reverse rule, no runs. F9: the canonical key mapping (null).
   pzmr: { windowMs: 1000, isiMin: 500, isiMax: 2500, band: 0, bandLabel: 'красный круг', trials: 15, noise: null, audio: null },
   szmr: {
     windowMs: 1500,
@@ -54,6 +54,7 @@ export const DIAGNOSTIC_PARAMS: DeepReadonly<DiagnosticParams> = deepFreeze<Diag
     trials: 20,
     noise: null,
     audio: null,
+    mapping: null,
   },
   gonogo: {
     windowMs: 446,
@@ -80,6 +81,7 @@ export const DIAGNOSTIC_PARAMS: DeepReadonly<DiagnosticParams> = deepFreeze<Diag
     band: 0,
     bandLabel: 'простая реакция, помехи далеко',
     trials: 20,
+    mapping: null,
   },
   stroop: {
     windowMs: 1099,
@@ -94,6 +96,7 @@ export const DIAGNOSTIC_PARAMS: DeepReadonly<DiagnosticParams> = deepFreeze<Diag
     noise: null,
     audio: null,
     reverse: false,
+    mapping: null,
   },
   taskswitch: {
     windowMs: 1369,

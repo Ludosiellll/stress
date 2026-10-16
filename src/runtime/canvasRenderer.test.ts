@@ -223,7 +223,7 @@ describe('createCanvasRenderer', () => {
     expect(named(calls, 'stroke')).toEqual([]);
   });
 
-  it('a mark (F15, Р23): bold, 6 % of the shorter side, #bdbdbd, centred at a sixth of the height, over the stimulus', () => {
+  it('a mark (F15, Р23): bold, 6 % of the shorter side, #bdbdbd, centred at five sixths of the height, over the stimulus', () => {
     const { ctx, calls } = mockContext();
     const canvas = {
       clientWidth: 1000,
@@ -237,7 +237,8 @@ describe('createCanvasRenderer', () => {
     renderer.show({ kind: 'shape', shape: 'circle', color: 'red' });
     calls.length = 0;
     renderer.mark('рано');
-    expect(named(calls, 'fillText').map((c) => [c.args, c.fillStyle])).toEqual([[['рано', 500, 500 / 6], MARK_COLOR]]);
+    // The lower third (F9, T-R33 note under Р23): the jittered task-switching cue reaches up into the upper one.
+    expect(named(calls, 'fillText').map((c) => [c.args, c.fillStyle])).toEqual([[['рано', 500, (5 * 500) / 6], MARK_COLOR]]);
     expect(ctx.font).toBe("bold 30px 'Segoe UI', Arial, sans-serif");
     expect([ctx.textAlign, ctx.textBaseline]).toEqual(['center', 'middle']);
     // Drawn after the stimulus, in the same draw.
@@ -263,6 +264,112 @@ describe('createCanvasRenderer', () => {
     calls.length = 0;
     renderer.hide();
     expect(named(calls, 'fillText')).toEqual([]);
+  });
+
+  describe('jitter (F9)', () => {
+    const JITTER = { dx: 0.1, dy: -0.05, scale: 1.1 };
+
+    it('show(s, { dx: 0.1, dy: -0.05, scale: 1.1 }) moves the centre by (0.1·side, −0.05·side) and makes the stimulus 1.1 times larger', () => {
+      const { renderer, calls } = setup({ w: 800, h: 600 });
+      calls.length = 0;
+      renderer.show({ kind: 'shape', shape: 'circle', color: 'red', frame: 'white' }, JITTER);
+      const [figure, ring] = named(calls, 'arc').map((c) => c.args as number[]);
+      expect(figure?.slice(0, 2)).toEqual([460, 270]);
+      expect(figure?.[2]).toBeCloseTo(1.1 * 54, 9);
+      // The frame keeps its gap and width in pixels around the larger figure.
+      expect(ring?.slice(0, 2)).toEqual([460, 270]);
+      expect(ring?.[2]).toBeCloseTo(1.1 * 54 + 10 + 6, 9);
+      // The next stimulus without jitter is centred again.
+      calls.length = 0;
+      renderer.show({ kind: 'shape', shape: 'square', color: 'blue' });
+      expect(named(calls, 'rect')[0]?.args).toEqual([346, 246, 108, 108]);
+    });
+
+    it('a word and a task-switching figure with its rule word move and grow together; the cue stands where the figure comes', () => {
+      const { ctx, calls } = mockContext();
+      const canvas = {
+        clientWidth: 800,
+        clientHeight: 600,
+        width: 0,
+        height: 0,
+        getContext: () => ctx,
+        ownerDocument: { defaultView: { devicePixelRatio: 1 } },
+      } as unknown as HTMLCanvasElement;
+      const renderer = createCanvasRenderer(canvas);
+      calls.length = 0;
+      renderer.show({ kind: 'word', word: 'green', ink: 'red' }, JITTER);
+      expect(named(calls, 'fillText')[0]?.args).toEqual(['ЗЕЛЁНЫЙ', 460, 270]);
+      expect(ctx.font).toBe("bold 79px 'Segoe UI', Arial, sans-serif");
+
+      const s: Stimulus = { kind: 'switch', rule: 'shape', color: 'blue', shape: 'circle', size: 'large' };
+      calls.length = 0;
+      renderer.cue?.(s, JITTER);
+      // 0.22 of the larger side above the moved centre: 270 − 0.22 · 660.
+      const cue = named(calls, 'fillText')[0]?.args as [string, number, number];
+      expect(cue[0]).toBe('ФОРМА');
+      expect(cue[1]).toBe(460);
+      expect(cue[2]).toBeCloseTo(270 - 0.22 * 660, 9);
+      expect(ctx.font).toBe("bold 46px 'Segoe UI', Arial, sans-serif");
+      calls.length = 0;
+      renderer.show(s, JITTER);
+      expect(named(calls, 'fillText')[0]?.args).toEqual(cue);
+      const figure = named(calls, 'arc')[0]?.args as number[];
+      expect(figure.slice(0, 2)).toEqual([460, 270]);
+      expect(figure[2]).toBeCloseTo(0.09 * 660, 9);
+    });
+
+    it('a framed word near the edge stays on the canvas: its ring is pulled in', () => {
+      const { renderer, calls } = setup({ w: 1000, h: 600 });
+      calls.length = 0;
+      renderer.show({ kind: 'word', word: 'green', ink: 'red', frame: 'white' }, { dx: 0, dy: -0.15, scale: 1.1 });
+      const [cx, cy, r] = named(calls, 'arc').at(-1)?.args as [number, number, number];
+      expect(r).toBeCloseTo(0.33 * 660, 9);
+      // Unclamped the centre would be at 300 − 90 = 210, and the ring would reach 210 − 217.8 − 6 < 0.
+      expect(cy - r - 6).toBeCloseTo(0, 9);
+      expect(cx).toBe(500);
+      expect(named(calls, 'fillText')[0]?.args.slice(1)).toEqual([cx, cy]);
+      // Inside, it moves as asked.
+      calls.length = 0;
+      renderer.show({ kind: 'word', word: 'green', ink: 'red', frame: 'white' }, { dx: 0.05, dy: 0.05, scale: 0.9 });
+      expect((named(calls, 'arc').at(-1)?.args as number[]).slice(0, 2)).toEqual([530, 330]);
+    });
+
+    it('the worst case keeps clear of the mark, which sits in the lower third', () => {
+      const { ctx, calls } = mockContext();
+      const canvas = {
+        clientWidth: 1000,
+        clientHeight: 600,
+        width: 0,
+        height: 0,
+        getContext: () => ctx,
+        ownerDocument: { defaultView: { devicePixelRatio: 1 } },
+      } as unknown as HTMLCanvasElement;
+      const renderer = createCanvasRenderer(canvas);
+      /** The y of the last text drawn and half its font size. */
+      const lastText = (): { y: number; half: number } => ({
+        y: named(calls, 'fillText').at(-1)?.args[2] as number,
+        half: Number(/(\d+)px/.exec(ctx.font)?.[1]) / 2,
+      });
+      renderer.mark('ошибка');
+      const mark = lastText();
+      expect(mark).toEqual({ y: 500, half: 18 });
+      renderer.clearMark();
+      // A mark shares a frame with the task-switching cue only (a press during the cue lead; never with a stimulus,
+      // T-R59). At its highest, dy −0.15 and scale 1.1, the cue would cover a mark at h/6 (100 px)...
+      const rule: Stimulus = { kind: 'switch', rule: 'shape', color: 'blue', shape: 'circle', size: 'large' };
+      renderer.cue?.(rule, { dx: 0, dy: -0.15, scale: 1.1 });
+      const high = lastText();
+      expect(Math.abs(high.y - 600 / 6)).toBeLessThan(high.half + mark.half);
+      // ... and at its lowest, dy +0.15 and scale 0.9, it stays above the centre, far from the mark at 5h/6.
+      renderer.cue?.(rule, { dx: 0, dy: 0.15, scale: 0.9 });
+      const low = lastText();
+      expect(low.y + low.half).toBeLessThan(300);
+      // Even the lowest stimulus, dy +0.15 at scale 1.1, ends 0.05 of the side above the mark's text.
+      calls.length = 0;
+      renderer.show({ kind: 'shape', shape: 'circle', color: 'red' }, { dx: 0, dy: 0.15, scale: 1.1 });
+      const [, cy, r] = named(calls, 'arc')[0]?.args as [number, number, number];
+      expect(mark.y - mark.half - (cy + r)).toBeGreaterThan(0.05 * 600);
+    });
   });
 
   it('the word is bold, centred, 12% of the shorter side', () => {

@@ -3,6 +3,7 @@ import { keyLabel } from '../../engine/layouts';
 import type { VisualNoiseParams } from '../../engine/noise';
 import { L_NORM } from '../../engine/planner';
 import type { ColorId, ShapeId, TrialSpec } from '../../engine/reaction/types';
+import { createRng } from '../../engine/rng';
 import type { InputKey } from '../../engine/types';
 import {
   COLORS,
@@ -17,6 +18,7 @@ import {
   fallbackNote,
   farNoise,
   framedRuns,
+  keyNumbers,
   keysFor,
   ladder,
   loadBandOf,
@@ -42,6 +44,11 @@ export interface SzmrParams {
   noise: VisualNoiseParams | null;
   /** Sound on every trial; null: none. */
   audio: AudioStressorParams | null;
+  /**
+   * The key of each active colour, in colour order (Р26); null: canonical, c mod nKeys (red and yellow share key 0 in
+   * the 3-on-2 band). A training or free segment draws its own (withMapping, F9).
+   */
+  mapping: number[] | null;
 }
 
 const BLOCK_SIZE = 20;
@@ -81,22 +88,22 @@ function noiseAt(b: number, nColors: number): VisualNoiseParams | null {
 }
 
 /**
- * Key index for color index c without inversion. Equal counts map one-to-one;
- * the 3 colors / 2 keys band maps red and yellow → 0, green → 1, which is c mod nKeys.
+ * Key index for color index c without inversion: the segment's mapping, or the canonical c mod nKeys (equal counts map
+ * one-to-one; the 3 colors / 2 keys band maps red and yellow → 0, green → 1).
  */
-function normalKeyIndex(c: number, nKeys: number): number {
-  return c % nKeys;
+function normalKeyIndex(p: Pick<SzmrParams, 'mapping' | 'nKeys'>, c: number): number {
+  return p.mapping?.[c] ?? c % p.nKeys;
 }
 
 /**
- * Color → key part of the instruction. Colors sharing a key are grouped («красный и жёлтый — F»)
- * and introduced differently, so the text never claims one key per color when that is false.
+ * Color → key part of the instruction, key by key in the layout's order. Colors sharing a key are grouped («красный и
+ * жёлтый — F») and introduced differently, so the text never claims one key per color when that is false.
  */
-function colorKeyRule(keys: readonly InputKey[], nColors: number): string {
+function colorKeyRule(keys: readonly InputKey[], p: SzmrParams): string {
   const groups = keys.map((key, k) => ({
     key,
-    names: COLORS.slice(0, nColors)
-      .filter((_, c) => normalKeyIndex(c, keys.length) === k)
+    names: COLORS.slice(0, p.nColors)
+      .filter((_, c) => normalKeyIndex(p, c) === k)
       .map((color) => COLOR_NAMES[color]),
   }));
   const list = groups.map((g) => `${g.names.join(' и ')} — ${keyLabel(g.key)}`).join(', ');
@@ -125,6 +132,7 @@ export const szmr: ReactionModule<SzmrParams> = {
       inversion: b >= 7,
       noise: noiseAt(b, nColors),
       audio: b >= 8 ? bandSound() : null,
+      mapping: null,
     };
   },
 
@@ -142,7 +150,7 @@ export const szmr: ReactionModule<SzmrParams> = {
       const c = rng.int(0, colors.length - 1);
       const color = colors[c] as ColorId;
       const shape: ShapeId = p.shapeDistractor ? rng.pick(SHAPES) : 'circle';
-      const normal = normalKeyIndex(c, p.nKeys);
+      const normal = normalKeyIndex(p, c);
       const key = keys[inv ? p.nKeys - 1 - normal : normal] as InputKey;
       return {
         isiMs,
@@ -153,13 +161,25 @@ export const szmr: ReactionModule<SzmrParams> = {
     });
   },
 
+  /**
+   * n colours on n keys: rng.shuffle of the key numbers. 3 colours on 2 keys: rng.int(0, 2) picks the colour alone on
+   * its key, rng.int(0, 1) the key the other two share (6 groupings). The inversion flips this mapping (generateBlock).
+   */
+  withMapping(p, seed) {
+    const rng = createRng(seed);
+    if (p.nColors === p.nKeys) return { ...p, mapping: rng.shuffle(keyNumbers(p.nKeys)) };
+    const alone = rng.int(0, p.nColors - 1);
+    const shared = rng.int(0, 1);
+    return { ...p, mapping: keyNumbers(p.nColors).map((c) => (c === alone ? 1 - shared : shared)) };
+  },
+
   keyCount: (p) => p.nKeys,
 
   stressors: everyTrial,
 
   instruction(layout, p, overload = false) {
     return (
-      colorKeyRule(keysFor(layout, p.nKeys), p.nColors) +
+      colorKeyRule(keysFor(layout, p.nKeys), p) +
       (p.shapeDistractor ? ' Форму фигуры не учитывай.' : '') +
       (p.inversion ? ' Белая рамка — правило перевёрнуто.' : '') +
       stressorNotes(p, overload) +

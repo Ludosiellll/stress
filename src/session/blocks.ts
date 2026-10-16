@@ -180,6 +180,8 @@ export type BlockPlan =
        * warm-up, a test-format run, a diagnostic and РДО.
        */
       feedback: FeedbackRate;
+      /** The jitter of its trials (F9): the module's in a training or free block; 'none' otherwise. */
+      jitter: JitterKind;
     }
   /**
    * `table` (F10): blocks 0–2 of a Горбов segment are a series on one table, dealt from the seed of block 0's counted
@@ -223,6 +225,35 @@ export const FEEDBACK_MODULES: readonly ReactionModuleId[] = ['pzmr', 'szmr', 'g
 /** Blocks 0–2 of a Горбов segment: the three tasks of the test on one table (F10). */
 export const GORBOV_SERIES_BLOCKS = 3;
 
+/**
+ * How a block's stimulus is jittered (F9): `position` moves it and changes its size, `size` changes the size only;
+ * `none` leaves it centred and as is.
+ */
+export type JitterKind = 'position' | 'size' | 'none';
+
+/**
+ * The jitter of each module's training and free blocks (Справочник F9): Помехоустойчивость only the size, its figures
+ * stand around the centre; РДО none. Warm-ups, test-format runs and diagnostics have none.
+ */
+const JITTER: Readonly<Record<ReactionModuleId, JitterKind>> = {
+  pzmr: 'position',
+  szmr: 'position',
+  gonogo: 'position',
+  stroop: 'position',
+  taskswitch: 'position',
+  pomeh: 'size',
+  rdo: 'none',
+};
+
+/** The most a stimulus moves from the centre on either axis, and the most its size changes, in shares (F9). */
+const JITTER_SHIFT = 0.15;
+const JITTER_SCALE = 0.1;
+
+/** The seed of a segment's key mapping (F9): deriveSeed(planSeed, 'map:' + segmentIndex). */
+function segmentMappingSeed(ctx: Pick<PlanContext, 'planSeed' | 'segmentIndex'>): number {
+  return deriveSeed(ctx.planSeed, 'map:' + String(ctx.segmentIndex));
+}
+
 /** Every block of a finisher; the odd blocks (1, 3, …) of a plateau mix. */
 export function isOverloadBlock(segment: Segment, blockIndex: number): boolean {
   return segment.overload === 'finisher' || (segment.overload === 'mix' && blockIndex % 2 === 1);
@@ -242,8 +273,13 @@ export function planBlock(segment: Segment, segmentL: number, blockIndex: number
     const mod = reactionModules[module];
     const testFormat = segment.purpose === 'test_format';
     const frozen = ctx.diagnostic || testFormat;
-    const { params, load } = reactionBlock(module, L, blockIndex, overload, frozen, ctx);
-    const marked = !frozen && segment.purpose !== 'warmup' && FEEDBACK_MODULES.includes(module);
+    // A training or free block, not a warm-up: the key mapping and the jitter (F9), the marks (F15).
+    const trained = !frozen && segment.purpose !== 'warmup';
+    const block = reactionBlock(module, L, blockIndex, overload, frozen, ctx);
+    const { load } = block;
+    // One mapping for the whole segment (F9): its overload blocks and a new band inside it draw from the same seed.
+    const params = trained ? (mod.withMapping?.(block.params, segmentMappingSeed(ctx)) ?? block.params) : block.params;
+    const marked = trained && FEEDBACK_MODULES.includes(module);
     const { keys, effectiveLayout } = layoutKeys(ctx.layout, mod.keyCount(params));
     return {
       kind: 'reaction',
@@ -259,6 +295,7 @@ export function planBlock(segment: Segment, segmentL: number, blockIndex: number
       testFormat,
       frozen,
       feedback: marked ? ctx.feedback : 'none',
+      jitter: trained ? JITTER[module] : 'none',
     };
   }
   if (module === 'gorbov') return gorbovPlan(L, blockIndex, overload);
@@ -457,7 +494,8 @@ export function buildBlock(
               .generateBlock(plan.params, createRng(deriveSeed(seed, 'practice')), layout, plan.practice)
               .map((t) => ({ ...t, practice: true }))
           : [];
-      const specs = withFeedback([...practice, ...mod.generateBlock(plan.params, createRng(seed), layout, plan.size)], plan.feedback, seed);
+      const trials = [...practice, ...mod.generateBlock(plan.params, createRng(seed), layout, plan.size)];
+      const specs = withJitter(withFeedback(trials, plan.feedback, seed), plan.jitter, seed);
       const stressors = stressorsOf(mod, plan.params);
       return {
         step: {
@@ -525,14 +563,31 @@ function withFeedback(specs: TrialSpec[], rate: FeedbackRate, seed: number): Tri
 }
 
 /**
- * What a reaction block stores as paramsJson: its parameters with `trials` the size it played (practice left out:
- * a diagnostic ПЗМР plays 50 on parameters that say 15, the e2e scale shrinks every block, T-R48), and for a band
+ * The jitter of a block's trials (F9, Справочник): from createRng(deriveSeed(seed, 'jitter')), trial by trial, practice
+ * included, dx = (2·next − 1)·0.15, dy the same, scale = 0.9 + 0.2·next. 'size' draws all three and keeps dx = dy = 0;
+ * 'none' leaves the trials as they are.
+ */
+function withJitter(specs: TrialSpec[], kind: JitterKind, seed: number): TrialSpec[] {
+  if (kind === 'none') return specs;
+  const rng = createRng(deriveSeed(seed, 'jitter'));
+  return specs.map((t) => {
+    const dx = (2 * rng.next() - 1) * JITTER_SHIFT;
+    const dy = (2 * rng.next() - 1) * JITTER_SHIFT;
+    const scale = 1 - JITTER_SCALE + 2 * JITTER_SCALE * rng.next();
+    return { ...t, jitter: kind === 'size' ? { dx: 0, dy: 0, scale } : { dx, dy, scale } };
+  });
+}
+
+/**
+ * What a reaction block stores as paramsJson: its parameters (the key mapping among them, F9) with `trials` the size
+ * it played (practice left out: a diagnostic ПЗМР plays 50 on parameters that say 15, the e2e scale shrinks every
+ * block, T-R48) and `layout` the layout it played (the keyboard when the mouse has too few keys, F9); for a band
  * module the nominal window and the floor (F3); an overload block names its own band b and the band whose load it
  * played (T-R25).
  */
 function reactionParamsJson(plan: Extract<BlockPlan, { kind: 'reaction' }>): unknown {
   const { load } = plan;
-  const params = { ...(plan.params as object), trials: plan.size };
+  const params = { ...(plan.params as object), trials: plan.size, layout: plan.layout };
   if (load === null) return params;
   const floor = { nominalWindowMs: load.nominalWindowMs, floorMs: load.floorMs };
   if (load.loadBand === null) return { ...params, ...floor };

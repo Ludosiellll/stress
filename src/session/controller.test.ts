@@ -18,6 +18,7 @@ import {
 } from '../engine/diagnostic';
 import { currentPhase, type PhaseInfo } from '../engine/phases';
 import { planFree, planTraining, type ModuleState, type Segment, type SessionPlan, type TestFormatId } from '../engine/planner';
+import type { TrialSpec } from '../engine/reaction/types';
 import { readinessOfLatest } from '../engine/readiness';
 import { createRng, deriveSeed } from '../engine/rng';
 import { sdTrimmed } from '../engine/stats';
@@ -32,7 +33,7 @@ import { pomeh } from '../modules/reaction/pomeh';
 import { isSwappedSegment } from '../modules/reaction/gonogo';
 import { pzmr } from '../modules/reaction/pzmr';
 import { rdoCyclePeriod, rdoPeriod } from '../modules/reaction/rdo';
-import { szmr } from '../modules/reaction/szmr';
+import { szmr, type SzmrParams } from '../modules/reaction/szmr';
 import { reactionModules } from '../modules/registry';
 import { generateGorbovTable, gorbovMetrics } from '../modules/tables/gorbov';
 import {
@@ -207,6 +208,15 @@ async function playReaction(h: Harness, respond: Respond = perfectPlayer, droppe
 
 function stateWith(module: ModuleId, over: Partial<ModuleState>): ModuleState {
   return { ...defaultModuleState(module), ...over };
+}
+
+/** The trials of a block as the module deals them: a training block adds a jitter to each (F9; toEqual leaves undefined out). */
+const unjittered = (specs: readonly TrialSpec[]): unknown[] => specs.map((t) => ({ ...t, jitter: undefined }));
+
+/** СЗМР parameters at L with the key mapping of segment `segmentIndex` of the plan with `planSeed` (F9). */
+function szmrSegment(L: number, planSeed: number, segmentIndex = 0): SzmrParams {
+  const p = szmr.params(L);
+  return szmr.withMapping?.(p, deriveSeed(planSeed, 'map:' + String(segmentIndex))) ?? p;
 }
 
 /** Params of a block of the load bands at level L (Р9: its level counts as played, not as an old window level). */
@@ -407,7 +417,7 @@ describe('SessionController — flow', () => {
 
     const sz = await begin(planFree('szmr', 1), { layout: 'pult' });
     expect(expectStep(sz.c, 'instruction')).toMatchObject({
-      text: szmr.instruction('pult', szmr.params(0)) + ' Нагрузка: 2 цвета на 2 клавиши.',
+      text: szmr.instruction('pult', szmrSegment(0, 1)) + ' Нагрузка: 2 цвета на 2 клавиши.',
       keysHint: '←, →',
     });
     sz.c.ackInstruction();
@@ -444,7 +454,7 @@ describe('SessionController — flow', () => {
     const h = await begin(planFree('szmr', 1), { repo, layout: 'mouse' });
     const instr = expectStep(h.c, 'instruction');
     expect(instr.keysHint).toBe('D, F, J, K');
-    expect(instr.text).toBe(szmr.instruction('mouse', szmr.params(16)) + ' Нагрузка: 4 цвета на 4 клавиши, отвлекающая форма.');
+    expect(instr.text).toBe(szmr.instruction('mouse', szmrSegment(16, 1)) + ' Нагрузка: 4 цвета на 4 клавиши, отвлекающая форма.');
     h.c.ackInstruction();
     expect(expectStep(h.c, 'reaction_block')).toMatchObject({ L: 16, keys: ['KeyD', 'KeyF', 'KeyJ', 'KeyK'], layout: 'keyboard' });
   });
@@ -461,7 +471,8 @@ describe('SessionController — flow', () => {
     // The segment's first block: g = 2 (F6).
     expect(expectStep(h.c, 'summary').view.lAfter).toBe(9);
     await h.c.continueAfterSummary();
-    expect(expectStep(h.c, 'instruction').text).toBe(szmr.instruction('keyboard', szmr.params(9)) + ' Нагрузка: 3 цвета на 2 клавиши.');
+    // The segment's key mapping for three colours on two keys, from the segment's seed (F9).
+    expect(expectStep(h.c, 'instruction').text).toBe(szmr.instruction('keyboard', szmrSegment(9, 1)) + ' Нагрузка: 3 цвета на 2 клавиши.');
     h.c.ackInstruction(); // does not restart the segment clock
     expect(expectStep(h.c, 'reaction_block').L).toBe(9);
     h.clock.ms = start + 5 * MIN;
@@ -879,7 +890,7 @@ describe('SessionController — levels and persistence', () => {
     const [row] = await h.repo.listBlocks();
     if (!row) throw new Error('no block');
     expect(row).toMatchObject({ sessionId: h.c.sessionId, module: 'pzmr', lBefore: 0, lAfter: 2, score: 1, flags: ['calibration'] });
-    expect(JSON.parse(row.paramsJson)).toEqual({ ...pzmr.params(0), nominalWindowMs: 1000, floorMs: null });
+    expect(JSON.parse(row.paramsJson)).toEqual({ ...pzmr.params(0), layout: 'keyboard', nominalWindowMs: 1000, floorMs: null });
     expect(JSON.parse(row.summaryJson)).toMatchObject({ n: 15, score: 1, medianRt: 300 });
     const trials = await h.repo.listTrials(row.id);
     expect(trials).toHaveLength(15);
@@ -915,12 +926,12 @@ describe('SessionController — levels and persistence', () => {
     const h = await begin(planFree('pzmr', 77));
     h.c.ackInstruction();
     const gen = (salt: string, L: number): unknown => pzmr.generateBlock(pzmr.params(L), createRng(deriveSeed(77, salt)), 'keyboard', 15);
-    expect(expectStep(h.c, 'reaction_block').specs).toEqual(gen('0:0:0', 0));
+    expect(unjittered(expectStep(h.c, 'reaction_block').specs)).toEqual(gen('0:0:0', 0));
     await h.c.discardBlock('focus_lost', 0.5);
-    expect(expectStep(h.c, 'reaction_block').specs).toEqual(gen('0:0:1', 0));
+    expect(unjittered(expectStep(h.c, 'reaction_block').specs)).toEqual(gen('0:0:1', 0));
     await h.c.submitReaction(playTimeline(expectStep(h.c, 'reaction_block').specs, perfectPlayer));
     await h.c.continueAfterSummary();
-    expect(expectStep(h.c, 'reaction_block').specs).toEqual(gen('0:1:0', 2));
+    expect(unjittered(expectStep(h.c, 'reaction_block').specs)).toEqual(gen('0:1:0', 2));
   });
 
   it('discardBlock keeps level and writes nothing', async () => {
@@ -1014,7 +1025,7 @@ describe('SessionController — levels and persistence', () => {
       await h.c.submitReaction(playTimeline(onlyPractice.specs, perfectPlayer));
       const again = expectStep(h.c, 'reaction_block');
       expect(again.L).toBe(0);
-      expect(again.specs).toEqual(real(pzmr.params(0), createRng(deriveSeed(1, '0:0:1')), 'keyboard', 15));
+      expect(unjittered(again.specs)).toEqual(real(pzmr.params(0), createRng(deriveSeed(1, '0:0:1')), 'keyboard', 15));
       expect(h.c.discards).toEqual([{ module: 'pzmr', reason: 'error' }]);
       expect(await h.repo.listBlocks()).toEqual([]);
     } finally {
@@ -1364,7 +1375,7 @@ describe('SessionController — test-format runs (F4)', () => {
       falseStarts: 0,
       thirds: [300, 300, 300],
     });
-    expect(JSON.parse(row?.paramsJson ?? '{}')).toEqual({ ...DIAGNOSTIC_PARAMS.pzmr, trials: 50 });
+    expect(JSON.parse(row?.paramsJson ?? '{}')).toEqual({ ...DIAGNOSTIC_PARAMS.pzmr, trials: 50, layout: 'keyboard' });
     await h.c.continueAfterSummary();
     expect(expectStep(h.c, 'instruction').module).toBe('szmr');
     // L_saved and the training date stay; the block counts in lifetimeBlocks.
@@ -1555,7 +1566,7 @@ describe('SessionController — the personal window floor and the load bands (F3
   it('the instruction ends with the load line', async () => {
     const h = await begin(planFree('szmr', 1));
     const { text } = expectStep(h.c, 'instruction');
-    expect(text).toBe(szmr.instruction('keyboard', szmr.params(0)) + loadLine('2 цвета на 2 клавиши'));
+    expect(text).toBe(szmr.instruction('keyboard', szmrSegment(0, 1)) + loadLine('2 цвета на 2 клавиши'));
     expect(text.endsWith('как можно быстрее. Нагрузка: 2 цвета на 2 клавиши.')).toBe(true);
   });
 
@@ -1563,7 +1574,7 @@ describe('SessionController — the personal window floor and the load bands (F3
     const h = await begin(planFree('pzmr', 1));
     await playReaction(h);
     const [row] = (await h.repo.listBlocks()).filter((b) => b.sessionId === h.c.sessionId);
-    expect(JSON.parse(row?.paramsJson ?? '')).toEqual({ ...pzmr.params(0), nominalWindowMs: 1000, floorMs: null });
+    expect(JSON.parse(row?.paramsJson ?? '')).toEqual({ ...pzmr.params(0), layout: 'keyboard', nominalWindowMs: 1000, floorMs: null });
     expect(JSON.parse(row?.paramsJson ?? '')).toMatchObject({ band: 0, bandLabel: 'красный круг', windowMs: 1000 });
   });
 
@@ -1774,6 +1785,73 @@ describe('SessionController — the РДО speed cycle (T-R61)', () => {
     vi.spyOn(repo, 'listBlocks').mockRejectedValueOnce(new Error('disk I/O error'));
     await drive(await begin(planFree('rdo', 7), { repo }), { blockMs: 100_000 });
     expect(await periods(repo)).toEqual([0, 1, 2].map((i) => rdoPeriod(7, 0, i)));
+  });
+});
+
+describe('SessionController — re-adaptation after a setup change (F9)', () => {
+  const YESTERDAY = new Date(new Date(T0).getTime() - DAY).toISOString();
+  const SEED = 6;
+  /** The mapping of today's СЗМР segment (segment 0 of planFree at L 0: 2 colours on 2 keys). */
+  const today = (): number[] => {
+    const map = szmr.withMapping?.(szmr.params(0), deriveSeed(SEED, 'map:0')).mapping;
+    if (map === undefined || map === null) throw new Error('СЗМР maps its keys');
+    return map;
+  };
+  /** A repository with yesterday's free session and, unless null, one block of `module` with these params. */
+  async function withPast(paramsJson: string | null, module: ModuleId = 'szmr'): Promise<MemoryRepository> {
+    const repo = new MemoryRepository();
+    await repo.createSession(session('s0', YESTERDAY, { kind: 'free', endedAt: YESTERDAY }));
+    if (paramsJson !== null) await repo.addBlock(block('b0', 's0', YESTERDAY, { module, paramsJson }), [], []);
+    return repo;
+  }
+  /** summaryJson.readapt of the blocks this session stored, in order. */
+  const marks = async (h: Harness): Promise<unknown[]> =>
+    (await h.repo.listBlocks()).filter((b) => b.sessionId === h.c.sessionId).map((b) => (JSON.parse(b.summaryJson) as { readapt?: unknown }).readapt);
+  /** Plays the first two blocks of the session. */
+  async function twoBlocks(h: Harness): Promise<void> {
+    await playReaction(h);
+    await h.c.continueAfterSummary();
+    await playReaction(h);
+  }
+
+  it('the first block after a mapping change is marked readapt, the second is not', async () => {
+    const h = await begin(planFree('szmr', SEED), { repo: await withPast(JSON.stringify({ layout: 'keyboard', mapping: [...today()].reverse() })) });
+    await twoBlocks(h);
+    expect(await marks(h)).toEqual([true, undefined]);
+  });
+
+  it('the same mapping on the same layout: no mark', async () => {
+    const h = await begin(planFree('szmr', SEED), { repo: await withPast(JSON.stringify({ layout: 'keyboard', mapping: today() })) });
+    await twoBlocks(h);
+    expect(await marks(h)).toEqual([undefined, undefined]);
+  });
+
+  it('without an earlier block that names its layout: no mark', async () => {
+    for (const past of [JSON.stringify({ mapping: [...today()].reverse() }), null]) {
+      const h = await begin(planFree('szmr', SEED), { repo: await withPast(past) });
+      await twoBlocks(h);
+      expect(await marks(h), String(past)).toEqual([undefined, undefined]);
+    }
+  });
+
+  it('another layout, or the Go/No-Go colours swapped, is a change too', async () => {
+    const pult = await begin(planFree('szmr', SEED), { repo: await withPast(JSON.stringify({ layout: 'pult', mapping: today() })) });
+    await twoBlocks(pult);
+    expect(await marks(pult)).toEqual([true, undefined]);
+    let seed = 1;
+    while (!isSwappedSegment(seed, 0)) seed++;
+    const repo = await withPast(JSON.stringify({ layout: 'keyboard', swapped: false }), 'gonogo');
+    const swap = await begin(planFree('gonogo', seed), { repo });
+    await twoBlocks(swap);
+    expect(await marks(swap)).toEqual([true, undefined]);
+  });
+
+  it('without the history (Р18) nothing is marked', async () => {
+    const repo = await withPast(JSON.stringify({ layout: 'keyboard', mapping: [...today()].reverse() }));
+    vi.spyOn(repo, 'listBlocks').mockRejectedValueOnce(new Error('disk I/O error'));
+    const h = await begin(planFree('szmr', SEED), { repo });
+    await twoBlocks(h);
+    expect(await marks(h)).toEqual([undefined, undefined]);
   });
 });
 
@@ -2135,7 +2213,7 @@ describe('SessionController — save errors', () => {
 
     const third = expectStep(h.c, 'reaction_block');
     expect(third.L).toBe(2);
-    expect(third.specs).toEqual(pzmr.generateBlock(pzmr.params(2), createRng(deriveSeed(1, '0:2:0')), 'keyboard', 15));
+    expect(unjittered(third.specs)).toEqual(pzmr.generateBlock(pzmr.params(2), createRng(deriveSeed(1, '0:2:0')), 'keyboard', 15));
     expect(await repo.listBlocks()).toHaveLength(1);
     const [log] = await repo.listLog(10);
     expect(log).toMatchObject({ level: 'error', message: 'session: unsaved pzmr block skipped' });
@@ -2167,7 +2245,7 @@ describe('SessionController — save errors', () => {
     await h.c.abandonPending();
     const next = expectStep(h.c, 'reaction_block');
     expect(next.L).toBe(2); // the stored block counts, and the next block has the next index
-    expect(next.specs).toEqual(pzmr.generateBlock(pzmr.params(2), createRng(deriveSeed(1, '0:1:0')), 'keyboard', 15));
+    expect(unjittered(next.specs)).toEqual(pzmr.generateBlock(pzmr.params(2), createRng(deriveSeed(1, '0:1:0')), 'keyboard', 15));
     expect(await repo.listBlocks()).toHaveLength(1);
     expect((await repo.getModuleStates()).pzmr.lifetimeBlocks).toBe(0);
     expect(JSON.parse((await repo.listLog(1))[0]?.detail ?? '')).toMatchObject({ dropped: ['saveModuleState'] });

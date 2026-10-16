@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { DiagnosticRow } from '../data/rows';
+import type { BlockRow, DiagnosticRow } from '../data/rows';
 import { block, session } from '../data/repository.contract';
 import { MemoryRepository } from '../data/memoryRepository';
 import { rebuildCaches } from '../data/export';
@@ -7,6 +7,7 @@ import { MODULE_IDS, type BlockFlag } from '../engine/types';
 import { parseResults, type DiagnosticResults } from '../engine/diagnostic';
 import { readinessOfLatest } from '../engine/readiness';
 import { trend, type Trend } from '../engine/trend';
+import { pastBlocks } from '../session/pastBlocks';
 import {
   diagnosticCharts,
   discardWeeks,
@@ -16,6 +17,7 @@ import {
   loadProgressModel,
   overload28d,
   rdoBias,
+  readaptCosts,
   ruDate,
   sessionLines,
   SESSION_LINES,
@@ -329,6 +331,122 @@ describe('the РДО bias by speed (F14)', () => {
     await repo.createSession(session('s', at, { endedAt: at }));
     await repo.addBlock(rdo('r', at, 2000, -6), [], []);
     expect((await loadProgressModel(repo, new Date(2026, 9, 15, 12))).rdoBias[1]).toEqual({ periodMs: 2000, meanMs: -6, blocks: 1 });
+  });
+});
+
+describe('the cost of re-adaptation (F9)', () => {
+  const now = new Date('2026-10-30T12:00:00.000Z');
+  const sessions = [
+    ...['a', 'b', 'c', 'e', 'g', 'h'].map((id) => session(id, '2026-10-20T09:00:00.000Z')),
+    session('f', '2026-10-21T09:00:00.000Z', { kind: 'free' }),
+    session('d', '2026-10-22T09:00:00.000Z', { kind: 'diagnostic' }),
+  ];
+  interface Played {
+    score: number;
+    rts: number[];
+    flags?: BlockFlag[];
+    module?: 'szmr' | 'stroop' | 'pzmr';
+  }
+  /** A segment of `module` in session `sessionId` on `day`: its first block marked readapt, then the others, a minute apart. */
+  const segment = (sessionId: string, day: string, first: Played, rest: Played[], module: 'szmr' | 'stroop' = 'szmr'): BlockRow[] =>
+    [first, ...rest].map((b, i) =>
+      block(`${sessionId}${day}${String(i)}`, sessionId, `${day}T10:${String(10 + i)}:00.000Z`, {
+        module: b.module ?? module,
+        score: b.score,
+        flags: b.flags ?? [],
+        summaryJson: JSON.stringify({ cleanHitRts: b.rts, ...(i === 0 ? { readapt: true } : {}) }),
+      }),
+    );
+  const first: Played = { score: 0.8, rts: [390, 400, 410] };
+  const rest: Played[] = [
+    { score: 0.86, rts: [355, 365, 375] },
+    { score: 0.86, rts: [360, 365, 370] },
+  ];
+
+  it('three СЗМР segments in 28 days: the first block s 0.8 against 0.86, median RT 400 against 365', () => {
+    const blocks = [...segment('a', '2026-10-05', first, rest), ...segment('b', '2026-10-15', first, rest), ...segment('f', '2026-10-29', first, rest)];
+    const costs = readaptCosts(pastBlocks(blocks, sessions), now);
+    expect(costs.map((c) => [c.module, c.segments, c.rtDelta])).toEqual([['szmr', 3, 35]]);
+    expect(costs[0]?.scoreDelta).toBeCloseTo(-0.06, 9);
+    // Two segments are not enough.
+    expect(readaptCosts(pastBlocks(blocks.slice(3), sessions), now)).toEqual([]);
+  });
+
+  it('the cost of a segment: s of the first minus the mean s of the rest, the median RT of the first minus that of the rest pooled', () => {
+    const blocks = [
+      ...segment('a', '2026-10-05', { score: 0.7, rts: [500, 520] }, [
+        { score: 0.8, rts: [400] },
+        { score: 0.9, rts: [300, 310, 320] },
+      ]),
+      ...segment('b', '2026-10-06', { score: 0.9, rts: [300] }, rest),
+      ...segment('c', '2026-10-07', { score: 0.9, rts: [300] }, rest),
+    ];
+    const [cost] = readaptCosts(pastBlocks(blocks, sessions), now);
+    // (−0.15 + 0.04 + 0.04) / 3 and (510 − 315 − 65 − 65) / 3.
+    expect(cost?.scoreDelta).toBeCloseTo((-0.15 + 0.04 + 0.04) / 3, 9);
+    expect(cost?.rtDelta).toBeCloseTo((195 - 65 - 65) / 3, 9);
+  });
+
+  it('what a segment needs: two more blocks that measured something, in the same session and module, in 28 days', () => {
+    const good = [...segment('a', '2026-10-05', first, rest), ...segment('b', '2026-10-15', first, rest)];
+    const third = (blocks: BlockRow[]): number => readaptCosts(pastBlocks([...good, ...blocks], sessions), now)[0]?.segments ?? 0;
+    expect(third(segment('c', '2026-10-20', first, rest))).toBe(3);
+    // The rest leaves out overload blocks, blocks counted as 0 after Esc and dropped frames: one block is too few.
+    for (const flags of [['overload'], ['discarded'], ['timing_unreliable'], ['warmup']] as BlockFlag[][]) {
+      expect(third(segment('c', '2026-10-20', first, [rest[0] as Played, { ...(rest[1] as Played), flags }])), flags.join()).toBe(0);
+    }
+    // With one of them between two good blocks it counts.
+    expect(third(segment('c', '2026-10-20', first, [rest[0] as Played, { score: 0, rts: [], flags: ['overload'] }, rest[1] as Played]))).toBe(3);
+    // A first block counted as 0 or with dropped frames measured nothing.
+    expect(third(segment('c', '2026-10-20', { ...first, flags: ['discarded'] }, rest))).toBe(0);
+    expect(third(segment('c', '2026-10-20', { ...first, flags: ['timing_unreliable'] }, rest))).toBe(0);
+    // The segment ends at a block of another module.
+    expect(third(segment('c', '2026-10-20', first, [rest[0] as Played, { ...(rest[1] as Played), module: 'pzmr' }]))).toBe(0);
+    // Without RTs there is no time cost.
+    expect(third(segment('c', '2026-10-20', { ...first, rts: [] }, rest))).toBe(0);
+    expect(third(segment('c', '2026-10-20', first, rest.map((r) => ({ ...r, rts: [] }))))).toBe(0);
+    // Older than 28 days, in the future, a diagnostic, a session not on record.
+    expect(third(segment('c', '2026-10-01', first, rest))).toBe(0);
+    expect(third(segment('c', '2026-10-31', first, rest))).toBe(0);
+    expect(third(segment('d', '2026-10-20', first, rest))).toBe(0);
+    expect(third(segment('x', '2026-10-20', first, rest))).toBe(0);
+  });
+
+  it('the segment stops at the next session; damaged summaries are left out', () => {
+    const blocks = [
+      ...segment('a', '2026-10-05', first, [rest[0] as Played]),
+      // The next block of the module is another session's.
+      ...segment('b', '2026-10-05', { ...first, score: 0.86 }, [rest[1] as Played]).map((b, i) => (i === 0 ? { ...b, summaryJson: '{"cleanHitRts":[365]}' } : b)),
+      ...segment('c', '2026-10-06', first, rest),
+      ...segment('e', '2026-10-07', first, rest),
+      { ...block('g1', 'g', '2026-10-08T10:00:00.000Z', { module: 'szmr' }), summaryJson: 'not json' },
+      { ...block('h1', 'h', '2026-10-08T11:00:00.000Z', { module: 'szmr' }), summaryJson: '{"readapt":"yes","cleanHitRts":[1]}' },
+    ];
+    expect(readaptCosts(pastBlocks(blocks, sessions), now)).toEqual([]);
+  });
+
+  it('modules in their order, each with its own segments', () => {
+    const blocks = [
+      ...['a', 'b', 'c'].flatMap((id, k) => segment(id, `2026-10-1${String(k)}`, first, rest, 'stroop')),
+      ...['e', 'f', 'g'].flatMap((id, k) => segment(id, `2026-10-2${String(k)}`, first, rest)),
+    ];
+    expect(readaptCosts(pastBlocks(blocks, sessions), now).map((c) => [c.module, c.segments])).toEqual([
+      ['szmr', 3],
+      ['stroop', 3],
+    ]);
+  });
+
+  it('loadProgressModel reads it from the block history', async () => {
+    const repo = new MemoryRepository();
+    for (const [k, id] of ['a', 'b', 'c'].entries()) {
+      const day = `2026-10-1${String(k + 2)}`;
+      await repo.createSession(session(id, `${day}T09:00:00.000Z`, { endedAt: `${day}T11:00:00.000Z` }));
+      for (const b of segment(id, day, first, rest)) await repo.addBlock(b, [], []);
+    }
+    const { readapt } = await loadProgressModel(repo, now);
+    expect(readapt.map((c) => [c.module, c.segments, c.rtDelta])).toEqual([['szmr', 3, 35]]);
+    expect(readapt[0]?.scoreDelta).toBeCloseTo(-0.06, 9);
+    expect((await loadProgressModel(new MemoryRepository(), now)).readapt).toEqual([]);
   });
 });
 

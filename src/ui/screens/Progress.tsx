@@ -11,9 +11,11 @@ import {
   type OverloadMean,
   type ProgressModel,
   type RdoBias,
+  type ReadaptCost,
   type TestFormatProgress,
   type TrendView,
 } from '../progressModel';
+import { moduleTitles } from '../../modules/registry';
 import { periodSeconds, plural, signedMs } from '../../session/steps';
 import ReadinessBlock from '../views/ReadinessBlock';
 
@@ -256,12 +258,20 @@ function rdoBiasLine(speeds: readonly RdoBias[]): string {
     .join(' · ');
 }
 
+/** «Сложная реакция (СЗМР) — после смены клавиш: точность −6 %, время +35 мс в первом блоке» (F9): whole %, whole ms. */
+function readaptLine(c: ReadaptCost): string {
+  return `${moduleTitles[c.module]} — после смены клавиш: точность ${signedMs(100 * c.scoreDelta)} %, время ${signedMs(c.rtDelta)} мс в первом блоке`;
+}
+
 function Levels({ model }: { model: ProgressModel }) {
   return (
     <section aria-labelledby="levels-title">
       <h2 id="levels-title">Уровни по модулям</h2>
       <p className="muted">Уровень на конец каждой сессии. Пунктир — уровень, при котором модуль примерно соответствует формату теста.</p>
       <p>{overloadLine(model.overload28d)}</p>
+      {model.readapt.map((c) => (
+        <p key={c.module}>{noBreakUnits(readaptLine(c))}</p>
+      ))}
       <h3>РДО: смещение по скоростям за 28 дней</h3>
       <p>{noBreakUnits(rdoBiasLine(model.rdoBias))}</p>
       <div className="chart-grid">

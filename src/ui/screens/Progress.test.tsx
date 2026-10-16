@@ -205,6 +205,39 @@ describe('Progress after the load bands (F3, spec §3.1.6)', () => {
     expect(heading.nextElementSibling?.textContent).toBe(`1,5${NB}с: — · 2${NB}с: — · 3${NB}с: — · 4${NB}с: —`);
   });
 
+  describe('the cost of re-adaptation (F9)', () => {
+    const at = (h: number): string => new Date(Date.now() - h * 60 * 60 * 1000).toISOString();
+    /** A session whose СЗМР segment opens with a block marked readapt (s 0.8, median 400 ms), then two at 0.86 and 365 ms. */
+    async function segment(repo: MemoryRepository, id: string, h: number): Promise<void> {
+      await repo.createSession(session(id, at(h), { endedAt: at(h - 1) }));
+      const played = [
+        { score: 0.8, rts: [400], readapt: true },
+        { score: 0.86, rts: [365] },
+        { score: 0.86, rts: [360, 365, 370] },
+      ];
+      for (const [i, b] of played.entries()) {
+        const summaryJson = JSON.stringify({ cleanHitRts: b.rts, ...(b.readapt === true ? { readapt: true } : {}) });
+        await repo.addBlock(block(`${id}${String(i)}`, id, at(h - i / 10), { module: 'szmr', score: b.score, summaryJson }), [], []);
+      }
+    }
+
+    it('three СЗМР segments in 28 days: the line by module, units kept with their numbers', async () => {
+      const repo = new MemoryRepository();
+      for (const [id, h] of [['a', 100], ['b', 50], ['c', 10]] as const) await segment(repo, id, h);
+      await renderProgress(repo);
+      const shown = screen.getByText(/после смены клавиш/);
+      expect(shown.textContent).toBe('Сложная реакция (СЗМР) — после смены клавиш: точность −6\u00a0%, время +35\u00a0мс в первом блоке');
+      expect(shown.closest('section')?.getAttribute('aria-labelledby')).toBe('levels-title');
+    });
+
+    it('two segments: no line', async () => {
+      const repo = new MemoryRepository();
+      for (const [id, h] of [['a', 100], ['b', 50]] as const) await segment(repo, id, h);
+      await renderProgress(repo);
+      expect(screen.queryByText(/после смены клавиш/)).toBeNull();
+    });
+  });
+
   it('says there were no overload blocks', async () => {
     await renderProgress();
     expect(screen.getByText('Блоков перегрузки за 28 дней не было.').closest('section')?.getAttribute('aria-labelledby')).toBe('levels-title');

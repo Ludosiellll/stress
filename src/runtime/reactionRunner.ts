@@ -4,15 +4,18 @@ import { medianOfSorted } from '../engine/stats';
 import { isDroppedFrame } from '../engine/timing';
 import type { FrameClock } from './frameClock';
 
-/** Draws stimuli. `show` and `tick` are called from inside a frame callback, so the drawing lands in that frame. */
+/**
+ * Draws stimuli. `show` and `tick` are called from inside a frame callback, so the drawing lands in that frame.
+ * `jitter` (F9): the trial's place and size, given to its cue and its stimulus alike; absent, centred as is.
+ */
 export interface StimulusRenderer {
-  show(s: Stimulus): void;
+  show(s: Stimulus, jitter?: TrialSpec['jitter']): void;
   hide(): void;
   /**
-   * Draws the trial's cue alone (task switching: the rule word), `TrialSpec.cueLeadMs` before the onset. The cue
-   * stays on screen with the stimulus; `hide` clears both. Renderers without cues leave it out.
+   * Draws the trial's cue alone (task switching: the rule word), `TrialSpec.cueLeadMs` before the onset, where the
+   * stimulus will come. The cue stays on screen with the stimulus; `hide` clears both. Renderers without cues leave it out.
    */
-  cue?(s: Stimulus): void;
+  cue?(s: Stimulus, jitter?: TrialSpec['jitter']): void;
   /**
    * RDO only: called on every frame while the stimulus is shown, with the time since onset at which this frame will
    * be seen (frame ts − onset + presentation lead; the lead alone on the onset frame).
@@ -162,6 +165,7 @@ function validate(o: RunnerOptions): void {
  *   that shows a stimulus draws no mark: one due there is dropped, so an onset frame draws once (T-R59). When two
  *   trials earn a mark between the same two frames, the earlier trial's is drawn. Onsets, deadlines and frame
  *   requests never depend on a mark.
+ * - Jitter (F9): a trial's cue and stimulus are drawn with its `jitter`; nothing in the timing depends on it.
  * - Background layers (visual noise): `onTrial(i)` when the wait for trial i begins, `renderer.beginFrame(ts)` in
  *   every frame before its transitions and `renderer.frame(ts)` after them. None changes an onset or a press time.
  * - `abort()` stops the loop and hides the stimulus; if the renderer throws, `start()` rejects with that error.
@@ -355,7 +359,8 @@ export class ReactionBlockRunner {
         case 'waiting':
           if (ph.cueAt !== null && ts >= ph.cueAt) {
             ph.cueAt = null;
-            this.renderer.cue?.((this.specs[ph.i] as TrialSpec).stimulus);
+            const { stimulus, jitter } = this.specs[ph.i] as TrialSpec;
+            this.renderer.cue?.(stimulus, jitter);
             // A cue callback that aborted the block leaves nothing to show.
             if (this.phase !== ph) return;
           }
@@ -410,7 +415,7 @@ export class ReactionBlockRunner {
     const leadMs = this.presentationLeadMs ?? this.frameInterval();
     // Phase first: a renderer callback that presses or aborts sees the trial as shown.
     this.phase = { kind: 'shown', i, onset: ts, deadline: ts + spec.windowMs, answeredAt: null, leadMs };
-    this.renderer.show(spec.stimulus);
+    this.renderer.show(spec.stimulus, spec.jitter);
     if (spec.stimulus.kind === 'rdo') this.renderer.tick(leadMs);
   }
 

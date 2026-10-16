@@ -5,13 +5,17 @@ import type { BlockRow } from '../data/rows';
 import {
   appendPast,
   cleanHitsByBand,
+  lastSetup,
   pastBlocks,
   rdoCycleCount,
   readCleanHits,
+  sameSetup,
+  setupOf,
   testFormatRuns,
   testFormatRunsAt,
   warmupDays,
   withBlock,
+  type SegmentSetup,
 } from './pastBlocks';
 import type { TestFormatMetrics } from './testFormat';
 
@@ -261,5 +265,62 @@ describe('rdoCycleCount (T-R61)', () => {
     appendPast(past, rdo('n', 'now'), 'free');
     expect(rdoCycleCount(past)).toBe(5);
     expect(rdoCycleCount(pastBlocks([], sessions))).toBe(0);
+  });
+});
+
+describe('the setup of a segment (F9, Р26)', () => {
+  const sessions = [
+    session('t', '2026-10-10T09:00:00'),
+    session('f', '2026-10-11T09:00:00', { kind: 'free' }),
+    session('d', '2026-10-12T09:00:00', { kind: 'diagnostic' }),
+  ];
+  const params = (o: Record<string, unknown>): string => JSON.stringify({ windowMs: 500, ...o });
+  const szmrBlock = (id: string, sessionId: string, o: Record<string, unknown>, over: Partial<BlockRow> = {}): BlockRow =>
+    block(id, sessionId, '2026-10-10T09:01:00', { module: 'szmr', paramsJson: params(o), ...over });
+
+  it('setupOf: the mapping, the layout and the Go/No-Go swap a block stored; null without a known layout', () => {
+    expect(setupOf(params({ layout: 'keyboard', mapping: [1, 0] }))).toEqual({ mapping: [1, 0], layout: 'keyboard', swapped: false });
+    expect(setupOf(params({ layout: 'mouse', swapped: true }))).toEqual({ mapping: null, layout: 'mouse', swapped: true });
+    expect(setupOf(params({ layout: 'pult', mapping: null, swapped: 'yes' }))).toEqual({ mapping: null, layout: 'pult', swapped: false });
+    // A mapping that is no list of key numbers reads as the canonical one.
+    for (const mapping of ['1,0', [1, -1], [0.5, 1], [1, '0'], {}]) {
+      expect(setupOf(params({ layout: 'keyboard', mapping }))?.mapping).toBeNull();
+    }
+    // Rows from before F9 have no layout; damaged ones none that reads.
+    for (const json of [params({}), params({ layout: 'joystick' }), params({ layout: 3 }), 'not json', '[1]']) expect(setupOf(json)).toBeNull();
+  });
+
+  it('sameSetup: every key of the mapping, the layout and the swap', () => {
+    const base: SegmentSetup = { mapping: [1, 0, 1], layout: 'keyboard', swapped: false };
+    expect(sameSetup(base, { ...base, mapping: [1, 0, 1] })).toBe(true);
+    expect(sameSetup(base, { ...base, mapping: [1, 0, 0] })).toBe(false);
+    expect(sameSetup(base, { ...base, mapping: [1, 0] })).toBe(false);
+    expect(sameSetup(base, { ...base, mapping: null })).toBe(false);
+    expect(sameSetup({ ...base, mapping: null }, { ...base, mapping: null })).toBe(true);
+    expect(sameSetup(base, { ...base, layout: 'pult' })).toBe(false);
+    expect(sameSetup(base, { ...base, swapped: true })).toBe(false);
+  });
+
+  it('lastSetup: the latest training or free block of the module with a layout, not a run, a warm-up or a counted Esc', () => {
+    const past = pastBlocks(
+      [
+        szmrBlock('a', 't', { layout: 'keyboard', mapping: [0, 1] }),
+        szmrBlock('b', 'f', { layout: 'pult', mapping: [1, 0] }, { flags: ['overload'] }),
+        // Left out: no layout (before F9), a diagnostic, a run, a warm-up, a counted Esc, another module.
+        szmrBlock('c', 'f', { mapping: [0, 1] }),
+        szmrBlock('e', 'd', { layout: 'mouse', mapping: null }),
+        szmrBlock('g', 't', { layout: 'mouse', mapping: null }, { flags: ['test_format'] }),
+        szmrBlock('h', 't', { layout: 'mouse', mapping: null }, { flags: ['warmup'] }),
+        szmrBlock('i', 't', { layout: 'mouse', mapping: [0, 1] }, { flags: ['discarded'] }),
+        szmrBlock('k', 't', { layout: 'mouse', mapping: [0, 1] }, { module: 'stroop' }),
+      ],
+      sessions,
+    );
+    expect(lastSetup(past, 'szmr')).toEqual({ mapping: [1, 0], layout: 'pult', swapped: false });
+    expect(lastSetup(past, 'stroop')).toEqual({ mapping: [0, 1], layout: 'mouse', swapped: false });
+    expect(lastSetup(past, 'pomeh')).toBeNull();
+    // A block of this session joins once it is stored.
+    appendPast(past, szmrBlock('n', 'now', { layout: 'keyboard', mapping: [0, 1] }), 'free');
+    expect(lastSetup(past, 'szmr')).toEqual({ mapping: [0, 1], layout: 'keyboard', swapped: false });
   });
 });

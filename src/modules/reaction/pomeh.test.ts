@@ -6,7 +6,7 @@ import { createRng } from '../../engine/rng';
 import { REACTION_MODULE_IDS } from '../../engine/types';
 import { reactionModules } from '../registry';
 import { NO_STRESSORS, stressorsOf } from './common';
-import { pomeh } from './pomeh';
+import { pomeh, type PomehParams } from './pomeh';
 
 const levelPair = fc
   .tuple(fc.double({ min: 0, max: 1000, noNaN: true }), fc.double({ min: 0, max: 1000, noNaN: true }))
@@ -53,6 +53,7 @@ describe('pomeh.params', () => {
       isiMax: 2500,
       noise: { distractors: 3, lifetimeMs: 1000, flicker: false, farOnly: true, forbidden: [RED_CIRCLE] },
       audio: null,
+      mapping: null,
     });
   });
 
@@ -291,5 +292,52 @@ describe('pomeh texts', () => {
       { label: 'Отвлекающих фигур', value: '14' },
       { label: 'Смена фигур', value: '120 мс' },
     ]);
+  });
+});
+
+describe('the segment mapping (F9)', () => {
+  const withMapping = (p: PomehParams, seed: number): PomehParams => {
+    if (pomeh.withMapping === undefined) throw new Error('Помехоустойчивость maps its keys');
+    return pomeh.withMapping(p, seed);
+  };
+
+  it('params(L) plays the canonical mapping: red → key 0, green → key 1 (Р26)', () => {
+    for (const L of [0, 8, 12, 20, 40]) expect(pomeh.params(L).mapping).toBeNull();
+  });
+
+  it('with the choice the keys change places in 48–52 % of 10 000 segments, by rng.next() < 0.5', () => {
+    const p = pomeh.params(12);
+    let swapped = 0;
+    for (let seed = 0; seed < 10_000; seed++) {
+      const { mapping } = withMapping(p, seed);
+      expect(mapping).toEqual(createRng(seed).next() < 0.5 ? [1, 0] : [0, 1]);
+      if (mapping?.[0] === 1) swapped++;
+    }
+    expect(swapped / 10_000).toBeGreaterThanOrEqual(0.48);
+    expect(swapped / 10_000).toBeLessThanOrEqual(0.52);
+  });
+
+  it('a simple-reaction block has one key and nothing to map', () => {
+    const p = pomeh.params(8);
+    for (const seed of [1, 2, 3, 4]) expect(withMapping(p, seed)).toBe(p);
+  });
+
+  it('the trials and the instruction follow the mapping', () => {
+    const p = { ...pomeh.params(20), mapping: [1, 0] as [number, number] };
+    for (const layout of ['keyboard', 'mouse', 'pult'] as const) {
+      const keys = layoutKeys(layout, 2).keys;
+      for (const t of pomeh.generateBlock(p, createRng(5), layout, 40)) {
+        if (t.stimulus.kind !== 'shape') throw new Error('expected a shape');
+        expect(t.expected).toEqual({ kind: 'press', key: keys[t.stimulus.color === 'red' ? 1 : 0] });
+      }
+    }
+    expect(pomeh.instruction('keyboard', p)).toBe(
+      'Красный круг в центре — J, зелёный круг — F. На остальные фигуры не реагируй.' +
+        ' Вместе с фигурами будет мерцать фон. В части блока будут звуковые помехи, надень наушники.',
+    );
+    // The same draws, other keys.
+    const canonical = pomeh.generateBlock(pomeh.params(20), createRng(5), 'keyboard', 40);
+    const mapped = pomeh.generateBlock(p, createRng(5), 'keyboard', 40);
+    expect(mapped.map((t) => ({ ...t, expected: undefined }))).toEqual(canonical.map((t) => ({ ...t, expected: undefined })));
   });
 });
