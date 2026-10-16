@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { MemoryRepository } from '../data/memoryRepository';
 import { block, session } from '../data/repository.contract';
 import type { BlockRow } from '../data/rows';
-import { appendPast, cleanHitsByBand, pastBlocks, readCleanHits, warmupDays } from './pastBlocks';
+import { appendPast, cleanHitsByBand, pastBlocks, readCleanHits, warmupDays, withBlock } from './pastBlocks';
 
 const hits = (rts: unknown): string => JSON.stringify({ meanRt: 300, cleanHitRts: rts });
 
@@ -39,6 +39,17 @@ describe('pastBlocks', () => {
     const rows: BlockRow[] = [block('a', 't', '2026-10-10T09:01:00')];
     appendPast(pastBlocks(rows, sessions), block('c', 't', '2026-10-15T09:01:00'), 'training');
     expect(rows).toHaveLength(1);
+  });
+
+  it('withBlock: the history with a block about to be stored, the history itself unchanged (T-R50)', () => {
+    const a = block('a', 't', '2026-10-10T09:01:00');
+    const past = pastBlocks([a], sessions);
+    const c = block('c', 'now', '2026-10-15T09:01:00');
+    const next = withBlock(past, c, 'free');
+    expect(next.blocks).toEqual([a, c]);
+    expect(next.kinds.get('now')).toBe('free');
+    expect(past.blocks).toEqual([a]);
+    expect(past.kinds.has('now')).toBe(false);
   });
 });
 

@@ -282,12 +282,21 @@ function bandBlock(module: BandModuleId, L: number, overload: boolean, ctx: Plan
 /**
  * «What changed» between two levels for the block summary, named as the block's segment plays them: a reaction module
  * describes its training parameters at both levels, so a swapped Go/No-Go segment names its swapped colours (T-R41),
- * and a band module's window is the one its blocks play (the floor of the band when that is larger, F3).
+ * and a band module's window is the one its blocks play (the floor of the band when that is larger, F3): at lBefore
+ * the window the block played (ctx.floors), at lAfter the one the next block plays, on `floorsAfter`, the floors with
+ * the block just played (T-R50).
  */
-export function levelChanges(module: ModuleId, lBefore: number, lAfter: number, task: TableTaskId | undefined, ctx: PlanContext): ParamChange[] {
+export function levelChanges(
+  module: ModuleId,
+  lBefore: number,
+  lAfter: number,
+  task: TableTaskId | undefined,
+  ctx: PlanContext,
+  floorsAfter: WindowFloors | null,
+): ParamChange[] {
   if (!isBandModule(module)) return describeChanges(module, lBefore, lAfter, task);
-  const at = (L: number): BandFields => bandBlock(module, L, false, ctx).params;
-  return describeParamChanges(module, at(lBefore), at(lAfter));
+  const at = (L: number, floors: WindowFloors | null): BandFields => bandBlock(module, L, false, { ...ctx, floors }).params;
+  return describeParamChanges(module, at(lBefore, ctx.floors), at(lAfter, floorsAfter));
 }
 
 /** A band module's training and free parameters at L with the load of `loadBand`; a Go/No-Go segment may swap its colours (F8). */

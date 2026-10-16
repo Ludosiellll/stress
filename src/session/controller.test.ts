@@ -1330,7 +1330,12 @@ describe('SessionController — the personal window floor and the load bands (F3
     expect(first.specs[0]?.windowMs).toBe(1000);
     await h.c.submitReaction(playTimeline(first.specs, slow));
     // A perfect calibration block: L 0 → 2, still band 0, whose 15 hits give the floor 1.2 × 700 above the nominal 727.
-    expect(expectStep(h.c, 'summary').view.lAfter).toBe(2);
+    const { view } = expectStep(h.c, 'summary');
+    expect(view.lAfter).toBe(2);
+    // The summary names the window the next block plays, on the floor of the hits just played (T-R50); so does the
+    // goal: band 1 takes that floor through its chain, so the window does not change up to the next step.
+    expect(view.changes).toEqual([{ label: 'Окно ответа', from: '1000 мс', to: '840 мс' }]);
+    expect(view.assessment?.goal).toBe('До ступени 2 «на подходе к формату теста»: уровень 4 (+2)');
     h.clock.advance(30_000);
     await h.c.continueAfterSummary();
     const second = expectStep(h.c, 'reaction_block');

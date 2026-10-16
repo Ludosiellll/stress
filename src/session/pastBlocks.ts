@@ -33,6 +33,16 @@ export function appendPast(past: PastBlocks, row: BlockRow, kind: SessionKind): 
   past.blocks.push(row);
 }
 
+/**
+ * The history as it will be once `row` is stored, `past` left as it is: what the block about to be stored changes for
+ * the next block (its window floor, T-R50) is told in its summary before the commit.
+ */
+export function withBlock(past: PastBlocks, row: BlockRow, kind: SessionKind): PastBlocks {
+  const next: PastBlocks = { blocks: [...past.blocks], kinds: new Map(past.kinds) };
+  appendPast(next, row, kind);
+  return next;
+}
+
 /** summaryJson.cleanHitRts (the clean hit RTs of a reaction block, F5); null when absent or damaged. */
 export function readCleanHits(summaryJson: string): number[] | null {
   const rts = parseObject(summaryJson)?.['cleanHitRts'];

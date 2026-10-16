@@ -39,7 +39,7 @@ import {
   type PlanContext,
   type WindowFloors,
 } from './blocks';
-import { appendPast, pastBlocks, warmupDays, type PastBlocks } from './pastBlocks';
+import { appendPast, pastBlocks, warmupDays, withBlock, type PastBlocks } from './pastBlocks';
 import { blockRow, errorLogRow, logicItemRows, sessionRow, trialRows, wellbeingRow } from './rowsBuild';
 import { SaveQueue, type SaveOutcome, type Write } from './saveQueue';
 import {
@@ -848,13 +848,16 @@ export class SessionController {
     const row = blockRow(id, this.sessionId, { module: b.module, lBefore: b.L, lAfter, score: b.score, flags }, active, JSON.stringify(summary));
     const { trials, items } = b.rows(id);
     const context = this.planContext(seg);
-    const assessment = this.assessOrLog(row, b.meanRating ?? null, context.floors);
+    // The window of the next block rests on the floors with this block's hits (T-R50): «what changed» and the goal
+    // name that window, not the one before the block.
+    const floorsAfter = context.floors === null || this.past === null ? null : floorsFrom(withBlock(this.past, row, this.plan.kind));
+    const assessment = this.assessOrLog(row, b.meanRating ?? null, floorsAfter);
     const view: BlockSummaryView = {
       module: b.module,
       title: moduleTitles[b.module],
       lBefore: b.L,
       lAfter,
-      changes: levelChanges(b.module, b.L, lAfter, b.task, context),
+      changes: levelChanges(b.module, b.L, lAfter, b.task, context, floorsAfter),
       score: b.viewScore ?? b.score,
       lines,
       flags,
