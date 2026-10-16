@@ -294,9 +294,11 @@ export const DIAGNOSTIC_VOLUME: Readonly<
 });
 
 /**
- * Diagnostic number n (shown and stored). Its blocks are generated from seedIndex: it defaults to n, and
- * callers pass «diagnostic sessions ever started + 1» so a diagnostic abandoned halfway is not replayed with
- * the same tables and series next time (I5). budgetMs is 0 everywhere: the volume is fixed (R16), the
+ * Diagnostic number n (shown and stored). Its blocks are generated from seedIndex: it defaults to n, and callers pass
+ * «diagnostic sessions ever started + 1» so a diagnostic abandoned halfway is not replayed with the same trials and
+ * tables next time (I5). The number series alone do not follow seedIndex: their form is the one after the last stored
+ * seriesFormIndex (nextSeriesForm, T-R73); an abandoned diagnostic stores nothing, so the next one may play its form
+ * again (accepted). budgetMs is 0 everywhere: the volume is fixed (R16), the
  * controller uses trialCount / runs / items instead of a time budget. The six 0.1.0 segments come first,
  * unchanged, so diagnostics stay comparable; the W2 segments follow the number series (П8). Memory plays the
  * span protocol (the controller builds it for a diagnostic), so its segment has no level or volume.

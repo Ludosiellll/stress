@@ -44,6 +44,8 @@ const MAX_FORM_RETRIES = 100;
 const TAIL_TERMS = 3;
 /** An item nearly repeats another with the same last NEAR_TERMS shown terms and the same answer (T-R74). */
 const NEAR_TERMS = 3;
+/** Two held-out items nearly repeat each other with WINDOW_TERMS consecutive terms in common, shifted too (T-R75). */
+const WINDOW_TERMS = 4;
 
 const MAX_ABS_TERM = 100000;
 /** Constant and 2-cycle series are unique but trivial (R13). */
@@ -131,12 +133,22 @@ export function candidateItem(family: FamilyId, seed: number, terms: readonly nu
  * family is rejected when any training family's rule, with its wide predictor ranges, fits all its shown terms, even
  * with the same answer (T-R70): a digit-sum series over multiples of 9 is a +9 progression, squares of a progression are
  * a second-order series. Nor may a training rule continue its last terms with its answer (T-R74): the last
- * TAIL_TERMS shown terms, or as many as the rule needs (MIN_TERMS) — a digit-sum chain that ends in a +18 run.
+ * TAIL_TERMS shown terms, or as many as the rule needs (MIN_TERMS) — a digit-sum chain that ends in a +18 run; arith there
+ * covers 3 equal last differences. Nor may its last 4 differences, the answer's included, alternate d1, d2, d1, d2
+ * (T-R75): the trained alternation rule solves such a tail, too short for alt's own fit (15, 3, 6, 3, 6).
  */
 function reducesToTraining(family: FamilyId, shown: readonly number[], answer: number): boolean {
   if (!HELD_OUT_FAMILIES.includes(family)) return false;
   if (fitPredictions(shown, TRAINING_FAMILIES).size > 0) return true;
-  return TRAINING_FAMILIES.some((f) => fitFamily(f, shown.slice(-Math.max(TAIL_TERMS, MIN_TERMS[f]))).has(answer));
+  if (TRAINING_FAMILIES.some((f) => fitFamily(f, shown.slice(-Math.max(TAIL_TERMS, MIN_TERMS[f]))).has(answer))) return true;
+  return alternatingTail([...shown, answer]);
+}
+
+/** The last 4 differences of `terms` are d1, d2, d1, d2 (T-R75). Called with at least 5 terms. */
+function alternatingTail(terms: readonly number[]): boolean {
+  const n = terms.length;
+  const d = (k: number): number => (terms[n - k] as number) - (terms[n - k - 1] as number);
+  return d(4) === d(2) && d(3) === d(1);
 }
 
 /** Attempt `attempt` of generateItem: a fresh candidate from its own rng, or null. Exported for tests. */
@@ -215,12 +227,12 @@ let forms: SeriesItem[][] | null = null;
  * The six forms, built once, form 0 to 5, each item in schedule order (T-R72, T-R74): item № of form f from
  * diagnosticSeriesSeed(f + 1, №, k), aimed at diagnosticAim, with the first k from 0 whose item neither repeats nor nearly
  * repeats (the same last 3 shown terms and answer) an earlier item of its form, nor, of a held-out family, an earlier
- * held-out item of any form.
+ * held-out item of any form, 4 consecutive terms in common included (T-R75).
  */
 function sixForms(): SeriesItem[][] {
   if (forms !== null) return forms;
   const schedule = diagnosticSeriesSchedule();
-  const heldOut = new RepeatGuard();
+  const heldOut = new RepeatGuard({ windows: true });
   const built: SeriesItem[][] = [];
   for (let f = 0; f < SERIES_FORMS; f++) {
     const form = new RepeatGuard();
@@ -241,20 +253,33 @@ function sixForms(): SeriesItem[][] {
   return built;
 }
 
-/** The items seen so far, by their shown terms and by their last NEAR_TERMS shown terms with the answer (T-R74). */
+/**
+ * The items seen so far, by their shown terms and by their last NEAR_TERMS shown terms with the answer (T-R74); with
+ * `windows`, also by every WINDOW_TERMS consecutive terms of shown + answer, so an item shifted by a term, which shows the
+ * other item's answer, repeats too (T-R75).
+ */
 export class RepeatGuard {
   private readonly keys = new Set<string>();
+  private readonly windows: boolean;
 
-  private static keysOf(it: { shown: readonly number[]; answer: number }): [string, string] {
-    return [`all:${it.shown.join(',')}`, `near:${it.shown.slice(-NEAR_TERMS).join(',')}→${String(it.answer)}`];
+  constructor(o: { windows?: boolean } = {}) {
+    this.windows = o.windows ?? false;
+  }
+
+  private keysOf(it: { shown: readonly number[]; answer: number }): string[] {
+    const keys = [`all:${it.shown.join(',')}`, `near:${it.shown.slice(-NEAR_TERMS).join(',')}→${String(it.answer)}`];
+    if (!this.windows) return keys;
+    const terms = [...it.shown, it.answer];
+    for (let i = 0; i + WINDOW_TERMS <= terms.length; i++) keys.push(`window:${terms.slice(i, i + WINDOW_TERMS).join(',')}`);
+    return keys;
   }
 
   has(it: { shown: readonly number[]; answer: number }): boolean {
-    return RepeatGuard.keysOf(it).some((k) => this.keys.has(k));
+    return this.keysOf(it).some((k) => this.keys.has(k));
   }
 
   add(it: { shown: readonly number[]; answer: number }): void {
-    for (const k of RepeatGuard.keysOf(it)) this.keys.add(k);
+    for (const k of this.keysOf(it)) this.keys.add(k);
   }
 }
 

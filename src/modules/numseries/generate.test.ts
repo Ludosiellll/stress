@@ -488,10 +488,10 @@ describe('the new families (F12)', () => {
       return [Math.min(...ds), Math.max(...ds)];
     };
     // powstep loses its squares (about half its candidates); digitsum its series over multiples of 9 and its chains that
-    // end in a run a trained rule continues (0.591 of 4000; T-R74).
+    // end in a run or an alternation a trained rule continues (0.569 of 4000; T-R74, T-R75).
     expect(accepted('powstep')).toBeGreaterThan(0.45);
     expect(accepted('twostep')).toBeGreaterThan(0.95);
-    expect(accepted('digitsum')).toBeGreaterThan(0.55);
+    expect(accepted('digitsum')).toBeGreaterThan(0.5);
     expect(range('powstep')).toEqual([1700, STRUCT_D_MAX.powstep]);
     expect(range('twostep')).toEqual([1500, STRUCT_D_MAX.twostep]);
     expect(range('digitsum')).toEqual([BASE_DIFFICULTY.digitsum, STRUCT_D_MAX.digitsum]);
@@ -547,6 +547,48 @@ describe('the new families (F12)', () => {
     expect(guard.has({ shown: [70, 84, 108, 127, 144], answer: 162 })).toBe(false);
   });
 
+  it('a held-out guard counts 4 consecutive terms in common as a near repeat, shifted too (T-R75)', () => {
+    const first = { shown: [-5, 58, 337, 994, 2191], answer: 4090 };
+    // Shifted by one term: it shows the other item's answer.
+    const shifted = { shown: [58, 337, 994, 2191, 4090], answer: 6853 };
+    const guard = new RepeatGuard({ windows: true });
+    guard.add(first);
+    expect(guard.has(shifted)).toBe(true);
+    // The same cube progression with another constant shares no term: it stays (recognising cubes is the skill tested).
+    expect(guard.has({ shown: [-1, 62, 341, 998, 2195], answer: 4094 })).toBe(false);
+    // Three consecutive terms in common are not enough.
+    expect(guard.has({ shown: [1, 2, 337, 994, 2191], answer: 7 })).toBe(false);
+    // The guard within a form looks at whole items and their ends only.
+    const plain = new RepeatGuard();
+    plain.add(first);
+    expect(plain.has(shifted)).toBe(false);
+  });
+
+  it('a held-out item whose last 4 differences alternate, or last 3 are constant, is rejected (T-R75)', () => {
+    // The review's digit-sum items: differences 15, 3, 6, 3, 6 and 6, 12, 15, 12, 15.
+    for (const t of [
+      [96, 111, 114, 120, 123, 129],
+      [51, 57, 69, 84, 96, 111],
+    ]) {
+      expect(fitFamily('digitsum', t.slice(0, -1)).has(t.at(-1) as number), t.join(',')).toBe(true);
+      expect(isUnique(t.slice(0, -1), t.at(-1) as number), t.join(',')).toBe(true);
+      expect(candidateItem('digitsum', 1, t), t.join(',')).toBeNull();
+    }
+    for (const f of HELD_OUT_FAMILIES) {
+      fc.assert(
+        fc.property(fc.integer({ min: 0, max: 2 ** 31 - 1 }), fc.integer({ min: 0, max: 199 }), (seed, attempt) => {
+          const item = attemptItem(f, seed, attempt);
+          if (item === null) return;
+          const terms = [...item.shown, item.answer];
+          const d = terms.slice(1).map((x, i) => x - (terms[i] as number)).slice(-4);
+          expect(d[0] === d[2] && d[1] === d[3], `${item.id} ${d.join(',')}`).toBe(false);
+          expect(d[1] === d[2] && d[2] === d[3], `${item.id} ${d.join(',')}`).toBe(false);
+        }),
+        { numRuns: 1000 },
+      );
+    }
+  }, 120_000);
+
   it('a held-out item whose last terms a training rule continues with its answer is rejected (T-R74)', () => {
     // The digit-sum chains of the review: each ends in a +18 run that arith continues with the answer.
     for (const t of [
@@ -580,8 +622,8 @@ describe('the new families (F12)', () => {
   }, 120_000);
 
   it('the six diagnostic forms: no repeat within a form or of a held-out item across forms, held-out items across their lower band, means within 40 (T-R72, T-R74)', () => {
-    // Mean D by form 0–5: 1382.5, 1387.5, 1380.0, 1375.0, 1380.0, 1367.5 (SD 259–270), average 1378.8: the largest gap is
-    // 11.3, so no rebalancing.
+    // Mean D by form 0–5: 1382.5, 1387.5, 1380.0, 1370.0, 1385.0, 1355.0 (SD 258–270), average 1376.7: the largest gap is
+    // 21.7, so no rebalancing.
     const forms = Array.from({ length: SERIES_FORMS }, (_, i) => diagnosticSeriesItems(i + 1));
     const schedule = diagnosticSeriesSchedule();
     const means = forms.map((items) => items.reduce((sum, it) => sum + it.difficulty, 0) / items.length);
@@ -599,11 +641,16 @@ describe('the new families (F12)', () => {
         expect(it.difficulty - lowest, it.id).toBeLessThanOrEqual(225);
       }
     }
-    // No held-out item, nor its near repeat, comes in two forms.
+    // No held-out item, nor its near repeat, comes in two forms; no two share 4 consecutive terms, shifted or not (T-R75).
     const held = forms.flat().filter((it) => HELD_OUT_FAMILIES.includes(it.family));
     expect(held).toHaveLength(54);
     expect(new Set(held.map((it) => it.shown.join(','))).size).toBe(54);
     expect(new Set(held.map(near)).size).toBe(54);
+    const windows = held.flatMap((it) => {
+      const terms = [...it.shown, it.answer];
+      return terms.slice(3).map((_, i) => terms.slice(i, i + 4).join(','));
+    });
+    expect(new Set(windows).size).toBe(windows.length);
     // The held-out items vary within their band: no single D takes every powstep or twostep item.
     for (const f of ['powstep', 'twostep'] as const) {
       expect(new Set(held.filter((it) => it.family === f).map((it) => it.difficulty)).size, f).toBeGreaterThan(1);
