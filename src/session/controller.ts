@@ -458,7 +458,7 @@ export class SessionController {
         ...(run === null ? {} : { title: run.title }),
         rows: (blockId) => ({ trials: trialRows(blockId, step.specs, tl, results), items: [] }),
         onCommit: () => {
-          if (!this.counted) this.diagParts.push({ module, summary, conditions });
+          if (!this.counted) this.diagParts.push({ module, summary, conditions, hitRts });
         },
       });
     });

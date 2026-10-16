@@ -23,7 +23,36 @@ const RESULTS: DiagnosticResults = {
   switchSwitchRt: 588,
   switchCostMs: -12,
   memorySpan: 7,
+  // A row like one stored before F7: no spread or error counts.
+  pzmrSdRt: null,
+  szmrSdRt: null,
+  pzmrIqrRt: null,
+  szmrIqrRt: null,
+  pzmrFalseStarts: null,
+  szmrFalseStarts: null,
+  szmrWrong: null,
+  gonogoCommissions: null,
+  gonogoOmissions: null,
+  rdoEarly: null,
+  rdoLate: null,
+  rdoSignedBiasMs: null,
   unreliable: [],
+};
+
+/** The F7 values (Справочник F7). */
+const F7 = {
+  pzmrSdRt: 38.4,
+  pzmrIqrRt: 41.2,
+  pzmrFalseStarts: 1,
+  szmrSdRt: 51.6,
+  szmrIqrRt: 60,
+  szmrFalseStarts: 0,
+  szmrWrong: 2,
+  gonogoCommissions: 3,
+  gonogoOmissions: 1,
+  rdoEarly: 12,
+  rdoLate: 9,
+  rdoSignedBiasMs: -6.2,
 };
 
 const PREVIOUS: DiagnosticResults = {
@@ -95,6 +124,28 @@ describe('Done', () => {
       ['Переключение правил — цена переключения', '−12 мс', '—'],
       ['Память — объём', '7', 'средний'],
     ]);
+  });
+
+  it('«Подробности диагностики»: spread and errors as lines under the table, which keeps its twelve rows (F7, Р20)', () => {
+    render(<Done diagnostic={{ ...RESULTS, ...F7 }} seriesTotal={20} summaries={[]} comparison={WITH_PREVIOUS} onHome={vi.fn()} />);
+    expect(cells()).toHaveLength(12);
+    const list = screen.getByRole('list', { name: 'Подробности диагностики' });
+    const items = within(list).getAllByRole('listitem').map((li) => li.textContent);
+    expect(items.map((t) => t.replaceAll('\u00a0', ' '))).toEqual([
+      'ПЗМР: разброс (SD) 38 мс, IQR 41 мс, фальстарты 1',
+      'СЗМР: разброс (SD) 52 мс, IQR 60 мс, фальстарты 0, неверная клавиша 2',
+      'Go/No-Go: нажатия на no-go 3, пропуски 1',
+      'РДО: рано 12, поздно 9, смещение −6 мс (раньше отметки)',
+    ]);
+    // A number keeps its unit (T-R26).
+    expect(items[0]).toBe('ПЗМР: разброс (SD) 38\u00a0мс, IQR 41\u00a0мс, фальстарты 1');
+    const table = screen.getByRole('table', { name: 'Результаты диагностики' });
+    expect(table.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('no «Подробности диагностики» when every F7 value is missing (a row stored before F7)', () => {
+    render(<Done diagnostic={RESULTS} seriesTotal={20} summaries={[]} comparison={WITH_PREVIOUS} onHome={vi.fn()} />);
+    expect(screen.queryByRole('list', { name: 'Подробности диагностики' })).toBeNull();
   });
 
   it('with a previous diagnostic: Прошлая, Изменение, Ориентир', () => {

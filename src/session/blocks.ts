@@ -9,6 +9,7 @@ import { resolveBlock } from '../engine/reaction/resolve';
 import { isCleanHitRt, summarize } from '../engine/reaction/summary';
 import type { BlockTimeline, ReactionSummary, TrialResult, TrialSpec } from '../engine/reaction/types';
 import { createRng, deriveSeed } from '../engine/rng';
+import { quantile, sdTrimmed } from '../engine/stats';
 import {
   isBandModule,
   isReactionModule,
@@ -550,7 +551,13 @@ export function checkMemoryAnswers(step: StepOf<'memory_block'>, answers: readon
 
 /** What one diagnostic block adds to DiagnosticResults. */
 export type DiagnosticPart =
-  | { module: ReactionModuleId; summary: ReactionSummary; conditions: ConditionStats }
+  | {
+      module: ReactionModuleId;
+      summary: ReactionSummary;
+      conditions: ConditionStats;
+      /** Clean hit RTs of the block (ScoredReaction.hitRts): the spread of ПЗМР and СЗМР (F7). */
+      hitRts: number[];
+    }
   | { module: 'gorbov'; run: number; seconds: number | null }
   | { module: 'numseries'; correct: number; total: number }
   | { module: 'memory'; span: number };
@@ -560,11 +567,19 @@ function condMetrics(conditions: ConditionStats, { slow, fast }: CondPair): [fas
   return [conditions[fast]?.medianRt ?? null, conditions[slow]?.medianRt ?? null, condCost(conditions, slow, fast)];
 }
 
+/** SD (sdTrimmed) and IQR of clean hit RTs; null below 2 of them (one RT has no spread, F7). */
+function spreadOf(hitRts: readonly number[]): [sd: number | null, iqr: number | null] {
+  if (hitRts.length < 2) return [null, null];
+  return [sdTrimmed(hitRts), quantile(hitRts, 0.75) - quantile(hitRts, 0.25)];
+}
+
 /**
  * pzmr/szmr medianRt and meanRt, gonogo score × 100 (percent, Ruling R18; the share of successes, never the penalised s,
  * so it stays comparable with 0.2.0, F1), rdo meanAbsErrorMs, Gorbov metrics only when all three runs were completed,
  * number series correct within the total limit; the condition medians and their difference of pomeh, stroop and
- * taskswitch, the memory span. Missing parts stay null.
+ * taskswitch, the memory span. F7: the SD and IQR of ПЗМР and СЗМР clean hits, their false starts, wrong keys of
+ * СЗМР, presses on no-go and misses + late answers of Go/No-Go, `early`, `timing_late` and the signed bias of РДО.
+ * Missing parts stay null.
  * Reaction blocks stored with timingUnreliable (after their replay) list their module in `unreliable`.
  */
 export function diagnosticResults(parts: readonly DiagnosticPart[]): DiagnosticResults {
@@ -576,16 +591,26 @@ export function diagnosticResults(parts: readonly DiagnosticPart[]): DiagnosticR
       case 'pzmr':
         r.pzmrMedianRt = p.summary.medianRt;
         r.pzmrMeanRt = p.summary.meanRt;
+        [r.pzmrSdRt, r.pzmrIqrRt] = spreadOf(p.hitRts);
+        r.pzmrFalseStarts = p.summary.counts.false_start;
         break;
       case 'szmr':
         r.szmrMedianRt = p.summary.medianRt;
         r.szmrMeanRt = p.summary.meanRt;
+        [r.szmrSdRt, r.szmrIqrRt] = spreadOf(p.hitRts);
+        r.szmrFalseStarts = p.summary.counts.false_start;
+        r.szmrWrong = p.summary.counts.wrong;
         break;
       case 'gonogo':
         r.gonogoScore = p.summary.score * 100;
+        r.gonogoCommissions = p.summary.counts.commission;
+        r.gonogoOmissions = p.summary.counts.miss + p.summary.counts.late;
         break;
       case 'rdo':
         r.rdoMeanAbsErrorMs = p.summary.meanAbsErrorMs;
+        r.rdoEarly = p.summary.counts.early;
+        r.rdoLate = p.summary.counts.timing_late;
+        r.rdoSignedBiasMs = p.summary.meanSignedErrorMs;
         break;
       case 'gorbov':
         seconds[p.run] = p.seconds;

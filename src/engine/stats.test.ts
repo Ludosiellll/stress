@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cv, mean, median, medianOfSorted, sd, sdTrimmed } from './stats';
+import { cv, mean, median, medianOfSorted, quantile, sd, sdTrimmed } from './stats';
 
 describe('stats', () => {
   it('mean', () => {
@@ -56,5 +56,18 @@ describe('stats', () => {
     expect(kept).toHaveLength(31);
     // 400 would be an outlier of the rest, but the trim runs once.
     expect(sdTrimmed(xs)).toBe(sd(kept));
+  });
+
+  it('quantile interpolates linearly between ranks at (k − 1)·p', () => {
+    expect(quantile([1, 2, 3, 4], 0.25)).toBe(1.75);
+    expect(quantile([1, 2, 3, 4], 0.75)).toBe(3.25);
+    expect(quantile([10], 0.5)).toBe(10);
+    // Order does not matter, the ends are the extremes, and the input is not sorted in place.
+    const xs = [4, 1, 3, 2];
+    expect(quantile(xs, 0)).toBe(1);
+    expect(quantile(xs, 1)).toBe(4);
+    expect(quantile(xs, 0.5)).toBe(2.5);
+    expect(xs).toEqual([4, 1, 3, 2]);
+    expect(quantile([], 0.5)).toBeNaN();
   });
 });

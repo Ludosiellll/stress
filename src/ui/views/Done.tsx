@@ -4,6 +4,7 @@ import { moduleTitles } from '../../modules/registry';
 import {
   DIAGNOSTIC_ROW_IDS,
   diagnosticChange,
+  diagnosticDetailLines,
   diagnosticNorm,
   diagnosticValue,
   diagnosticValueText,
@@ -75,6 +76,19 @@ function indexLine(c: DiagnosticComparison): string | null {
   return `Индекс: ${String(whole(c.readiness))}${previous}`;
 }
 
+/** «Подробности диагностики»: spread and errors as lines under the table, which keeps its twelve rows (F7, Р20). */
+function DetailLines({ d }: { d: DiagnosticResults }) {
+  const lines = diagnosticDetailLines(d);
+  if (lines.length === 0) return null;
+  return (
+    <ul aria-label="Подробности диагностики">
+      {lines.map((line) => (
+        <li key={line}>{noBreakUnits(line)}</li>
+      ))}
+    </ul>
+  );
+}
+
 function ResultsTable({ d, seriesTotal, comparison }: { d: DiagnosticResults; seriesTotal: number | null; comparison: DiagnosticComparison | null }) {
   const previous = comparison?.previous ?? null;
   return (
@@ -138,6 +152,7 @@ export default function Done({ diagnostic, seriesTotal, summaries, indexDeferred
     <div className="screen-center done">
       <h2 tabIndex={-1}>Сессия завершена</h2>
       {diagnostic !== null && <ResultsTable d={diagnostic} seriesTotal={seriesTotal} comparison={comparison} />}
+      {diagnostic !== null && <DetailLines d={diagnostic} />}
       {diagnostic !== null && comparison !== null && comparison.previous === null && (
         <p>{comparison.earlierUnreadable ? 'Прошлые диагностики не прочитаны — сравнивать не с чем.' : 'Первая диагностика — сравнивать пока не с чем'}</p>
       )}

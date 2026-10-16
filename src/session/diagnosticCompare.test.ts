@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { EMPTY_METRICS } from '../engine/diagnostic';
 import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
 import { isTwoChoice } from './blockHistory';
-import { DIAGNOSTIC_ROW_IDS, diagnosticChange, diagnosticNorm, diagnosticValue, diagnosticValueText } from './diagnosticCompare';
+import { DIAGNOSTIC_ROW_IDS, diagnosticChange, diagnosticDetailLines, diagnosticNorm, diagnosticValue, diagnosticValueText } from './diagnosticCompare';
 
 const D = { ...EMPTY_METRICS, pzmrMedianRt: 251.4, pzmrMeanRt: 262.4, szmrMedianRt: 402, szmrMeanRt: 401.6, gonogoScore: 93.3,
   rdoMeanAbsErrorMs: 18.6, gorbov: { V: 41.25, P: 70.5, Pi: -12 }, numseriesCorrect: 14, pomehQuietRt: 300, pomehNoisyRt: 335.2,
@@ -82,5 +82,34 @@ describe('diagnosticCompare', () => {
   it('no value, no reference band', () => {
     expect(DIAGNOSTIC_ROW_IDS.map((id) => diagnosticNorm(EMPTY_METRICS, id))).toEqual(DIAGNOSTIC_ROW_IDS.map(() => null));
     expect(DIAGNOSTIC_ROW_IDS.map((id) => diagnosticValue(EMPTY_METRICS, id))).toEqual(DIAGNOSTIC_ROW_IDS.map(() => null));
+  });
+});
+
+/** The F7 values of one diagnostic (Справочник F7). */
+const F7 = { ...EMPTY_METRICS, pzmrSdRt: 38.4, pzmrIqrRt: 41.2, pzmrFalseStarts: 1, szmrSdRt: 51.6, szmrIqrRt: 60, szmrFalseStarts: 0, szmrWrong: 2,
+  gonogoCommissions: 3, gonogoOmissions: 1, rdoEarly: 12, rdoLate: 9, rdoSignedBiasMs: -6.2 };
+
+describe('diagnosticDetailLines (F7, Р20)', () => {
+  it('spread and errors of each module, in the order of the table', () => {
+    expect(diagnosticDetailLines(F7)).toEqual([
+      'ПЗМР: разброс (SD) 38 мс, IQR 41 мс, фальстарты 1',
+      'СЗМР: разброс (SD) 52 мс, IQR 60 мс, фальстарты 0, неверная клавиша 2',
+      'Go/No-Go: нажатия на no-go 3, пропуски 1',
+      'РДО: рано 12, поздно 9, смещение −6 мс (раньше отметки)',
+    ]);
+  });
+
+  it('the РДО bias: + is after the mark, 0 has no side', () => {
+    expect(diagnosticDetailLines({ ...EMPTY_METRICS, rdoEarly: 2, rdoLate: 5, rdoSignedBiasMs: 4.4 })).toEqual(['РДО: рано 2, поздно 5, смещение +4 мс (позже отметки)']);
+    expect(diagnosticDetailLines({ ...EMPTY_METRICS, rdoEarly: 0, rdoLate: 0, rdoSignedBiasMs: -0.4 })).toEqual(['РДО: рано 0, поздно 0, смещение 0 мс']);
+  });
+
+  it('a module without data has no line; a row stored before F7 has none at all', () => {
+    expect(diagnosticDetailLines({ ...F7, szmrSdRt: null, szmrIqrRt: null, szmrFalseStarts: null, szmrWrong: null, gonogoCommissions: null, gonogoOmissions: null })).toEqual([
+      'ПЗМР: разброс (SD) 38 мс, IQR 41 мс, фальстарты 1',
+      'РДО: рано 12, поздно 9, смещение −6 мс (раньше отметки)',
+    ]);
+    expect(diagnosticDetailLines(D)).toEqual([]);
+    expect(diagnosticDetailLines(EMPTY_METRICS)).toEqual([]);
   });
 });

@@ -12,6 +12,7 @@ import { MIN_COND_RTS, condPairOf, type CondPair } from '../engine/reaction/cond
 import type { Outcome, ReactionSummary, Stimulus, TrialSpec } from '../engine/reaction/types';
 import { BAND_MODULES, REACTION_MODULE_IDS, isReactionModule, type FamilyId, type ModuleId, type ReactionModuleId } from '../engine/types';
 import { createRng, deriveSeed } from '../engine/rng';
+import { sdTrimmed } from '../engine/stats';
 import { generateMemoryTrials, SPAN_PROTOCOL_PARAMS, spanProtocolTrials } from '../modules/memory/generate';
 import { memoryModeForBlock, memoryParams } from '../modules/memory/params';
 import { FAMILIES } from '../modules/numseries/families';
@@ -51,7 +52,7 @@ import { logicItemRows } from './rowsBuild';
 import { MEMORY_SPAN_INSTRUCTION, OVERLOAD_PREFIX, OVERLOAD_SOUND_PREFIX, overloadBandPrefix, type StepOf } from './steps';
 import { testFormatInstruction } from './testFormat';
 
-const counts = {} as Record<Outcome, number>;
+const counts: Record<Outcome, number> = { hit: 0, wrong: 0, miss: 0, late: 0, false_start: 0, commission: 0, correct_reject: 0, early: 0, timing_late: 0 };
 /** penalizedScore differs from score: the diagnostic reads the share of successes, never the penalised s (F1). */
 const summary = (over: Partial<ReactionSummary>): ReactionSummary => ({
   n: 10,
@@ -933,11 +934,11 @@ describe('number series', () => {
 describe('diagnosticResults', () => {
   it('lists the reaction modules whose stored block was timingUnreliable, keeping their values (I1)', () => {
     const r = diagnosticResults([
-      { module: 'pzmr', summary: summary({ medianRt: 301, timingUnreliable: true }), conditions: {} },
-      { module: 'szmr', summary: summary({ medianRt: 402 }), conditions: {} },
-      { module: 'rdo', summary: summary({ meanAbsErrorMs: 20, timingUnreliable: true }), conditions: {} },
+      { module: 'pzmr', summary: summary({ medianRt: 301, timingUnreliable: true }), hitRts: [], conditions: {} },
+      { module: 'szmr', summary: summary({ medianRt: 402 }), hitRts: [], conditions: {} },
+      { module: 'rdo', summary: summary({ meanAbsErrorMs: 20, timingUnreliable: true }), hitRts: [], conditions: {} },
       { module: 'gorbov', run: 0, seconds: 30 },
-      { module: 'stroop', summary: summary({ timingUnreliable: true }), conditions: {} },
+      { module: 'stroop', summary: summary({ timingUnreliable: true }), hitRts: [], conditions: {} },
     ]);
     expect(r.unreliable).toEqual(['pzmr', 'rdo', 'stroop']);
     expect(r.pzmrMedianRt).toBe(301);
@@ -947,26 +948,39 @@ describe('diagnosticResults', () => {
   it('fills each metric from its block; Gorbov needs all three runs completed', () => {
     const cond = (medianRt: number | null) => ({ n: 20, errors: 0, medianRt });
     const all = diagnosticResults([
-      { module: 'pzmr', summary: summary({ medianRt: 301 }), conditions: {} },
-      { module: 'szmr', summary: summary({ medianRt: 402 }), conditions: {} },
-      { module: 'gonogo', summary: summary({ score: 57 / 60, penalizedScore: 52 / 60 }), conditions: {} },
-      { module: 'rdo', summary: summary({ meanAbsErrorMs: 23.5 }), conditions: {} },
+      { module: 'pzmr', summary: summary({ medianRt: 301 }), hitRts: [], conditions: {} },
+      { module: 'szmr', summary: summary({ medianRt: 402 }), hitRts: [], conditions: {} },
+      { module: 'gonogo', summary: summary({ score: 57 / 60, penalizedScore: 52 / 60 }), hitRts: [], conditions: {} },
+      { module: 'rdo', summary: summary({ meanAbsErrorMs: 23.5 }), hitRts: [], conditions: {} },
       { module: 'gorbov', run: 0, seconds: 30 },
       { module: 'gorbov', run: 1, seconds: 35 },
       { module: 'gorbov', run: 2, seconds: 70 },
       { module: 'numseries', correct: 14, total: 20 },
-      { module: 'pomeh', summary: summary({}), conditions: { quiet: cond(300), noisy: cond(335) } },
-      { module: 'stroop', summary: summary({}), conditions: { congruent: cond(520), incongruent: cond(610) } },
-      { module: 'taskswitch', summary: summary({}), conditions: { repeat: cond(600), switch: cond(580) } },
+      { module: 'pomeh', summary: summary({}), hitRts: [], conditions: { quiet: cond(300), noisy: cond(335) } },
+      { module: 'stroop', summary: summary({}), hitRts: [], conditions: { congruent: cond(520), incongruent: cond(610) } },
+      { module: 'taskswitch', summary: summary({}), hitRts: [], conditions: { repeat: cond(600), switch: cond(580) } },
       { module: 'memory', span: 7 },
     ]);
     expect(all).toEqual({
       pzmrMedianRt: 301,
       pzmrMeanRt: null,
+      // No clean hits: no SD or IQR; every error count 0.
+      pzmrSdRt: null,
+      pzmrIqrRt: null,
+      pzmrFalseStarts: 0,
       szmrMedianRt: 402,
       szmrMeanRt: null,
+      szmrSdRt: null,
+      szmrIqrRt: null,
+      szmrFalseStarts: 0,
+      szmrWrong: 0,
       gonogoScore: (57 / 60) * 100,
+      gonogoCommissions: 0,
+      gonogoOmissions: 0,
       rdoMeanAbsErrorMs: 23.5,
+      rdoEarly: 0,
+      rdoLate: 0,
+      rdoSignedBiasMs: null,
       gorbov: gorbovMetrics(30, 35, 70),
       numseriesCorrect: 14,
       pomehQuietRt: 300,
@@ -982,9 +996,9 @@ describe('diagnosticResults', () => {
       unreliable: [],
     });
     // A condition with fewer than 3 RTs has no median: its difference is missing, the other median is kept.
-    const partial = diagnosticResults([{ module: 'stroop', summary: summary({}), conditions: { congruent: cond(520), incongruent: cond(null) } }]);
+    const partial = diagnosticResults([{ module: 'stroop', summary: summary({}), hitRts: [], conditions: { congruent: cond(520), incongruent: cond(null) } }]);
     expect(partial).toMatchObject({ stroopCongruentRt: 520, stroopIncongruentRt: null, stroopInterferenceMs: null });
-    expect(diagnosticResults([{ module: 'pomeh', summary: summary({}), conditions: {} }])).toMatchObject({
+    expect(diagnosticResults([{ module: 'pomeh', summary: summary({}), hitRts: [], conditions: {} }])).toMatchObject({
       pomehQuietRt: null,
       pomehNoisyRt: null,
       pomehDeltaMs: null,
@@ -997,9 +1011,26 @@ describe('diagnosticResults', () => {
 
   it('diagnosticResults keeps the mean RTs of ПЗМР and СЗМР', () => {
     const r = diagnosticResults([
-      { module: 'pzmr', summary: summary({ medianRt: 301, meanRt: 312.5 }), conditions: {} },
-      { module: 'szmr', summary: summary({ medianRt: 402, meanRt: 410 }), conditions: {} },
+      { module: 'pzmr', summary: summary({ medianRt: 301, meanRt: 312.5 }), hitRts: [], conditions: {} },
+      { module: 'szmr', summary: summary({ medianRt: 402, meanRt: 410 }), hitRts: [], conditions: {} },
     ]);
     expect(r).toMatchObject({ pzmrMedianRt: 301, pzmrMeanRt: 312.5, szmrMedianRt: 402, szmrMeanRt: 410 });
+  });
+
+  it('diagnosticResults keeps SD, IQR and error counts', () => {
+    const hitRts = [300, 310, 320, 330, 340];
+    const r = diagnosticResults([
+      { module: 'pzmr', summary: summary({ counts: { ...counts, hit: 5, false_start: 1 } }), hitRts, conditions: {} },
+      { module: 'szmr', summary: summary({ counts: { ...counts, hit: 3, wrong: 2 } }), hitRts: [400, 500, 450], conditions: {} },
+      { module: 'gonogo', summary: summary({ counts: { ...counts, commission: 3, miss: 1, late: 1 } }), hitRts: [], conditions: {} },
+      { module: 'rdo', summary: summary({ counts: { ...counts, early: 12, timing_late: 9 }, meanSignedErrorMs: -6.2 }), hitRts: [], conditions: {} },
+    ]);
+    expect(r).toMatchObject({ pzmrSdRt: sdTrimmed(hitRts), pzmrIqrRt: 20, pzmrFalseStarts: 1 });
+    expect(r).toMatchObject({ szmrSdRt: 50, szmrIqrRt: 50, szmrFalseStarts: 0, szmrWrong: 2 });
+    expect(r).toMatchObject({ gonogoCommissions: 3, gonogoOmissions: 2 });
+    expect(r).toMatchObject({ rdoEarly: 12, rdoLate: 9, rdoSignedBiasMs: -6.2 });
+    // One clean hit has no spread: SD and IQR stay null, the counts are kept.
+    const one = diagnosticResults([{ module: 'pzmr', summary: summary({ counts: { ...counts, false_start: 2 } }), hitRts: [300], conditions: {} }]);
+    expect(one).toMatchObject({ pzmrSdRt: null, pzmrIqrRt: null, pzmrFalseStarts: 2 });
   });
 });

@@ -147,3 +147,34 @@ export function diagnosticNorm(d: DiagnosticMetrics, id: DiagnosticRowId): strin
   const value = diagnosticValue(d, id);
   return norm === undefined || value === null ? null : gradeByBands(value, NORMS[norm]).label;
 }
+
+/** «−6 мс (раньше отметки)», «+4 мс (позже отметки)», «0 мс»: the РДО bias as shown, below 0 before the mark. */
+function biasText(ms: number): string {
+  const b = whole(ms);
+  if (b === 0) return '0 мс';
+  return `${signedMs(b)} мс (${b < 0 ? 'раньше' : 'позже'} отметки)`;
+}
+
+/**
+ * «Подробности диагностики» under the results table (F7, Р20): the spread and the errors of ПЗМР, СЗМР, Go/No-Go and
+ * РДО, ms whole. A module has a line only when every value of it is there: rows stored before F7 have none.
+ */
+export function diagnosticDetailLines(d: DiagnosticMetrics): string[] {
+  const lines: string[] = [];
+  const { pzmrSdRt, pzmrIqrRt, pzmrFalseStarts, szmrSdRt, szmrIqrRt, szmrFalseStarts, szmrWrong } = d;
+  if (pzmrSdRt !== null && pzmrIqrRt !== null && pzmrFalseStarts !== null) {
+    lines.push(`ПЗМР: разброс (SD) ${String(whole(pzmrSdRt))} мс, IQR ${String(whole(pzmrIqrRt))} мс, фальстарты ${String(pzmrFalseStarts)}`);
+  }
+  if (szmrSdRt !== null && szmrIqrRt !== null && szmrFalseStarts !== null && szmrWrong !== null) {
+    lines.push(
+      `СЗМР: разброс (SD) ${String(whole(szmrSdRt))} мс, IQR ${String(whole(szmrIqrRt))} мс, фальстарты ${String(szmrFalseStarts)}, неверная клавиша ${String(szmrWrong)}`,
+    );
+  }
+  if (d.gonogoCommissions !== null && d.gonogoOmissions !== null) {
+    lines.push(`Go/No-Go: нажатия на no-go ${String(d.gonogoCommissions)}, пропуски ${String(d.gonogoOmissions)}`);
+  }
+  if (d.rdoEarly !== null && d.rdoLate !== null && d.rdoSignedBiasMs !== null) {
+    lines.push(`РДО: рано ${String(d.rdoEarly)}, поздно ${String(d.rdoLate)}, смещение ${biasText(d.rdoSignedBiasMs)}`);
+  }
+  return lines;
+}

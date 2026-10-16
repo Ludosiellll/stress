@@ -29,11 +29,25 @@ export function bandScore(value: number, points: Points): number {
   return y0 + ((y1 - y0) * (value - x0)) / (x1 - x0);
 }
 
-/** Score relative to the own baseline v0 (callers pass max(v0, 1)): 60 at baseline, ±40 per 25 %, clamped to [0, 100]. */
-export function baselineScore(v: number, v0: number, lowerIsBetter: boolean): number {
+/**
+ * Score relative to the own baseline v0 (callers pass max(v0, 1)): 60 at baseline, ±40 per `share` of v0 (25 % by
+ * default), clamped to [0, 100].
+ */
+export function baselineScore(v: number, v0: number, lowerIsBetter: boolean, share = 0.25): number {
   const diff = lowerIsBetter ? v0 - v : v - v0;
-  const raw = 60 + (40 * diff) / (0.25 * v0);
+  const raw = 60 + (40 * diff) / (share * v0);
   return Math.min(100, Math.max(0, raw));
+}
+
+/**
+ * Share of the baseline per 40 points of an SD part: the trimmed SD of 50–70 trials is noisy by 16–23 %, so the part
+ * moves by ≤ 23 points SD without a real change (spec 2026-10-15 §4.1, §8.6).
+ */
+export const SD_SCALE = 0.6;
+
+/** Score of an RT SD (lower is better) against its baseline v0 (callers pass max(v0, 1)): baselineScore with SD_SCALE (F7). */
+export function sdScore(v: number, v0: number): number {
+  return baselineScore(v, v0, true, SD_SCALE);
 }
 
 /** Step of diffScore per module: 40 points per this many ms (≈ 2 standard errors of a median difference, П1). */
@@ -63,6 +77,18 @@ export function mergedBaseline(results: readonly DiagnosticMetrics[]): Diagnosti
     pzmrMeanRt: first('pzmrMeanRt'),
     szmrMedianRt: first('szmrMedianRt'),
     szmrMeanRt: first('szmrMeanRt'),
+    pzmrSdRt: first('pzmrSdRt'),
+    szmrSdRt: first('szmrSdRt'),
+    pzmrIqrRt: first('pzmrIqrRt'),
+    szmrIqrRt: first('szmrIqrRt'),
+    pzmrFalseStarts: first('pzmrFalseStarts'),
+    szmrFalseStarts: first('szmrFalseStarts'),
+    szmrWrong: first('szmrWrong'),
+    gonogoCommissions: first('gonogoCommissions'),
+    gonogoOmissions: first('gonogoOmissions'),
+    rdoEarly: first('rdoEarly'),
+    rdoLate: first('rdoLate'),
+    rdoSignedBiasMs: first('rdoSignedBiasMs'),
     gonogoScore: first('gonogoScore'),
     rdoMeanAbsErrorMs: first('rdoMeanAbsErrorMs'),
     gorbov: first('gorbov'),
@@ -86,8 +112,10 @@ function avg(scores: readonly number[]): number | null {
 
 /**
  * Abilities of the latest diagnostic against the baseline (§7.5). An ability is the mean of the parts that both
- * diagnostics have; a part missing on either side (e.g. a W2 metric of a 0.1.0 row) is left out, never scored as 0,
- * and an ability without any part is null. The overall index is the mean of the abilities that are not null.
+ * diagnostics have; a part missing on either side (e.g. a W2 metric of a 0.1.0 row, the SD of a 0.2.0 one) is left
+ * out, never scored as 0, and an ability without any part is null. «Реакция» includes the SD of ПЗМР and СЗМР
+ * (sdScore, F7); the F7 error counts and IQR are only shown. The overall index is the mean of the abilities that are
+ * not null.
  */
 export function readiness(
   latest: DiagnosticMetrics,
@@ -97,6 +125,7 @@ export function readiness(
     v === null || v0 === null ? [] : [baselineScore(v, Math.max(v0, 1), lowerIsBetter)];
   const diff = (v: number | null, v0: number | null, scale: number): number[] =>
     v === null || v0 === null ? [] : [diffScore(v, v0, scale)];
+  const spread = (v: number | null, v0: number | null): number[] => (v === null || v0 === null ? [] : [sdScore(v, Math.max(v0, 1))]);
   // V on the paper scale: scored from the latest result alone, no baseline needed (R18a).
   const gorbovV = latest.gorbov === null ? [] : [bandScore(latest.gorbov.V, BAND_GORBOV_V)];
   // Π against its own baseline, like the other differences (spec 2026-10-15 §4).
@@ -108,6 +137,8 @@ export function readiness(
       ...rel(latest.szmrMedianRt, baseline.szmrMedianRt, true),
       ...rel(latest.rdoMeanAbsErrorMs, baseline.rdoMeanAbsErrorMs, true),
       ...diff(latest.pomehDeltaMs, baseline.pomehDeltaMs, DIFF_SCALE_MS.pomeh),
+      ...spread(latest.pzmrSdRt, baseline.pzmrSdRt),
+      ...spread(latest.szmrSdRt, baseline.szmrSdRt),
     ]),
     attention: avg([
       ...gorbovV,
@@ -131,6 +162,8 @@ export const BASELINE_METRICS = [
   'szmrMedianRt',
   'rdoMeanAbsErrorMs',
   'pomehDeltaMs',
+  'pzmrSdRt',
+  'szmrSdRt',
   'gonogoScore',
   'stroopInterferenceMs',
   'switchCostMs',

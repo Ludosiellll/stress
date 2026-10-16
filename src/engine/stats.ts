@@ -43,3 +43,18 @@ export function sdTrimmed(xs: readonly number[]): number {
   const s = sd(xs);
   return sd(xs.filter((x) => Math.abs(x - m) <= 3 * s));
 }
+
+/**
+ * The p-quantile (0 ≤ p ≤ 1) with linear interpolation between ranks: the sorted values at (k − 1)·p (Справочник F7,
+ * IQR). NaN for none.
+ */
+export function quantile(xs: readonly number[], p: number): number {
+  const sorted = [...xs].sort((a, b) => a - b);
+  const last = sorted.length - 1;
+  if (last < 0) return NaN;
+  const at = last * p;
+  const lo = Math.floor(at);
+  const below = sorted[lo] as number;
+  const above = sorted[Math.min(lo + 1, last)] as number;
+  return below + (above - below) * (at - lo);
+}

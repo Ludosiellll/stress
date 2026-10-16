@@ -20,6 +20,7 @@ import { currentPhase, type PhaseInfo } from '../engine/phases';
 import { planFree, planTraining, type ModuleState, type Segment, type SessionPlan, type TestFormatId } from '../engine/planner';
 import { readinessOfLatest } from '../engine/readiness';
 import { createRng, deriveSeed } from '../engine/rng';
+import { sdTrimmed } from '../engine/stats';
 import { MODULE_IDS, type InputKey, type LayoutId, type ModuleId } from '../engine/types';
 import { describeChanges } from '../modules/describe';
 import { generateMemoryTrials, spanProtocolTrials, type MemoryTrial } from '../modules/memory/generate';
@@ -2486,6 +2487,22 @@ describe('SessionController — number series', () => {
   });
 });
 
+/** The F7 values of a diagnostic played by perfectPlayer: every RT 300 ms, every timed answer on target, no errors. */
+const PERFECT_F7 = {
+  pzmrSdRt: 0,
+  szmrSdRt: 0,
+  pzmrIqrRt: 0,
+  szmrIqrRt: 0,
+  pzmrFalseStarts: 0,
+  szmrFalseStarts: 0,
+  szmrWrong: 0,
+  gonogoCommissions: 0,
+  gonogoOmissions: 0,
+  rdoEarly: 0,
+  rdoLate: 0,
+  rdoSignedBiasMs: 0,
+};
+
 describe('SessionController — diagnostics', () => {
   /** Fails every practice trial (no press), perfect otherwise. */
   const skipsPractice: Respond = (spec, idx) => (spec.practice ? null : perfectPlayer(spec, idx));
@@ -2556,6 +2573,8 @@ describe('SessionController — diagnostics', () => {
       szmrMeanRt: 300,
       gonogoScore: 100,
       rdoMeanAbsErrorMs: 0,
+      // F7: every RT 300 ms, no errors.
+      ...PERFECT_F7,
       gorbov: gorbovMetrics(7.2, 7.5, 14.7),
       numseriesCorrect: 20,
       unreliable: [],
@@ -2711,6 +2730,25 @@ describe('SessionController — diagnostics', () => {
     return { ...plan, segments: plan.segments.filter((x) => x.module === module) };
   };
 
+  it('a diagnostic stores the spread of the clean hits and the false starts of ПЗМР (F7)', async () => {
+    const h = await begin(only('pzmr'));
+    // RTs 280…320 ms in turn; trials 10 and 20 are false starts (50 ms after the onset).
+    const uneven: Respond = (spec, idx) => {
+      const r = perfectPlayer(spec, idx);
+      if (r === null) return r;
+      return { ...r, rtMs: idx === 10 || idx === 20 ? 50 : 280 + 10 * (idx % 5) };
+    };
+    await playReaction(h, uneven);
+    await h.c.continueAfterSummary();
+    const done = expectStep(h.c, 'done');
+    // 50 trials after 5 practice ones: 48 hits, 280 ms eight times (two of its trials were false starts), the rest ten.
+    const hits = [...Array<number>(8).fill(280), ...[290, 300, 310, 320].flatMap((rt) => Array<number>(10).fill(rt))];
+    expect(done.diagnostic).toMatchObject({ pzmrIqrRt: 20, pzmrFalseStarts: 2 });
+    expect(done.diagnostic?.pzmrSdRt).toBeCloseTo(sdTrimmed(hits), 10);
+    const [row] = await h.repo.listDiagnostics();
+    expect(JSON.parse(row?.resultsJson ?? '')).toEqual(done.diagnostic);
+  });
+
   it('diagnostic plays ten segments and fills the W2 metrics', async () => {
     const h = await begin(planDiagnostic(1));
     // 80 ms slower on incongruent Stroop and on switch trials, 30 ms slower with noise.
@@ -2767,6 +2805,7 @@ describe('SessionController — diagnostics', () => {
       pzmrMeanRt: 300,
       szmrMedianRt: 300,
       szmrMeanRt: 300,
+      ...PERFECT_F7,
       gonogoScore: 100,
       rdoMeanAbsErrorMs: 0,
       gorbov: gorbovMetrics(7.2, 7.5, 14.7),

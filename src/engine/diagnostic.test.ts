@@ -124,6 +124,18 @@ describe('parseResults', () => {
       ...w1,
       pzmrMeanRt: null,
       szmrMeanRt: null,
+      pzmrSdRt: null,
+      szmrSdRt: null,
+      pzmrIqrRt: null,
+      szmrIqrRt: null,
+      pzmrFalseStarts: null,
+      szmrFalseStarts: null,
+      szmrWrong: null,
+      gonogoCommissions: null,
+      gonogoOmissions: null,
+      rdoEarly: null,
+      rdoLate: null,
+      rdoSignedBiasMs: null,
       pomehQuietRt: null,
       pomehNoisyRt: null,
       pomehDeltaMs: null,
@@ -145,6 +157,33 @@ describe('parseResults', () => {
     expect(r).toEqual({ ...EMPTY, pzmrMedianRt: 300, szmrMedianRt: 450, memorySpan: 7 });
     expect(r?.pzmrMeanRt).toBeNull();
     expect(r?.szmrMeanRt).toBeNull();
+  });
+
+  it('old rows read the F7 metrics as null', () => {
+    // A row stored before F7: every earlier metric, none of the SD, IQR and error counts.
+    const f7 = [
+      'pzmrSdRt',
+      'szmrSdRt',
+      'pzmrIqrRt',
+      'szmrIqrRt',
+      'pzmrFalseStarts',
+      'szmrFalseStarts',
+      'szmrWrong',
+      'gonogoCommissions',
+      'gonogoOmissions',
+      'rdoEarly',
+      'rdoLate',
+      'rdoSignedBiasMs',
+    ] as const;
+    const before = { ...EMPTY, pzmrMedianRt: 300, pzmrMeanRt: 310, gonogoScore: 90, memorySpan: 7 };
+    const old = Object.fromEntries(Object.entries(before).filter(([k]) => !(f7 as readonly string[]).includes(k)));
+    expect(Object.keys(old)).not.toContain('pzmrSdRt');
+    const r = parseResults({ resultsJson: JSON.stringify(old) });
+    expect(r).toEqual(before);
+    for (const k of f7) expect(r?.[k], k).toBeNull();
+    // A row with them keeps them; a damaged one reads null.
+    const now = parseResults({ resultsJson: JSON.stringify({ ...before, pzmrSdRt: 38.5, szmrWrong: 2, rdoSignedBiasMs: -6.2, gonogoOmissions: '1' }) });
+    expect(now).toMatchObject({ pzmrSdRt: 38.5, szmrWrong: 2, rdoSignedBiasMs: -6.2, gonogoOmissions: null });
   });
 
   it('keeps only reaction module ids in `unreliable`', () => {

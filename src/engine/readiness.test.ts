@@ -8,9 +8,11 @@ import {
   bandScore,
   diffScore,
   BASELINE_METRICS,
+  SD_SCALE,
   mergedBaseline,
   readiness,
   readinessOfLatest,
+  sdScore,
 } from './readiness';
 import { EMPTY_METRICS, type DiagnosticMetrics, type DiagnosticResults } from './diagnostic';
 
@@ -139,6 +141,25 @@ describe('baselineScore', () => {
   });
 });
 
+describe('sdScore (F7)', () => {
+  it('SD against its own baseline: 40 points per 60 % of the baseline (spec §4.1)', () => {
+    expect(sdScore(40, 40)).toBe(60);
+    expect(sdScore(16, 40)).toBe(100);
+    expect(sdScore(52, 40)).toBe(40);
+    expect(sdScore(100, 40)).toBe(0);
+    expect(SD_SCALE).toBe(0.6);
+  });
+
+  it('is baselineScore with the share 0.6 (T-R19)', () => {
+    fc.assert(
+      fc.property(fc.double({ min: 0, max: 1e4, noNaN: true }), fc.double({ min: 1, max: 1e4, noNaN: true }), (v, v0) => {
+        expect(sdScore(v, v0)).toBe(baselineScore(v, v0, true, SD_SCALE));
+      }),
+      { numRuns: 1000 },
+    );
+  });
+});
+
 describe('readiness', () => {
   it('with baseline = latest, baseline-scored abilities are 60 and V uses its band', () => {
     const d = full();
@@ -254,6 +275,19 @@ describe('readiness', () => {
     expect(r.abilities.logic).toBe(60);
   });
 
+  it('reaction takes the two SD parts when both diagnostics have them', () => {
+    const baseline = full({ pzmrSdRt: 40, szmrSdRt: 50 });
+    const latest = full({ pzmrSdRt: 52, szmrSdRt: 50 });
+    // ПЗМР, СЗМР and РДО at their baseline (60 each), SD ПЗМР 52 against 40 (40), SD СЗМР at its baseline (60).
+    expect(readiness(latest, baseline).abilities.reaction).toBe((60 + 60 + 60 + 40 + 60) / 5);
+    // The errors are only shown: they never move the index.
+    const errors = { pzmrFalseStarts: 5, szmrFalseStarts: 4, szmrWrong: 6, gonogoCommissions: 9, gonogoOmissions: 3, rdoEarly: 12, rdoLate: 9, rdoSignedBiasMs: -40 };
+    expect(readiness({ ...latest, ...errors }, baseline)).toEqual(readiness(latest, baseline));
+    // A side without SD (a row stored before F7): the part is left out, never scored.
+    expect(readiness(latest, full()).abilities.reaction).toBe(60);
+    expect(readiness(full(), baseline).abilities.reaction).toBe(60);
+  });
+
   it('property: all non-null scores are within [0, 100]', () => {
     const num = fc.option(fc.double({ min: 0, max: 2000, noNaN: true }), { nil: null });
     const g = fc.option(
@@ -268,9 +302,21 @@ describe('readiness', () => {
     const res = fc.record({
       pzmrMedianRt: num,
       pzmrMeanRt: num,
+      pzmrSdRt: num,
+      pzmrIqrRt: num,
+      pzmrFalseStarts: num,
       szmrMedianRt: num,
       szmrMeanRt: num,
+      szmrSdRt: num,
+      szmrIqrRt: num,
+      szmrFalseStarts: num,
+      szmrWrong: num,
       gonogoScore: num,
+      gonogoCommissions: num,
+      gonogoOmissions: num,
+      rdoEarly: num,
+      rdoLate: num,
+      rdoSignedBiasMs: diff,
       rdoMeanAbsErrorMs: num,
       gorbov: g,
       numseriesCorrect: num,
@@ -354,6 +400,15 @@ describe('mergedBaseline (M2)', () => {
     ]);
     expect(merged).toEqual({ ...EMPTY_METRICS, pzmrMedianRt: 320, pzmrMeanRt: 312.5, szmrMeanRt: 410 });
   });
+
+  it('mergedBaseline takes the SD of ПЗМР and СЗМР from the first diagnostic that has them (F7)', () => {
+    const merged = mergedBaseline([
+      { ...EMPTY, pzmrMedianRt: 320 },
+      { ...EMPTY, pzmrMedianRt: 300, pzmrSdRt: 41 },
+      { ...EMPTY, pzmrMedianRt: 280, pzmrSdRt: 35, szmrSdRt: 52, pzmrIqrRt: 44, szmrWrong: 2 },
+    ]);
+    expect(merged).toEqual({ ...EMPTY_METRICS, pzmrMedianRt: 320, pzmrSdRt: 41, szmrSdRt: 52, pzmrIqrRt: 44, szmrWrong: 2 });
+  });
 });
 
 describe('readinessOfLatest (W2-R31)', () => {
@@ -404,6 +459,30 @@ describe('readinessOfLatest (W2-R31)', () => {
     expect(readinessOfLatest([], full()).abilities.switching).toBe(60);
   });
 
+  it('the first diagnostic with SD defers its SD parts (W2-R31)', () => {
+    // Two diagnostics stored before F7, then the first one with SD: the SD parts are their own baseline and wait.
+    const earlier = [fullW2({ pzmrMedianRt: 300 }), fullW2({ pzmrMedianRt: 290 })];
+    const latest = fullW2({ pzmrMedianRt: 280, pzmrSdRt: 38, szmrSdRt: 52 });
+    const r = readinessOfLatest(earlier, latest);
+    expect(r.deferred).toBe(true);
+    expect(r).toEqual({ ...readiness({ ...latest, pzmrSdRt: null, szmrSdRt: null }, mergedBaseline(earlier)), deferred: true });
+    // «Реакция» without the SD parts: ПЗМР, СЗМР, РДО and Помехоустойчивость only.
+    expect(r.abilities.reaction).toBe(readiness(fullW2({ pzmrMedianRt: 280 }), mergedBaseline(earlier)).abilities.reaction);
+    // The next diagnostic counts them against it.
+    const next = fullW2({ pzmrMedianRt: 280, pzmrSdRt: 38 * 1.3, szmrSdRt: 52 });
+    const r2 = readinessOfLatest([...earlier, latest], next);
+    expect(r2.deferred).toBe(false);
+    const withoutSd = readiness(fullW2({ pzmrMedianRt: 280 }), mergedBaseline(earlier)).abilities.reaction ?? NaN;
+    // Four parts without SD, SD ПЗМР 30 % above its baseline (40), SD СЗМР at it (60).
+    expect(sdScore(38 * 1.3, 38)).toBeCloseTo(40, 12);
+    expect(r2.abilities.reaction).toBeCloseTo((4 * withoutSd + 40 + 60) / 6, 10);
+    // Old diagnostics alone never get an SD part.
+    expect(readinessOfLatest([earlier[0] as DiagnosticMetrics], earlier[1] as DiagnosticMetrics)).toEqual({
+      ...readiness(earlier[1] as DiagnosticMetrics, earlier[0] as DiagnosticMetrics),
+      deferred: false,
+    });
+  });
+
   it('BASELINE_METRICS are exactly the metrics readiness scores against a baseline', () => {
     const keys = Object.keys(EMPTY_METRICS) as (keyof DiagnosticMetrics)[];
     for (const k of keys.filter((key) => key !== 'gorbov')) {
@@ -411,5 +490,8 @@ describe('readinessOfLatest (W2-R31)', () => {
       const scored = readiness(d, d).overall !== null;
       expect(scored, k).toBe((BASELINE_METRICS as readonly string[]).includes(k));
     }
+    // F7: the SD of ПЗМР and СЗМР are parts; IQR and the error counts are only shown.
+    expect(BASELINE_METRICS).toEqual(expect.arrayContaining(['pzmrSdRt', 'szmrSdRt']));
+    expect(BASELINE_METRICS).not.toEqual(expect.arrayContaining(['pzmrIqrRt']));
   });
 });

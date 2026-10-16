@@ -4,8 +4,8 @@ import type { Segment, SessionPlan } from './planner';
 
 /**
  * The measured values of one control diagnostic; null = metric not available. The W2 metrics (pomeh … memorySpan)
- * are null in rows stored before 0.2.0, the mean RTs in rows stored before 0.3.0, and a condition median is null
- * below MIN_COND_RTS RTs.
+ * are null in rows stored before 0.2.0, the mean RTs and the F7 spread and error counts in rows stored before 0.3.0,
+ * and a condition median is null below MIN_COND_RTS RTs.
  */
 export interface DiagnosticMetrics {
   pzmrMedianRt: number | null;
@@ -14,6 +14,25 @@ export interface DiagnosticMetrics {
   szmrMedianRt: number | null;
   /** Mean RT of СЗМР, as pzmrMeanRt. */
   szmrMeanRt: number | null;
+  /** SD of the clean hit RTs with |z| > 3 left out once (sdTrimmed), ms; null below 2 clean hits (F7). */
+  pzmrSdRt: number | null;
+  szmrSdRt: number | null;
+  /** P75 − P25 of the clean hit RTs (quantile), ms; null below 2 clean hits (F7). */
+  pzmrIqrRt: number | null;
+  szmrIqrRt: number | null;
+  /** Error counts of the block (F7): shown, never part of the index. */
+  pzmrFalseStarts: number | null;
+  szmrFalseStarts: number | null;
+  szmrWrong: number | null;
+  /** Presses on no-go. */
+  gonogoCommissions: number | null;
+  /** Misses and late answers on go. */
+  gonogoOmissions: number | null;
+  /** Outcomes `early` and `timing_late` of РДО. */
+  rdoEarly: number | null;
+  rdoLate: number | null;
+  /** Mean signed error of РДО (meanSignedErrorMs), ms: below 0 before the mark. */
+  rdoSignedBiasMs: number | null;
   /** Percent of successful trials, 0–100 (the controller fills it as summary.score · 100). */
   gonogoScore: number | null;
   rdoMeanAbsErrorMs: number | null;
@@ -41,6 +60,18 @@ export const EMPTY_METRICS: Readonly<DiagnosticMetrics> = Object.freeze({
   pzmrMeanRt: null,
   szmrMedianRt: null,
   szmrMeanRt: null,
+  pzmrSdRt: null,
+  szmrSdRt: null,
+  pzmrIqrRt: null,
+  szmrIqrRt: null,
+  pzmrFalseStarts: null,
+  szmrFalseStarts: null,
+  szmrWrong: null,
+  gonogoCommissions: null,
+  gonogoOmissions: null,
+  rdoEarly: null,
+  rdoLate: null,
+  rdoSignedBiasMs: null,
   gonogoScore: null,
   rdoMeanAbsErrorMs: null,
   gorbov: null,
@@ -84,7 +115,7 @@ function gorbovOf(v: unknown): DiagnosticMetrics['gorbov'] {
 
 /**
  * The stored results of a diagnostic, or null when the row does not hold a JSON object. A missing metric
- * reads as null (the W2 metrics of a 0.1.0 row, the mean RTs of a 0.2.0 one: missing, never 0); rows written before `unreliable` existed
+ * reads as null (the W2 metrics of a 0.1.0 row, the mean RTs and F7 metrics of a 0.2.0 one: missing, never 0); rows written before `unreliable` existed
  * read as reliable (I1). A damaged or imported row is read field by field (FW9): a metric that is not a finite number,
  * or a Горбов result without numeric V, P and Π, reads as null; unknown entries are dropped. Structural: DiagnosticRow fits.
  */
