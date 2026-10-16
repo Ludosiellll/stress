@@ -34,10 +34,11 @@ import {
   memoryKeysHint,
   memoryModeForBlock,
   memoryParams,
+  nextMemoryMode,
   type MemoryMode,
   type MemoryParams,
 } from '../modules/memory/params';
-import { describeChanges, describeParamChanges, describeTableChanges, type ParamChange } from '../modules/describe';
+import { describeChanges, describeMemoryChanges, describeParamChanges, describeTableChanges, type ParamChange } from '../modules/describe';
 import { diagnosticSeriesItems, generateBlockItems, type TimedSeriesItem } from '../modules/numseries/generate';
 import { bandIndex, stressorsOf, withFloor, type BandFields, type BlockStressors, type ReactionModule } from '../modules/reaction/common';
 import { DIAGNOSTIC_PARAMS } from '../modules/reaction/diagnosticParams';
@@ -425,8 +426,9 @@ function bandBlock(module: BandModuleId, L: number, overload: boolean, ctx: Plan
  * describes its training parameters at both levels, so a swapped Go/No-Go segment names its swapped colours (T-R41),
  * and a band module's window is the one its blocks play (the floor of the band when that is larger, F3): at lBefore
  * the window the block played (ctx.floors), at lAfter the one the next block plays, on `floorsAfter`, the floors with
- * the block just played (T-R50). `played` is the block's plan: a table's task, a memory block's mode (F13), and a normal
- * block of a Горбов series never reshuffles (F10, T-R62); after the last one the next block is an own table (T-R65).
+ * the block just played (T-R50). `played` is the block's plan: a table's task, and a normal block of a Горбов series
+ * never reshuffles (F10, T-R62); after the last one the next block is an own table (T-R65). A memory block of training
+ * names the next mode of the cycle at lAfter, the one the next normal block plays (F13, T-R78).
  */
 export function levelChanges(
   module: ModuleId,
@@ -441,6 +443,9 @@ export function levelChanges(
     // After the last block of the series the next one deals its own table, which may reshuffle (T-R65).
     const last = played.task === gorbovTaskForRun(GORBOV_SERIES_BLOCKS - 1);
     return describeTableChanges(series(lBefore), last ? gorbovParams(lAfter, played.task) : series(lAfter));
+  }
+  if (played.kind === 'memory' && played.protocol === 'fixed') {
+    return describeMemoryChanges(played.mode, lBefore, nextMemoryMode(played.mode), lAfter);
   }
   if (!isBandModule(module)) {
     const task = played.kind === 'table' ? played.task : played.kind === 'memory' ? played.mode : undefined;

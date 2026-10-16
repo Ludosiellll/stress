@@ -12,6 +12,7 @@ import {
   memoryKeysHint,
   memoryModeForBlock,
   memoryParams,
+  nextMemoryMode,
   STORED_MEMORY_MODES,
   type MemoryMode,
 } from './params';
@@ -110,6 +111,13 @@ describe('memory modes and texts', () => {
       'positions',
       'card3x3',
       'letters',
+    ]);
+    // The mode after each one: what the next block plays (T-R78).
+    expect(['digits', 'positions', 'card3x3', 'letters'].map((m) => nextMemoryMode(m as MemoryMode))).toEqual([
+      'positions',
+      'card3x3',
+      'letters',
+      'digits',
     ]);
     expect(() => memoryModeForBlock(-1)).toThrow(RangeError);
     expect(() => memoryModeForBlock(1.5)).toThrow(RangeError);

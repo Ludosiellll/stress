@@ -55,6 +55,7 @@ import {
   floorsFrom,
   levelFloors,
   isOverloadBlock,
+  levelChanges,
   planBlock,
   scaledCount,
   scaledPractice,
@@ -672,6 +673,30 @@ describe('overload blocks', () => {
     const cycle = ['digits', 'positions', 'card3x3', 'letters', 'digits', 'positions', 'card3x3', 'letters'];
     expect(modes(undefined)).toEqual(cycle);
     expect(modes('finisher')).toEqual(cycle.map((m) => m + '+3'));
+  });
+
+  it('«what changed» after a memory block names the mode of the next block at lAfter (F13, T-R78)', () => {
+    // Digits at L 8, then positions: the next block plays positions at L 9.
+    const digits = planBlock(seg('memory'), 8, 0, ctx);
+    expect(digits).toMatchObject({ kind: 'memory', mode: 'digits' });
+    expect(levelChanges('memory', 8, 9, digits, ctx, null)).toEqual([
+      { label: 'Режим', from: 'цифры', to: 'позиции' },
+      { label: 'Показ', from: '663 мс на элемент', to: '630 мс на элемент' },
+    ]);
+    // In a mix the next normal block plays the next mode too, after the overload block of the same mode.
+    const mixed = planBlock(seg('memory', 'mix'), 8, 0, ctx);
+    expect(levelChanges('memory', 8, 9, mixed, ctx, null)).toEqual(levelChanges('memory', 8, 9, digits, ctx, null));
+    const overloaded = planBlock(seg('memory', 'mix'), 8, 1, ctx);
+    expect(overloaded).toMatchObject({ mode: 'digits', overload: true });
+    expect(levelChanges('memory', 11, 11, overloaded, ctx, null)[0]).toEqual({ label: 'Режим', from: 'цифры', to: 'позиции' });
+    // After letters the cycle starts again with digits.
+    expect(levelChanges('memory', 8, 8, planBlock(seg('memory'), 8, 3, ctx), ctx, null)).toEqual([
+      { label: 'Режим', from: 'буквы', to: 'цифры' },
+      { label: 'Длина ряда', from: '5', to: '6' },
+    ]);
+    // The span check of a diagnostic plays digits every time.
+    const span = planBlock(seg('memory'), 8, 0, { ...ctx, diagnostic: true });
+    expect(levelChanges('memory', 8, 8, span, { ...ctx, diagnostic: true }, null)).toEqual([]);
   });
 
   it('an overload reaction block adds the finisher sound for every trial; the noise keeps its own trials (W2-R10)', () => {

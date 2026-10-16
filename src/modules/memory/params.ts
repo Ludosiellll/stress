@@ -112,6 +112,11 @@ export function memoryModeForBlock(blockIndex: number): MemoryMode {
   return MODE_CYCLE[blockIndex % MODE_CYCLE.length] as MemoryMode;
 }
 
+/** The mode of the block after one in `mode`: the next of the cycle (memoryModeForBlock), what «what changed» names (T-R78). */
+export function nextMemoryMode(mode: MemoryMode): MemoryMode {
+  return memoryModeForBlock(MODE_CYCLE.indexOf(mode) + 1);
+}
+
 /** «4 цифры», «7 цифр», «21 цифра». */
 function digitCount(n: number): string {
   const d = n % 10;

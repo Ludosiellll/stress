@@ -24,9 +24,9 @@ import { readinessOfLatest } from '../engine/readiness';
 import { createRng, deriveSeed } from '../engine/rng';
 import { sdTrimmed } from '../engine/stats';
 import { MODULE_IDS, type InputKey, type LayoutId, type ModuleId } from '../engine/types';
-import { describeChanges } from '../modules/describe';
+import { describeMemoryChanges } from '../modules/describe';
 import { generateMemoryTrials, spanProtocolTrials, type MemoryTrial } from '../modules/memory/generate';
-import { CARD_AUDIO, CARD_LESSON, memoryInstruction, memoryParams } from '../modules/memory/params';
+import { CARD_AUDIO, CARD_LESSON, memoryInstruction, memoryParams, nextMemoryMode } from '../modules/memory/params';
 import { spanProtocolStops, type MemoryAnswer } from '../modules/memory/score';
 import { TRAINING_FAMILIES } from '../modules/numseries/families';
 import { diagnosticSeriesItems } from '../modules/numseries/generate';
@@ -2936,8 +2936,9 @@ describe('SessionController — memory', () => {
       showLevel: true,
     });
     expect(view.lAfter).toBeGreaterThan(0);
-    expect(view.changes).toEqual(describeChanges('memory', 0, view.lAfter, 'digits'));
-    expect(view.changes.length).toBeGreaterThan(0);
+    // What changes for the next block, which plays positions (T-R78).
+    expect(view.changes).toEqual(describeMemoryChanges('digits', 0, 'positions', view.lAfter));
+    expect(view.changes[0]).toEqual({ label: 'Режим', from: 'цифры', to: 'позиции' });
     const [row] = await h.repo.listBlocks();
     expect(row).toMatchObject({ module: 'memory', lBefore: 0, lAfter: view.lAfter, score: 1 });
     expect(JSON.parse(row?.summaryJson ?? '')).toEqual({
@@ -2990,7 +2991,7 @@ describe('SessionController — memory', () => {
       await h.c.submitMemory(perfectMemoryAnswers(block.trials));
       const { view } = expectStep(h.c, 'summary');
       expect(view.lBefore).toBe(block.L);
-      expect(view.changes).toEqual(describeChanges('memory', block.L, view.lAfter, block.mode));
+      expect(view.changes).toEqual(describeMemoryChanges(block.mode, block.L, nextMemoryMode(block.mode), view.lAfter));
       await h.c.continueAfterSummary();
     }
     expect(modes).toEqual(['digits', 'positions', 'card3x3', 'letters']);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { changeText, describeChanges } from './describe';
+import { changeText, describeChanges, describeMemoryChanges } from './describe';
 
 describe('describeChanges', () => {
   it('pzmr 10 → 11: only the response window changes (the load band is the same)', () => {
@@ -114,6 +114,20 @@ describe('describeChanges', () => {
     expect(describeChanges('memory', 20, 21, 'card3x3')).toEqual([{ label: 'Показ', from: '5 с', to: '5 с, со звуком' }]);
     expect(changeText({ label: 'Показ', from: '10 с', to: '7 с' })).toBe('Показ: 10 → 7 с');
     expect(describeChanges('memory', 30, 31, 'digits')).toEqual([]);
+  });
+
+  it('memory, from the block played to the next one in another mode (F13, T-R78): the mode, then what differs', () => {
+    // Digits at L 8 (6 long, 663 ms) and positions at L 9 (6 long, 630 ms).
+    expect(describeMemoryChanges('digits', 8, 'positions', 9)).toEqual([
+      { label: 'Режим', from: 'цифры', to: 'позиции' },
+      { label: 'Показ', from: '663 мс на элемент', to: '630 мс на элемент' },
+    ]);
+    expect(describeMemoryChanges('card3x3', 14, 'letters', 14)).toEqual([
+      { label: 'Режим', from: 'карточка 3×3', to: 'буквы' },
+      { label: 'Длина ряда', from: '9', to: '7' },
+      { label: 'Показ', from: '10 с', to: '488 мс на элемент' },
+    ]);
+    expect(describeMemoryChanges('digits', 8, 'digits', 9)).toEqual(describeChanges('memory', 8, 9, 'digits'));
   });
 
   it('memory needs the mode, Gorbov its task', () => {

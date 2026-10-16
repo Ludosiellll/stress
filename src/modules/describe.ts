@@ -85,11 +85,19 @@ export function describeChanges(
       return describeTableChanges(schulteParams(lBefore), schulteParams(lAfter));
     case 'memory': {
       if (task === undefined || !isMemoryMode(task)) throw new RangeError('describeChanges: memory needs the mode');
-      return changed(describeMemoryParams(task, memoryParams(lBefore, task)), describeMemoryParams(task, memoryParams(lAfter, task)));
+      return describeMemoryChanges(task, lBefore, task, lAfter);
     }
     case 'numseries':
       return [];
   }
+}
+
+/**
+ * What changes from a memory block in `fromMode` at lBefore to the next one in `toMode` at lAfter (F13, T-R78): «Режим»
+ * when the modes differ, then the row length and how it is shown.
+ */
+export function describeMemoryChanges(fromMode: MemoryMode, lBefore: number, toMode: MemoryMode, lAfter: number): ParamChange[] {
+  return changed(describeMemoryParams(fromMode, memoryParams(lBefore, fromMode)), describeMemoryParams(toMode, memoryParams(lAfter, toMode)));
 }
 
 /** What changed between two parameter sets of a table. */
