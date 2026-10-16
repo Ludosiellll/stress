@@ -228,8 +228,12 @@ describe('testFormatRuns', () => {
       ],
       sessions,
     );
-    expect(testFormatRuns(past, 'pzmr')).toEqual([metrics(250), metrics(240)]);
-    expect(testFormatRunsAt(past, 'pzmr').map((r) => r.at)).toEqual(['2026-10-10T09:01:00', '2026-10-11T09:01:00']);
+    // A run with dropped frames is a run, but no source of the best (T-R78).
+    expect(testFormatRunsAt(past, 'pzmr')).toEqual([
+      { at: '2026-10-10T09:01:00', metrics: metrics(250), unreliable: false },
+      { at: '2026-10-11T09:01:00', metrics: metrics(240), unreliable: true },
+    ]);
+    expect(testFormatRuns(past, 'pzmr')).toEqual([metrics(250)]);
     expect(testFormatRuns(past, 'szmr')).toEqual([metrics(300)]);
     expect(testFormatRuns(past, 'rdo')).toEqual([]);
   });

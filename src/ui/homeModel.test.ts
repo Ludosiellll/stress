@@ -137,6 +137,18 @@ describe('loadHomeModel', () => {
     expect(later).toMatchObject({ module: 'gonogo', purpose: 'test_format' });
   });
 
+  it('a run with dropped frames uses up its slot and its turn of the formats too (T-R78)', async () => {
+    const repo = new MemoryRepository();
+    await repo.createSession(session('s1', '2026-09-24T10:00:00'));
+    await repo.createSession(session('s2', '2026-10-04T10:00:00'));
+    await repo.addBlock(block('b1', 's1', '2026-09-24T10:01:00', { module: 'szmr' }), [], []);
+    await repo.addBlock(block('r1', 's2', '2026-10-04T10:01:00', { module: 'pzmr', flags: ['test_format'] }), [], []);
+    await repo.createSession(session('s3', '2026-10-12T10:00:00'));
+    await repo.addBlock(block('r2', 's3', '2026-10-12T10:01:00', { module: 'szmr', flags: ['timing_unreliable', 'test_format'] }), [], []);
+    expect((await loadHomeModel(repo, TODAY)).plan.segments.map((s) => s.purpose)).not.toContain('test_format');
+    expect((await loadHomeModel(repo, '2026-10-19')).plan.segments[0]).toMatchObject({ module: 'gonogo', purpose: 'test_format' });
+  });
+
   it('loadHomeModel plans the layout of the day and says so when it is not the primary (F9)', async () => {
     const repo = new MemoryRepository();
     // Day 1: the primary, no line.

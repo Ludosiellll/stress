@@ -51,6 +51,7 @@ import {
   sameSetup,
   setupOf,
   testFormatRuns,
+  testFormatRunsAt,
   warmupDays,
   withBlock,
   type PastBlocks,
@@ -555,7 +556,7 @@ export class SessionController {
         return;
       }
       const stability = stabilityOf(step.specs, results);
-      const run = this.runSummary(module, results);
+      const run = this.runSummary(module, results, summary.timingUnreliable);
       await this.completeBlock({
         module,
         L,
@@ -1265,17 +1266,19 @@ export class SessionController {
 
   /**
    * The metrics and summary of a test-format run (F4); null for any other block. The best is that of the runs of the
-   * format in the history read at start and in this session; without that history (Р18) the line has no best and the
-   * run does not call itself the first.
+   * format in the history read at start and in this session, runs with dropped frames left out (T-R78). Only the
+   * metrics line when the run cannot say more: without that history (Р18) it has no best and does not call itself the
+   * first, after runs with dropped frames only it is not the first, and with dropped frames itself it is no new best.
    */
-  private runSummary(module: ModuleId, results: readonly TrialResult[]): RunSummary | null {
+  private runSummary(module: ModuleId, results: readonly TrialResult[], unreliable: boolean): RunSummary | null {
     if (!this.counted || this.segment().segment.purpose !== 'test_format' || !isTestFormat(module)) return null;
     const metrics = testFormatMetrics(module, results);
-    const lines =
-      this.past === null
-        ? testFormatLines(module, metrics, null).slice(0, 1)
-        : testFormatLines(module, metrics, testFormatBest(testFormatRuns(this.past, module)));
-    return { metrics, title: `Прогон в формате теста · ${TEST_FORMAT_NAMES[module]}`, lines };
+    const past = this.past;
+    const best = past === null ? null : testFormatBest(testFormatRuns(past, module));
+    const earlierRuns = past === null ? 0 : testFormatRunsAt(past, module).length;
+    const lines = testFormatLines(module, metrics, best);
+    const metricsOnly = past === null || unreliable || (best === null && earlierRuns > 0);
+    return { metrics, title: `Прогон в формате теста · ${TEST_FORMAT_NAMES[module]}`, lines: metricsOnly ? lines.slice(0, 1) : lines };
   }
 
   /**

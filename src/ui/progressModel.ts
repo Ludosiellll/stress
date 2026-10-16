@@ -14,7 +14,7 @@ import { moduleTitles } from '../modules/registry';
 import { assessModules, meanFamilyRating, type ModuleAssessment } from '../session/assessment';
 import { buildBlockHistory, parseObject, scoreFromCounts } from '../session/blockHistory';
 import type { DiscardReason } from '../session/controller';
-import { pastBlocks, readCleanHits, testFormatRunsAt, warmupDays, type PastBlocks } from '../session/pastBlocks';
+import { pastBlocks, readCleanHits, testFormatRuns, testFormatRunsAt, warmupDays, type PastBlocks, type StoredRun } from '../session/pastBlocks';
 import { plural, shownCost } from '../session/steps';
 import { TEST_FORMAT_NAMES, testFormatBest, type TestFormatBest } from '../session/testFormat';
 import type { ChartDomain, ChartPoint, ChartSeries } from './charts/LineChart';
@@ -101,13 +101,17 @@ export interface ReadaptCost {
 export interface TestFormatProgress {
   format: TestFormatId;
   name: string;
-  /** The mean (РДО: the deviation) of each run; null: the run has none. */
+  /** The mean (РДО: the deviation) of each run; null: the run has none. A run with dropped frames has a note. */
   mean: ChartPoint[];
   sd: ChartPoint[];
   /** The trends of the two charts (F7). */
   trends: { mean: TrendView; sd: TrendView };
-  best: TestFormatBest;
+  /** From the runs without dropped frames (T-R78); null: every run dropped frames. */
+  best: TestFormatBest | null;
+  /** Every run, those with dropped frames too: the planner counts them. */
   runs: number;
+  /** x labels of the runs with dropped frames (T-R78): their points carry the note, and the best table says so. */
+  unreliable: string[];
 }
 
 /** «Прерванные блоки по неделям» (F11): one week Monday to Sunday, «дд.мм–дд.мм». */
@@ -624,23 +628,32 @@ export function formOfDayChart(days: readonly FormDay[], today: string): FormOfD
   return { points, trend, footnote: `${which} — на другой нагрузке. Тренд и полоса шума — только по разминкам на текущей нагрузке.` };
 }
 
-/** Each format with stored runs (testFormatRunsAt): the points of its two charts, its best and its runs. */
+/**
+ * Each format with stored runs (testFormatRunsAt): the points of its two charts, its best and its runs. A run with
+ * dropped frames is drawn with the note of an unreliable diagnostic value, named under the charts and left out of the
+ * best (T-R78); like such a diagnostic value, it stays in the trend.
+ */
 export function testFormatProgress(past: PastBlocks): TestFormatProgress[] {
   return TEST_FORMAT_ORDER.flatMap((format) => {
     const runs = testFormatRunsAt(past, format);
-    const best = testFormatBest(runs.map((r) => r.metrics));
-    if (best === null) return [];
-    const timed = (pick: (m: (typeof runs)[number]['metrics']) => number | null): TimedPoint[] =>
+    if (runs.length === 0) return [];
+    const timed = (pick: (m: StoredRun['metrics']) => number | null): TimedPoint[] =>
       runs.map((r) => ({ x: dayMonth(r.at), t: dayOf(r.at), y: pick(r.metrics) }));
+    const points = (pick: (m: StoredRun['metrics']) => number | null): ChartPoint[] =>
+      runs.map((r) => {
+        const point = { x: dayMonth(r.at), y: pick(r.metrics) };
+        return r.unreliable && point.y !== null ? { ...point, note: UNRELIABLE_NOTE } : point;
+      });
     return [
       {
         format,
         name: TEST_FORMAT_NAMES[format],
-        mean: runs.map((r) => ({ x: dayMonth(r.at), y: r.metrics.mean })),
-        sd: runs.map((r) => ({ x: dayMonth(r.at), y: r.metrics.sd })),
+        mean: points((m) => m.mean),
+        sd: points((m) => m.sd),
         trends: { mean: trendView(timed((m) => m.mean), true, 'мс'), sd: trendView(timed((m) => m.sd), true, 'мс') },
-        best,
+        best: testFormatBest(testFormatRuns(past, format)),
         runs: runs.length,
+        unreliable: runs.flatMap((r) => (r.unreliable ? [dayMonth(r.at)] : [])),
       },
     ];
   });

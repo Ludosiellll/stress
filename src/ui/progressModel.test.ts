@@ -601,6 +601,7 @@ describe('the test-format runs (F4)', () => {
         trends: { mean: SHORT, sd: SHORT },
         best: { mean: 250, sd: 30, errors: 2, falseStarts: 0 },
         runs: 2,
+        unreliable: [],
       },
       {
         format: 'rdo',
@@ -610,8 +611,27 @@ describe('the test-format runs (F4)', () => {
         trends: { mean: SHORT, sd: SHORT },
         best: { mean: 18, sd: 25, errors: 3, falseStarts: 1 },
         runs: 1,
+        unreliable: [],
       },
     ]);
+  });
+
+  it('a run with dropped frames is marked and named, is no best and still counts as a run (T-R78)', async () => {
+    const repo = new MemoryRepository();
+    for (const [id, day] of [['t1', 1], ['t2', 8], ['t3', 15]] as const) await repo.createSession(session(id, at(day), { endedAt: at(day) }));
+    await repo.addBlock(block('r1', 't1', at(1), { module: 'pzmr', flags: ['test_format'], summaryJson: run(260, 30, 2) }), [], []);
+    await repo.addBlock(block('r2', 't2', at(8), { module: 'pzmr', flags: ['test_format', 'timing_unreliable'], summaryJson: run(200, 10, 0) }), [], []);
+    // A format whose only run dropped frames: shown, without a best.
+    await repo.addBlock(block('r3', 't3', at(15), { module: 'szmr', flags: ['timing_unreliable', 'test_format'], summaryJson: run(400, 50, 1) }), [], []);
+    const [pzmr, szmr] = (await loadProgressModel(repo, new Date(2026, 9, 16))).testFormats;
+    expect(pzmr).toMatchObject({
+      mean: [{ x: '01.10', y: 260 }, { x: '08.10', y: 200, note: 'замер ненадёжен' }],
+      sd: [{ x: '01.10', y: 30 }, { x: '08.10', y: 10, note: 'замер ненадёжен' }],
+      best: { mean: 260, sd: 30, errors: 2, falseStarts: 0 },
+      runs: 2,
+      unreliable: ['08.10'],
+    });
+    expect(szmr).toMatchObject({ format: 'szmr', best: null, runs: 1, unreliable: ['15.10'] });
   });
 
   it('no runs: no format', async () => {

@@ -80,16 +80,18 @@ export function warmupDays(past: PastBlocks): FormDay[] {
   return days;
 }
 
-/** A stored test-format run: when it started and its metrics. */
+/** A stored test-format run: when it started, its metrics and whether it dropped frames (flag timing_unreliable). */
 export interface StoredRun {
   at: string;
   metrics: TestFormatMetrics;
+  unreliable: boolean;
 }
 
 /**
  * The stored runs of a format (F4), in block order (by startedAt): blocks of training and free sessions with the
  * flag test_format and a readable summaryJson.testFormat; a damaged one is left out, and so is a run counted as 0
- * after Esc (F11: it has no metrics, and it is never a best, T-R10). The planner counts that one (homeModel).
+ * after Esc (F11: it has no metrics, and it is never a best, T-R10). The planner counts that one (homeModel), and a
+ * run with dropped frames too: it is here, marked `unreliable`.
  */
 export function testFormatRunsAt(past: PastBlocks, module: TestFormatId): StoredRun[] {
   return past.blocks.flatMap((row) => {
@@ -97,13 +99,16 @@ export function testFormatRunsAt(past: PastBlocks, module: TestFormatId): Stored
     if (row.module !== module || !row.flags.includes('test_format') || row.flags.includes('discarded')) return [];
     if (kind === undefined || !isCountedSession(kind)) return [];
     const metrics = readTestFormat(row.summaryJson);
-    return metrics === null ? [] : [{ at: row.startedAt, metrics }];
+    return metrics === null ? [] : [{ at: row.startedAt, metrics, unreliable: row.flags.includes('timing_unreliable') }];
   });
 }
 
-/** The metrics of the stored runs of a format, the source of its personal best (testFormatRunsAt). */
+/**
+ * The metrics of the stored runs of a format that are a source of its personal best (testFormatRunsAt): a run with
+ * dropped frames measured times that may be off, and is no best (T-R78).
+ */
 export function testFormatRuns(past: PastBlocks, module: TestFormatId): TestFormatMetrics[] {
-  return testFormatRunsAt(past, module).map((r) => r.metrics);
+  return testFormatRunsAt(past, module).flatMap((r) => (r.unreliable ? [] : [r.metrics]));
 }
 
 /**

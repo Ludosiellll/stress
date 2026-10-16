@@ -128,7 +128,9 @@ function FormOfDay({ model }: { model: ProgressModel }) {
 }
 
 /** A value of «Лучшие результаты»: whole ms, or a dash. */
-const msCell = (v: number | null): string => (v === null ? '—' : noBreakUnits(`${String(Math.round(v))} мс`));
+const msCell = (v: number | null | undefined): string => (v === null || v === undefined ? '—' : noBreakUnits(`${String(Math.round(v))} мс`));
+/** A count of «Лучшие результаты», or a dash without a best. */
+const countCell = (v: number | undefined): string => (v === undefined ? '—' : String(v));
 
 /** The two charts of a format: its mean (РДО: the deviation) and its SD by run, x «дд.мм». */
 function TestFormatCharts({ f }: { f: TestFormatProgress }) {
@@ -146,6 +148,7 @@ function TestFormatCharts({ f }: { f: TestFormatProgress }) {
           yLabel="мс"
           lowerIsBetter
           series={[{ name: f.name, points: c.points }]}
+          unreliable={c.points.flatMap((p) => (p.note === undefined ? [] : [p.x]))}
           domain={{ min: 0 }}
           whole
           trends={[c.trend]}
@@ -195,15 +198,16 @@ function TestFormats({ model }: { model: ProgressModel }) {
               {model.testFormats.map((f) => (
                 <tr key={f.format}>
                   <td>{f.name}</td>
-                  <td className="num nowrap">{msCell(f.best.mean)}</td>
-                  <td className="num nowrap">{msCell(f.best.sd)}</td>
-                  <td className="num">{f.best.errors}</td>
-                  <td className="num">{f.best.falseStarts}</td>
+                  <td className="num nowrap">{msCell(f.best?.mean)}</td>
+                  <td className="num nowrap">{msCell(f.best?.sd)}</td>
+                  <td className="num">{countCell(f.best?.errors)}</td>
+                  <td className="num">{countCell(f.best?.falseStarts)}</td>
                   <td className="num">{f.runs}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+          {model.testFormats.some((f) => f.unreliable.length > 0) && <p className="muted">Прогоны с пропусками кадров не входят в лучший результат.</p>}
           {model.testFormats.some((f) => f.format === 'rdo') && <p className="muted">У РДО в колонке «Среднее» — среднее отклонение от отметки.</p>}
         </>
       )}

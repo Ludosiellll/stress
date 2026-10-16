@@ -466,8 +466,40 @@ describe('Progress edge cases', () => {
     await renderProgress(repo);
     const table = screen.getByRole('table', { name: 'Лучшие результаты' });
     expect(within(table).getAllByRole('row')).toHaveLength(2);
+    // Nor the note on dropped frames without such a run.
     expect(table.nextElementSibling).toBeNull();
     expect(screen.queryByText('У РДО в колонке «Среднее» — среднее отклонение от отметки.')).toBeNull();
+  });
+
+  it('a run with dropped frames is named under its charts, left out of the best and noted under the table (T-R78)', async () => {
+    const repo = new MemoryRepository();
+    const day = (d: number): string => new Date(Date.now() - d * 86_400_000).toISOString();
+    const summaryJson = (mean: number): string => JSON.stringify({ testFormat: { mean, sd: 30, errors: 1, falseStarts: 0, thirds: [mean, mean, mean] } });
+    for (const [id, d, module, flags, mean] of [
+      ['a', 3, 'pzmr', ['test_format'], 262],
+      ['b', 1, 'pzmr', ['test_format', 'timing_unreliable'], 200],
+      ['c', 2, 'szmr', ['test_format', 'timing_unreliable'], 400],
+    ] as const) {
+      await repo.createSession(session(id, day(d), { endedAt: day(d) }));
+      await repo.addBlock(block(id, id, day(d), { module, flags: [...flags], summaryJson: summaryJson(mean) }), [], []);
+    }
+    await renderProgress(repo);
+    const dm = (d: number): string => {
+      const t = new Date(Date.now() - d * 86_400_000);
+      return `${String(t.getDate()).padStart(2, '0')}.${String(t.getMonth() + 1).padStart(2, '0')}`;
+    };
+    for (const title of ['ПЗМР: среднее, мс', 'ПЗМР: SD, мс']) {
+      expect(within(chartOf(title)).getByText(`Замер ненадёжен (пропуски кадров): ${dm(1)}`)).toBeTruthy();
+    }
+    expect(within(chartOf('СЗМР: среднее, мс')).getByText(`Замер ненадёжен (пропуски кадров): ${dm(2)}`)).toBeTruthy();
+    const table = screen.getByRole('table', { name: 'Лучшие результаты' });
+    const rows = within(table).getAllByRole('row').slice(1).map((r) => within(r).getAllByRole('cell').map((c) => c.textContent));
+    // The best of ПЗМР is the run without dropped frames; СЗМР has none, but its run is counted.
+    expect(rows).toEqual([
+      ['ПЗМР', '262\u00a0мс', '30\u00a0мс', '1', '0', '2'],
+      ['СЗМР', '—', '—', '—', '—', '1'],
+    ]);
+    expect(table.nextElementSibling?.textContent).toBe('Прогоны с пропусками кадров не входят в лучший результат.');
   });
 
   it('«Прогоны в формате теста» without runs says when they start', async () => {

@@ -1409,6 +1409,35 @@ describe('SessionController — test-format runs (F4)', () => {
     expect(h.c.step.kind).toBe('wellbeing');
   });
 
+  it('a run with dropped frames is no personal best, and claims none (T-R78)', async () => {
+    const withRuns = async (): Promise<MemoryRepository> => {
+      const repo = new MemoryRepository();
+      await pastTraining(repo, 's1', 8, [{ module: 'pzmr', flags: ['test_format'], summaryJson: JSON.stringify({ testFormat: stored }) }]);
+      const shaky = JSON.stringify({ testFormat: { ...stored, mean: 100, sd: 5, errors: 0 } });
+      await pastTraining(repo, 's2', 4, [{ module: 'pzmr', flags: ['test_format', 'timing_unreliable'], summaryJson: shaky }]);
+      return repo;
+    };
+    const h = await begin(training(run('pzmr')), { repo: await withRuns() });
+    // The best is that of the run of 8 days ago: the faster run of 4 days ago dropped frames.
+    expect((await playReaction(h)).view.lines).toEqual([
+      'Среднее 300 мс (лучшее 250) · SD 0 мс (лучшее 30) · ошибки 0 (лучшее 1) · фальстарты 0 (лучшее 0)',
+      'Новый лучший результат: SD, ошибки',
+    ]);
+    // The same run dropping frames itself: compared, but no new best.
+    const again = await begin(training(run('pzmr')), { repo: await withRuns() });
+    const { view } = await playReaction(again, perfectPlayer, (idx) => idx < 8);
+    expect(view.flags).toEqual(['timing_unreliable', 'test_format']);
+    expect(view.lines).toEqual(['Среднее 300 мс (лучшее 250) · SD 0 мс (лучшее 30) · ошибки 0 (лучшее 1) · фальстарты 0 (лучшее 0)']);
+  });
+
+  it('after runs with dropped frames only, a run has no best and does not call itself the first (T-R78)', async () => {
+    const repo = new MemoryRepository();
+    const shaky = JSON.stringify({ testFormat: stored });
+    await pastTraining(repo, 's1', 4, [{ module: 'pzmr', flags: ['test_format', 'timing_unreliable'], summaryJson: shaky }]);
+    const h = await begin(training(run('pzmr')), { repo });
+    expect((await playReaction(h)).view.lines).toEqual(['Среднее 300 мс · SD 0 мс · ошибки 0 · фальстарты 0']);
+  });
+
   it('without the history read at start a run shows no best and does not call itself the first (Р18)', async () => {
     const repo = new MemoryRepository();
     await pastTraining(repo, 's1', 8, [{ module: 'rdo', flags: ['test_format'], summaryJson: JSON.stringify({ testFormat: stored }) }]);
