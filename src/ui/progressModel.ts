@@ -39,6 +39,8 @@ export interface ChartSpec {
   trends: TrendView[];
   /** A line under the chart: Горбов's diagnostics on three tables when later ones played one (F10). */
   footnote?: string;
+  /** A dashed line before the point of `x` with its label: the index chart's change of formats (T-R78). */
+  marker?: { x: string; label: string };
 }
 
 /** The unit of a trend line: ms, %, s, or none (counts, index points). */
@@ -498,16 +500,36 @@ export function diagnosticCharts(rows: readonly DiagnosticRow[]): ChartSpec[] {
   }));
 }
 
+/** A diagnostic of the formats of 0.3.0: Горбов on one table (F10) or the number series of the forms v2 (F12). */
+const isNewFormat = (r: DiagnosticResults): boolean => r.gorbovOneTable || r.seriesForm === 'v2';
+
+/**
+ * The marker and footnote of the index chart at the first diagnostic of the formats of 0.3.0 after one of the old ones
+ * (T-R78): Π and the number series («Логика») start from a baseline of their own there (readinessOfLatest), so the index
+ * can drop with no change in the results. Nothing without such a change.
+ */
+function formatChange(parsed: readonly { x: string; r: DiagnosticResults | null }[]): Pick<ChartSpec, 'marker' | 'footnote'> {
+  const firstOld = parsed.findIndex(({ r }) => r !== null && !isNewFormat(r));
+  const change = firstOld < 0 ? undefined : parsed.slice(firstOld).find(({ r }) => r !== null && isNewFormat(r));
+  if (change === undefined) return {};
+  return {
+    marker: { x: change.x, label: '0.3.0: новый формат' },
+    footnote:
+      `Диагностика ${change.x} — первая в формате 0.3.0: Горбов на одной таблице, новые числовые ряды. ` +
+      'Π и «Логика» с неё считаются от новой базы, поэтому индекс в этой точке может снизиться из-за смены формата.',
+  };
+}
+
 /**
  * «Общий индекс готовности» by diagnostic (F7): the overall index of each diagnostic after the ones before it, as Home
- * shows it for the latest (readinessOf); an unreadable row is a gap and no baseline for the later ones.
+ * shows it for the latest (readinessOf); an unreadable row is a gap and no baseline for the later ones. The change to
+ * the formats of 0.3.0 is marked and explained (formatChange); the points and the trend stay as they are.
  */
 export function indexChart(rows: readonly DiagnosticRow[]): ChartSpec {
   const labels = diagnosticLabels(rows);
+  const parsed = rows.map((row, i) => ({ x: labels[i] as string, r: parseResults(row) }));
   const earlier: DiagnosticResults[] = [];
-  const points = rows.map<ChartPoint>((row, i) => {
-    const x = labels[i] as string;
-    const r = parseResults(row);
+  const points = parsed.map<ChartPoint>(({ x, r }) => {
     if (r === null) return { x, y: null };
     const y = readinessOfLatest(earlier, r).overall;
     earlier.push(r);
@@ -515,6 +537,7 @@ export function indexChart(rows: readonly DiagnosticRow[]): ChartSpec {
   });
   const series = [{ name: 'Общий индекс', points }];
   return {
+    ...formatChange(parsed),
     id: 'index',
     title: 'Общий индекс готовности',
     yLabel: 'баллы',

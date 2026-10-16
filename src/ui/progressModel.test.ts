@@ -837,6 +837,28 @@ describe('noise band and trend (F7, Р19)', () => {
     expect(chart.trends).toHaveLength(1);
     expect(chart.trends[0]?.band.map((b) => b.x)).toEqual(['№1', '№2', '№4']);
     expect(indexChart([]).series[0]?.points).toEqual([]);
+    expect(chart.marker).toBeUndefined();
+    expect(chart.footnote).toBeUndefined();
+  });
+
+  it('the index chart marks the first diagnostic of the 0.3.0 formats and says why the index may dip there (T-R78)', () => {
+    const v2 = { ...fullW2, gorbovOneTable: true, seriesForm: 'v2' };
+    const rows = weeklyRows([fullW2, '{not json', fullW2, v2, v2]);
+    const chart = indexChart(rows);
+    expect(chart.marker).toEqual({ x: '№4', label: '0.3.0: новый формат' });
+    expect(chart.footnote).toBe(
+      'Диагностика №4 — первая в формате 0.3.0: Горбов на одной таблице, новые числовые ряды. Π и «Логика» с неё считаются от новой базы, поэтому индекс в этой точке может снизиться из-за смены формата.',
+    );
+    // Only a note: the points and the trend are the same.
+    expect(chart.trends[0]?.band.map((b) => b.x)).toEqual(['№1', '№3', '№4', '№5']);
+    // One of the two new formats is enough.
+    expect(indexChart(weeklyRows([fullW2, { ...fullW2, seriesForm: 'v2' }])).marker?.x).toBe('№2');
+    // Without a diagnostic of the old formats before it, or without one of the new, there is no change to explain.
+    for (const results of [[v2, v2], [fullW2, fullW2], ['{not json', v2]]) {
+      const c = indexChart(weeklyRows(results));
+      expect(c.marker).toBeUndefined();
+      expect(c.footnote).toBeUndefined();
+    }
   });
 
   it('the runs and the form of the day have their trends, by the date of the block', async () => {

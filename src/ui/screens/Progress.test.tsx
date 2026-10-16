@@ -57,6 +57,25 @@ describe('Progress: Горбов on one table after three (F10)', () => {
   });
 });
 
+describe('Progress: the index chart at the change of formats (T-R78)', () => {
+  it('marks the first diagnostic of the 0.3.0 formats on the index chart and explains a dip there', async () => {
+    const repo = new MemoryRepository();
+    await seedDiagnostic(repo, 1, {});
+    await seedDiagnostic(repo, 2, { gorbovOneTable: true, seriesForm: 'v2' });
+    await renderProgress(repo);
+    const card = chartOf('Общий индекс готовности');
+    expect(within(card).getByText('0.3.0: новый формат')).toBeTruthy();
+    expect(card.querySelector('line.chart-marker')).not.toBeNull();
+    expect(
+      within(card).getByText(
+        'Диагностика №2 — первая в формате 0.3.0: Горбов на одной таблице, новые числовые ряды. Π и «Логика» с неё считаются от новой базы, поэтому индекс в этой точке может снизиться из-за смены формата.',
+      ),
+    ).toBeTruthy();
+    // The other charts have no marker.
+    expect(chartOf('ПЗМР, медиана, мс').querySelector('line.chart-marker')).toBeNull();
+  });
+});
+
 describe('Progress: number series of the forms v2 after the old ones (F12)', () => {
   it('names the old diagnostics under the series chart; the other charts have no such line', async () => {
     const repo = new MemoryRepository();
